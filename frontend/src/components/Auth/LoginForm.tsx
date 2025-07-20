@@ -36,6 +36,10 @@ const LoginForm = () => {
   try {
     const { data } = await login(form);
 
+    if (data.token) {
+      localStorage.setItem('token', data.token); // ✅ Save token
+    }
+
     setUser(data.user || true);
     toast.success('Logged in!');
     router.push('/home');

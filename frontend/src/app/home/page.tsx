@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { gsap } from 'gsap';
 import { FaUserCircle } from 'react-icons/fa';
-import ProfilePanel from '../../components/ProfilePanel';
+import ProfilePanel from '@/components/ProfilePanel';
+import JarvisPanel from '@/components/Jarvis/JarvisPanel';
 
 export default function Home() {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -13,11 +14,11 @@ export default function Home() {
   const profileToggleRef = useRef<HTMLDivElement | null>(null);
   const profilePanelRef = useRef<HTMLDivElement | null>(null);
 
-  const [darkMode, setDarkMode] = useState<boolean>(true);
-  const [voiceEnabled, setVoiceEnabled] = useState<boolean>(false);
-  const [model, setModel] = useState<string>('GPT-4');
-  const [profileOpen, setProfileOpen] = useState<boolean>(false);
-  const [username, setUsername] = useState<string>('User');
+  const [darkMode, setDarkMode] = useState(true);
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [model, setModel] = useState('qwen3:8b');
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [username, setUsername] = useState('User');
 
   useEffect(() => {
     const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
@@ -53,7 +54,6 @@ export default function Home() {
       ease: 'sine.inOut',
     });
 
-    // Fetch user
     const token = localStorage.getItem('token');
     if (token) {
       fetch('/api/user/me', {
@@ -138,96 +138,15 @@ export default function Home() {
           <button className="btn btn-primary" onClick={() => setVoiceEnabled(!voiceEnabled)}>
             {voiceEnabled ? 'Disable Voice Mode' : 'Launch Voice Mode'}
           </button>
-          <button className="btn btn-outline btn-secondary">Type Your Prompt</button>
+          <button className="btn btn-outline btn-secondary" onClick={() => document.getElementById('jarvis-panel')?.scrollIntoView({ behavior: 'smooth' })}>
+            Type Your Prompt
+          </button>
         </div>
       </div>
 
       {/* Main Layout */}
-      <div id="main-layout" className="flex flex-1 w-full gap-4 mt-10 max-w-[1440px] mx-auto">
-        {/* Left Panel */}
-        <div className="w-1/5 bg-base-200 rounded-xl shadow-md p-4 space-y-4 hidden lg:block">
-          <h2 className="text-lg font-semibold">Options</h2>
-          <div className="form-control">
-            <label className="cursor-pointer label justify-between">
-              <span>Dark Mode</span>
-              <input
-                type="checkbox"
-                className="toggle toggle-sm"
-                checked={darkMode}
-                onChange={() => setDarkMode(!darkMode)}
-              />
-            </label>
-          </div>
-          <div className="form-control">
-            <label className="cursor-pointer label justify-between">
-              <span>Voice Enabled</span>
-              <input
-                type="checkbox"
-                className="toggle toggle-sm"
-                checked={voiceEnabled}
-                onChange={() => setVoiceEnabled(!voiceEnabled)}
-              />
-            </label>
-          </div>
-          <div className="form-control">
-            <label className="label">
-              <span className="label-text">Model</span>
-            </label>
-            <select
-              className="select select-bordered select-sm w-full"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-            >
-              <option>GPT-4</option>
-              <option>GPT-3.5</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Center - Chat Box */}
-        <div className="flex-1 bg-base-200 rounded-xl shadow-md p-6 flex flex-col">
-          <div className="flex-1 overflow-y-auto space-y-4 bg-base-100 rounded p-4">
-            <div className="chat chat-start">
-              <div className="chat-bubble">What’s the market outlook today?</div>
-            </div>
-            <div className="chat chat-end">
-              <div className="chat-bubble chat-bubble-primary">
-                NASDAQ is up 1.2%. Tech stocks are surging due to better-than-expected earnings.
-              </div>
-            </div>
-          </div>
-          <div className="mt-4 flex items-center gap-2">
-            <input
-              type="text"
-              placeholder="Type your question..."
-              className="input input-bordered w-full"
-            />
-            <button className="btn btn-primary">Send</button>
-          </div>
-
-          {voiceEnabled && (
-            <div className="mt-6 h-12 flex items-center gap-2">
-              {[...Array(5)].map((_, i) => (
-                <div
-                  key={i}
-                  className="w-2 bg-primary animate-pulse"
-                  style={{ height: `${Math.random() * 40 + 10}px` }}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Right Panel */}
-        <div className="w-1/5 bg-base-200 rounded-xl shadow-md p-4 space-y-4 hidden lg:block">
-          <h2 className="text-lg font-semibold">Market Snapshot</h2>
-          <ul className="space-y-2 text-sm">
-            <li>📈 NASDAQ: <span className="text-success">+1.2%</span></li>
-            <li>📉 S&P 500: <span className="text-error">-0.4%</span></li>
-            <li>💹 DOW JONES: +0.8%</li>
-            <li>💰 BTC: $41,200</li>
-          </ul>
-        </div>
+      <div id="jarvis-panel" className="mt-10 max-w-5xl w-full mx-auto">
+        <JarvisPanel />
       </div>
     </div>
   );

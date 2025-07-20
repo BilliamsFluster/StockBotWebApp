@@ -1,7 +1,8 @@
 import axios from "axios";
+import env from '../../config/env';
 
 const api = axios.create({
-  baseURL: "http://localhost:5001/api",
+  baseURL: `${env.NEXT_PUBLIC_BACKEND_URL}/api`,
   withCredentials: true, // if you're handling cookies
 });
 
