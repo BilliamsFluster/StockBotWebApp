@@ -34,14 +34,25 @@ export const handleJarvisPrompt = async (req, res) => {
 // ---- START VOICE ASSISTANT ----
 
 export const startVoiceAssistant = async (req, res) => {
+  const { model, format } = req.body;
+
+  if (!model || !format) {
+    return res.status(400).json({ error: "Missing model or format." });
+  }
+
   try {
-    const response = await axios.post(`${STOCKBOT_URL}/api/jarvis/voice/start`);
+    const response = await axios.post(`${STOCKBOT_URL}/api/jarvis/voice/start`, {
+      model,
+      format,
+    });
+
     res.json(response.data);
   } catch (error) {
     console.error("🔴 Failed to start voice assistant:", error.message);
     res.status(500).json({ error: "Failed to start voice assistant." });
   }
 };
+
 
 // ---- STOP VOICE ASSISTANT ----
 export const stopVoiceAssistant = async (req, res) => {

@@ -19,5 +19,8 @@ if __name__ == "__main__":
     shared_state.voice_output_queue = voice_output_queue
 
     print("🔊 Starting voice assistant loop...")
-    voice_loop(shared_state.voice_output_queue, shared_state.voice_event)
+    voice_loop(shared_state.voice_output_queue, shared_state.voice_event, shared_state.model,         # set earlier in shared_state
+    shared_state.format_type,   # set earlier in shared_state
+    shared_state.access_token,  # set earlier in shared_state
+    shared_state.is_speaking )
 

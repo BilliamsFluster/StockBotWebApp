@@ -2,6 +2,7 @@
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
+  'http://192.168.1.163:3000',
   // Add more frontend origins as needed (e.g. production domains)
 ];
 

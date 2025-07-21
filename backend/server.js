@@ -7,6 +7,7 @@ import authRoutes from './routes/authRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import cookieParser from 'cookie-parser';
 import jarvisRoutes from './routes/jarvisRoutes.js';
+import schwabRoutes from './routes/schwabRoutes.js';
 
 
 connectDB();
@@ -28,6 +29,7 @@ app.get('/', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use("/api/jarvis", jarvisRoutes);
+app.use('/api/schwab', schwabRoutes);
 
 // Server
 const PORT = env.PORT || 5000;

@@ -2,6 +2,12 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 
+const SchwabTokenSchema = new mongoose.Schema({
+  access_token: String,
+  refresh_token: String,
+  expires_at: Number, // UNIX timestamp
+});
+
 const userSchema = new mongoose.Schema(
   {
     username: {
@@ -22,10 +28,15 @@ const userSchema = new mongoose.Schema(
     refreshToken: {
       type: String,
     },
-  },
+    schwab_tokens: SchwabTokenSchema,
+
+  }, 
+  
   {
     timestamps: true,
   }
+  
+
 );
 
 // Hash password before saving

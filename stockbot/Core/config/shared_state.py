@@ -9,10 +9,17 @@ appSecret = None
 quiet_mode = False
 gui_output_queue = None
 is_speaking = Event()
+model = None
+format_type = None
 
 
 
 # shared_state.py
+
+def set_schwab_credentials(key: str, secret: str):
+    global appKey, appSecret
+    appKey = key
+    appSecret = secret
 
 def load_access_token(path="tokens.json"):
     global access_token

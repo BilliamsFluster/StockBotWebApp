@@ -1,0 +1,10 @@
+{
+  "pinecone_api_key": "pcsk_6tkV3g_M6E5L7VAzEVTCcrJUkSbVXxSRX4c6je6gaZYj1DmAPvcLd5x6Ds8q4vLcQYSzpL",
+  "pinecone_env": "us-east-1",
+  "pinecone_index": "stock-bot",
+  "namespace": null,
+  "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "embed_dim": 384,
+  "chunk_size": 800,
+  "chunk_overlap": 200
+}

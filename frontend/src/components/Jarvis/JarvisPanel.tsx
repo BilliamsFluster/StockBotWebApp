@@ -1,69 +1,138 @@
 'use client';
 
-import { useState } from 'react';
-import { askJarvis } from '@/api/jarvisApi';
-import { startVoiceAssistant, stopVoiceAssistant } from '@/api/voiceApi';
+import { useState, useEffect, useRef } from 'react';
+import { askJarvis, startVoiceAssistant, stopVoiceAssistant } from '@/api/jarvisApi';
+import SchwabAuth from '@/components/Auth/SchwabAuth';
 
+const MODELS = [
+  { value: 'qwen3:8b', label: 'qwen3:8b' },
+  { value: 'llama3', label: 'llama3' },
+  { value: 'mistral', label: 'mistral' },
+  { value: 'vanilj/palmyra-fin-70b-32k', label: 'palmyra-fin' },
+  { value: 'deepseek-r1:14b', label: 'deepseek-r1' },
+];
+
+const FORMATS = [
+  { value: 'markdown', label: 'Markdown' },
+  { value: 'text', label: 'Text' },
+  { value: 'json', label: 'JSON' },
+];
 
 export default function JarvisPanel() {
   const [prompt, setPrompt] = useState('');
-  const [model, setModel] = useState('qwen3:8b');
-  const [format, setFormat] = useState('markdown');
+  const [model, setModel] = useState(MODELS[0].value);
+  const [format, setFormat] = useState(FORMATS[0].value);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
-  const [toolsOpen, setToolsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [responseLog, setResponseLog] = useState<string[]>([]);
+  const [token, setToken] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
-  const handleSend = async () => {
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const endOfChatRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load token
+  useEffect(() => {
+    const t = localStorage.getItem('token');
+    if (t) setToken(t);
+  }, []);
+
+  // Autofocus input
+  useEffect(() => {
+    textareaRef.current?.focus();
+  }, []);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setSettingsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, []);
+
+  // Auto-scroll on new message
+  useEffect(() => {
+    endOfChatRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [responseLog]);
+
+  const handleSendPrompt = async () => {
     if (!prompt.trim()) return;
-
     setLoading(true);
     setResponseLog((prev) => [...prev, `USER: ${prompt}`]);
-
     try {
-      const data = await askJarvis(prompt, model, format);
-      setResponseLog((prev) => [...prev, `JARVIS: ${data.response || data.error}`]);
-    } catch (err) {
-      setResponseLog((prev) => [...prev, `JARVIS: Error sending request.`]);
+      const { response, error } = await askJarvis(prompt, model, format);
+      setResponseLog((prev) => [
+        ...prev,
+        `JARVIS: ${response || error || 'No response'}`,
+      ]);
+    } catch {
+      setResponseLog((prev) => [...prev, 'JARVIS: Error sending request.']);
     } finally {
       setPrompt('');
       setLoading(false);
     }
   };
 
+  const handleVoiceToggle = async () => {
+    const next = !voiceEnabled;
+    setVoiceEnabled(next);
+    try {
+      if (next) {
+        await startVoiceAssistant(model, format);
+        setResponseLog((prev) => [...prev, '🔊 Voice assistant started.']);
+      } else {
+        await stopVoiceAssistant();
+        setResponseLog((prev) => [...prev, '🔇 Voice assistant stopped.']);
+      }
+    } catch {
+      setResponseLog((prev) => [...prev, '⚠️ Voice toggle failed.']);
+    }
+  };
+
   return (
-    <div className="bg-base-200 rounded-xl shadow-md p-4 flex flex-col gap-4 h-[75vh]">
-      {/* Chat Output */}
-      <div className="flex-1 overflow-y-auto space-y-4 bg-base-100 rounded p-4">
-        {responseLog.map((msg, idx) => (
-          <div
-            key={idx}
-            className={`chat ${msg.startsWith('JARVIS') ? 'chat-end' : 'chat-start'}`}
-          >
-            <div className={`chat-bubble ${msg.startsWith('JARVIS') ? 'chat-bubble-primary' : ''}`}>
-              {msg.replace(/^JARVIS:\s?|^USER:\s?/, '')}
+    <div className="bg-base-200 rounded-xl shadow-md p-4 flex flex-col gap-4 h-[90vh]">
+
+      {/* Schwab Auth */}
+      {token && <SchwabAuth token={token} />}
+
+      {/* Chat */}
+      <div className="flex-1 overflow-y-auto bg-base-100 rounded p-4 space-y-4">
+        {responseLog.map((msg, i) => {
+          const isJarvis = msg.startsWith('JARVIS');
+          const content = msg.replace(/^JARVIS:\s?|^USER:\s?/, '');
+          const variant = isJarvis ? 'primary' : 'secondary';
+
+          return (
+            <div key={i} className={`chat ${isJarvis ? 'chat-end' : 'chat-start'}`}>
+              <div className={`chat-bubble chat-bubble-${variant}`}>
+                {content}
+              </div>
+            </div>
+          );
+        })}
+
+        {loading && (
+          <div className="chat chat-end">
+            <div className="chat-bubble chat-bubble-primary flex gap-1">
+              <span className="w-2 h-2 bg-white rounded-full animate-ping" />
+              <span className="w-2 h-2 bg-white rounded-full animate-ping delay-150" />
+              <span className="w-2 h-2 bg-white rounded-full animate-ping delay-300" />
             </div>
           </div>
-        ))}
+        )}
+
+        <div ref={endOfChatRef} />
       </div>
 
-      {/* Voice Visualizer */}
-      {voiceEnabled && (
-        <div className="flex items-end h-10 gap-1 px-1">
-          {[...Array(16)].map((_, i) => (
-            <div
-              key={i}
-              className="w-[4px] bg-primary rounded"
-              style={{ height: `${Math.random() * 20 + 10}px` }}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* Prompt Input */}
+      {/* Input + Footer */}
       <div className="bg-base-100 rounded-lg p-4 shadow-inner space-y-3">
         <textarea
-          className="textarea textarea-bordered w-full"
+          ref={textareaRef}
+          className="textarea textarea-bordered w-full resize-none"
           rows={3}
           placeholder="Ask Jarvis something..."
           value={prompt}
@@ -71,94 +140,73 @@ export default function JarvisPanel() {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
-              handleSend();
+              handleSendPrompt();
             }
           }}
         />
 
-        {/* Toolbar Row */}
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          {/* Tools Toggle */}
-          <button
-            onClick={() => setToolsOpen(!toolsOpen)}
-            className="flex items-center gap-2 text-sm text-primary hover:text-accent transition-colors"
-          >
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              viewBox="0 0 24 24"
+        <div className="flex justify-between items-center">
+          {/* Settings */}
+          <div className="relative" ref={dropdownRef}>
+            <button
+              aria-label="Settings"
+              onClick={() => setSettingsOpen((p) => !p)}
+              className="btn btn-sm btn-outline"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M3 6h18M3 14h18" />
-            </svg>
-            Tools
-          </button>
-
-          {/* Send Button */}
-          <button className="btn btn-primary btn-sm" onClick={handleSend} disabled={loading}>
-            {loading ? 'Thinking...' : 'Send'}
-          </button>
-        </div>
-
-        {/* Animated Tools Panel */}
-        <div
-          className={`transition-all duration-300 ease-in-out mt-2 ${
-            toolsOpen ? 'opacity-100 max-h-[120px] translate-y-0' : 'opacity-0 max-h-0 overflow-hidden -translate-y-2'
-          }`}
-        >
-          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
-            {/* Model Dropdown */}
-            <select
-              className="select select-sm select-bordered w-full sm:w-auto"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-            >
-              <option value="qwen3:8b">qwen3:8b</option>
-              <option value="llama3">llama3</option>
-              <option value="mistral">mistral</option>
-              <option value="vanilj/palmyra-fin-70b-32k">palmyra-fin</option>
-              <option value="deepseek-r1:14b">deepseek-r1</option>
-            </select>
-
-            {/* Format Dropdown */}
-            <select
-              className="select select-sm select-bordered w-full sm:w-auto"
-              value={format}
-              onChange={(e) => setFormat(e.target.value)}
-            >
-              <option value="markdown">Markdown</option>
-              <option value="text">Text</option>
-              <option value="json">JSON</option>
-            </select>
-
-            {/* Voice Toggle */}
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="toggle toggle-sm"
-                checked={voiceEnabled}
-                onChange={async () => {
-                    const newValue = !voiceEnabled;
-                    setVoiceEnabled(newValue);
-
-                    try {
-                        if (newValue) {
-                        await startVoiceAssistant();
-                        setResponseLog(prev => [...prev, '🔊 Voice assistant started.']);
-                        } else {
-                        await stopVoiceAssistant();
-                        setResponseLog(prev => [...prev, '🔇 Voice assistant stopped.']);
-                        }
-                    } catch (err) {
-                        setResponseLog(prev => [...prev, '⚠️ Voice toggle failed.']);
-                    }
-                    }}
-
-              />
-              Voice
-            </label>
+              ⚙️
+            </button>
+            {settingsOpen && (
+              <div className="absolute bottom-12 right-0 z-10 p-4 bg-base-100 rounded-box shadow w-56 space-y-3 text-sm">
+                <div>
+                  <label className="font-semibold">Model</label>
+                  <select
+                    className="select select-sm select-bordered w-full"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                  >
+                    {MODELS.map((m) => (
+                      <option key={m.value} value={m.value}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="font-semibold">Format</label>
+                  <select
+                    className="select select-sm select-bordered w-full"
+                    value={format}
+                    onChange={(e) => setFormat(e.target.value)}
+                  >
+                    {FORMATS.map((f) => (
+                      <option key={f.value} value={f.value}>
+                        {f.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex justify-between items-center pt-2">
+                  <span className="font-semibold">Voice</span>
+                  <input
+                    type="checkbox"
+                    className="toggle toggle-sm toggle-primary"
+                    checked={voiceEnabled}
+                    onChange={handleVoiceToggle}
+                  />
+                </div>
+              </div>
+            )}
           </div>
+
+          {/* Send */}
+          <button
+            aria-label="Send message"
+            className="btn btn-primary btn-sm"
+            onClick={handleSendPrompt}
+            disabled={loading || !prompt.trim()}
+          >
+            {loading ? 'Thinking…' : 'Send'}
+          </button>
         </div>
       </div>
     </div>
