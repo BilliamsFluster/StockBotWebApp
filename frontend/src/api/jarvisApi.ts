@@ -1,22 +1,38 @@
 import axios from 'axios';
 import env from '../../config/env';
 
-export const askJarvis = async (prompt: string, model: string, format: string) => {
-  const token = localStorage.getItem('token');
-
-  return axios.post(
-    `${env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/ask`,
-    { prompt, model, format }, // ✅ Body
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json', 
-      },
-      withCredentials: true, // If you're using cookies too
-    }
-  ).then(res => res.data);
+type UserPreferences = {
+  model?: string;
+  format?: string;
 };
 
+type User = {
+  preferences?: UserPreferences;
+};
+
+// Ask Jarvis with full user context
+export const askJarvis = async (prompt: string, user: User) => {
+  const token = localStorage.getItem('token');
+
+  const model = user?.preferences?.model || 'llama3';
+  const format = user?.preferences?.format || 'markdown';
+
+  return axios
+    .post(
+      `${env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/ask`,
+      { prompt, model, format },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        withCredentials: true,
+      }
+    )
+    .then((res) => res.data);
+};
+
+// Auth config helper
 const getAuthConfig = () => {
   const token = localStorage.getItem('token');
   return {
@@ -28,48 +44,31 @@ const getAuthConfig = () => {
   };
 };
 
+// Start voice assistant with user's preferences
+export const startVoiceAssistant = (user: User) => {
+  const model = user?.preferences?.model || 'llama3';
+  const format = user?.preferences?.format || 'markdown';
 
-/**
- * Starts the voice assistant with the selected model and format.
- * @param model - The AI model name (e.g., 'qwen3:8b')
- * @param format - The format (e.g., 'markdown', 'text', 'json')
- */
-export const startVoiceAssistant = (model: string, format: string) =>
-  axios.post(
-  `${env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/voice/start`,
-  { model, format },
-  {
-    headers: {
-      Authorization: `Bearer ${localStorage.getItem('token')}`,
-      'Content-Type': 'application/json',
-    },
-    withCredentials: true,
-  }
-);
-
-/**
- * Stops the voice assistant process.
- */
-export const stopVoiceAssistant = () =>
-  axios.post(
-    `${env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/voice/stop`,
-    {},
+  return axios.post(
+    `${env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/voice/start`,
+    { model, format },
     getAuthConfig()
   );
+};
 
+// Stop voice assistant
+export const stopVoiceAssistant = () =>
+  axios.post(`${env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/voice/stop`, {}, getAuthConfig());
 
-  type VoiceCallback = (data: { text: string }) => void;
+// Subscribe to voice stream
+type VoiceCallback = (data: { text: string }) => void;
 
 let eventSource: EventSource | null = null;
 
-export const subscribeToVoiceStream = (
-  callback: VoiceCallback
-): (() => void) => {
-  if (eventSource) {
-    eventSource.close();
-  }
+export const subscribeToVoiceStream = (callback: VoiceCallback): (() => void) => {
+  if (eventSource) eventSource.close();
 
-  eventSource = new EventSource("http://localhost:5001/api/jarvis/voice/stream");
+  eventSource = new EventSource(`${env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/voice/stream`);
 
   eventSource.onmessage = (event) => {
     const data = JSON.parse(event.data);
@@ -77,11 +76,10 @@ export const subscribeToVoiceStream = (
   };
 
   eventSource.onerror = (err) => {
-    console.warn("🔴 Voice stream error:", err);
+    console.warn('🔴 Voice stream error:', err);
     eventSource?.close();
   };
 
-  // Return cleanup function
   return () => {
     eventSource?.close();
     eventSource = null;

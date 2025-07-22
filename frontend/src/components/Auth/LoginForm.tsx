@@ -44,15 +44,16 @@ const LoginForm = () => {
     toast.success('Logged in!');
     router.push('/home');
   } catch (err: any) {
-    const status = err.response?.status;
-    const msg = err.response?.data?.message || 'Login failed';
+  const status = err.response?.status;
+  const msg = err.response?.data?.message || 'Login failed';
 
-    if (status === 401) {
-      toast.error('Incorrect email or password');
-    } else {
-      toast.error(msg);
-    }
-  }
+  // Debugging payload
+  console.error('❌ Login error:', err);
+
+  // 🔔 Show all possible info via toast
+  toast.error(`Status: ${status || 'N/A'} | ${msg}`);
+  toast.error(`Details: ${JSON.stringify(err.response?.data || {}, null, 2)}`);
+}
 };
 
 

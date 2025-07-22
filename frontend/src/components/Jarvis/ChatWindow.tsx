@@ -4,7 +4,7 @@ import React, { RefObject } from 'react';
 interface ChatWindowProps {
   responseLog: string[];
   loading: boolean;
-  endRef: RefObject<HTMLDivElement>;
+  endRef: React.RefObject<HTMLDivElement | null>;
 }
 
 const ChatWindow: React.FC<ChatWindowProps> = ({ responseLog, loading, endRef }) => (

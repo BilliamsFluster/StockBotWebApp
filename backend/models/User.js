@@ -5,7 +5,18 @@ import bcrypt from 'bcryptjs';
 const SchwabTokenSchema = new mongoose.Schema({
   access_token: String,
   refresh_token: String,
-  expires_at: Number, // UNIX timestamp
+  expires_at: Number,
+});
+
+const PreferencesSchema = new mongoose.Schema({
+  model: {
+    type: String,
+    default: 'llama3',
+  },
+  format: {
+    type: String,
+    default: 'markdown',
+  },
 });
 
 const userSchema = new mongoose.Schema(
@@ -25,20 +36,12 @@ const userSchema = new mongoose.Schema(
       required: [true, 'Password is required'],
       minlength: 6,
     },
-    refreshToken: {
-      type: String,
-    },
+    refreshToken: String,
     schwab_tokens: SchwabTokenSchema,
-
-  }, 
-  
-  {
-    timestamps: true,
-  }
-  
-
+    preferences: PreferencesSchema, 
+  },
+  { timestamps: true }
 );
-
 // Hash password before saving
 userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();

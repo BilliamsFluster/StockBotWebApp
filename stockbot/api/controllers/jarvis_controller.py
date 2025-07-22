@@ -31,15 +31,18 @@ async def ask_jarvis(request):
 
 async def start_voice(request):
     global voice_process
+
     if voice_process and voice_process.poll() is None:
         return {"error": "Voice assistant already running."}
 
+    # Build config from request
     config = {
         "model": request.model,
         "format": request.format,
         "access_token": request.access_token,
     }
 
+    # Optional: Save to shared_state.json (can still be used elsewhere if needed)
     json_path = os.path.abspath("Core/config/shared_state.json")
     os.makedirs(os.path.dirname(json_path), exist_ok=True)
     with open(json_path, "w") as f:
@@ -47,10 +50,18 @@ async def start_voice(request):
 
     try:
         python_path = os.path.abspath("venv/Scripts/python.exe")
+
+        # ✅ Inject model/format/access_token into subprocess environment
+        env_copy = os.environ.copy()
+        env_copy["MODEL"] = request.model
+        env_copy["FORMAT"] = request.format
+        env_copy["ACCESS_TOKEN"] = request.access_token
+
         voice_process = subprocess.Popen(
             [python_path, "Core/ollama/voice_entrypoint.py"],
-            env=os.environ
+            env=env_copy
         )
+
         return {"message": "Voice assistant started."}
     except Exception as e:
         print("❌ Launch failed:", str(e))

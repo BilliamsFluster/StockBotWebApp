@@ -6,43 +6,35 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 if project_root not in sys.path:
     sys.path.append(project_root)
 
-# 🔧 Imports
 from Core.ollama.voice_assistant import voice_loop
-from Core.config import shared_state
-
-shared_state.load_runtime_config()
 from queue import Queue
 from threading import Event
-
-import time
 
 if __name__ == "__main__":
     print("🟢 voice_entrypoint starting...")
 
-    # Setup communication primitives
+    # ✅ Load model config from environment
+    model = os.getenv("MODEL", "llama3")
+    format_type = os.getenv("FORMAT", "text")
+    access_token = os.getenv("ACCESS_TOKEN", "dummy-token")
+
+    # ✅ Setup runtime flags and queues
     voice_output_queue = Queue()
     voice_event = Event()
-    voice_event.set()  # ✅ Must be set initially or voice loop exits
+    voice_event.set()
 
-    shared_state.voice_event = voice_event
-    shared_state.voice_output_queue = voice_output_queue
-    print("🔊 Starting voice assistant with model:", shared_state.model)
-    # Ensure shared_state values are initialized
-    shared_state.model = shared_state.model or "llama3"
-    shared_state.format_type = shared_state.format_type or "text"
-    shared_state.access_token = shared_state.access_token or "dummy-token"
-    shared_state.is_speaking = shared_state.is_speaking or Event()
+    is_speaking = Event()
 
-    print(f"🔊 Starting voice assistant loop with model: {shared_state.model}, format: {shared_state.format_type}")
-    print (f"🔑 Access token: {shared_state.access_token}")
-    
+    # ✅ Log the values
+    print(f"🔊 Starting voice assistant loop with model: {model}, format: {format_type}")
+    print(f"🔑 Access token: {access_token[:10]}...")
 
-    # Call the loop
+    # ✅ Start the voice loop
     voice_loop(
-        shared_state.voice_event,
-        shared_state.voice_output_queue,
-        shared_state.model,
-        shared_state.format_type,
-        shared_state.access_token,
-        shared_state.is_speaking
+        voice_event,
+        voice_output_queue,
+        model,
+        format_type,
+        access_token,
+        is_speaking
     )

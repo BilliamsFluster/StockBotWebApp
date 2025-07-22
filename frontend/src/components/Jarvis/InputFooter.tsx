@@ -5,7 +5,7 @@ import SettingsMenu from './SettingsMenu';
 interface InputFooterProps {
   prompt: string;
   setPrompt: (p: string) => void;
-  textareaRef: RefObject<HTMLTextAreaElement>;
+  textareaRef: RefObject<HTMLTextAreaElement| null>;
   onSend: () => void;
   model: string;
   setModel: (m: string) => void;
@@ -15,7 +15,7 @@ interface InputFooterProps {
   onVoiceToggle: () => void;
   settingsOpen: boolean;
   setSettingsOpen: (b: boolean) => void;
-  dropdownRef: RefObject<HTMLDivElement>;
+  dropdownRef: RefObject<HTMLDivElement| null>;
 }
 
 const InputFooter: React.FC<InputFooterProps> = ({

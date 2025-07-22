@@ -4,29 +4,34 @@ import Core.config.shared_state as shared_state
 import pandas as pd
 import time
 
-def fetch_account_info():
+def fetch_account_info(access_token=None):
+    if not access_token:
+        from Core.config import shared_state
+        access_token = shared_state.access_token
+
     base_url = "https://api.schwabapi.com/trader/v1/"
-    
-    account_response = requests.get(
-        f'{base_url}/accounts/accountNumbers',
-        headers={'Authorization': f'Bearer {shared_state.access_token}'}
-    )
+    headers = {'Authorization': f'Bearer {access_token}'}
+
+    account_response = requests.get(f'{base_url}/accounts/accountNumbers', headers=headers)
     account_data = account_response.json()
     print(f"Account Numbers: {account_data}")
 
-    account_balances_response = requests.get(
-        f'{base_url}/accounts',
-        headers={'Authorization': f'Bearer {shared_state.access_token}'}
-    )
+    account_balances_response = requests.get(f'{base_url}/accounts', headers=headers)
     account_balances_data = account_balances_response.json()
     print(f"Account Balances: {account_balances_data}")
 
     return account_balances_data
 
-def fetch_detailed_account_info(account_number):
+
+def fetch_detailed_account_info(account_number, access_token=None):
+    if not access_token:
+        from Core.config import shared_state
+        access_token = shared_state.access_token
+
     url = f"https://api.schwabapi.com/trader/v1/accounts/{account_number}?fields=positions"
-    headers = {'Authorization': f'Bearer {shared_state.access_token}'}
+    headers = {'Authorization': f'Bearer {access_token}'}
     response = requests.get(url, headers=headers)
+
     if response.status_code == 200:
         return response.json()
     else:
@@ -35,16 +40,20 @@ def fetch_detailed_account_info(account_number):
         return None
 
 
+def fetch_market_data(symbol, access_token=None):
+    if not access_token:
+        from Core.config import shared_state
+        access_token = shared_state.access_token
 
-def fetch_market_data(symbol):
     base_url = "https://api.schwabapi.com/marketdata/v1/quotes"
-    
     params = {'symbols': symbol}
-    headers = {'Authorization': f'Bearer {shared_state.access_token}'}
+    headers = {'Authorization': f'Bearer {access_token}'}
     response = requests.get(base_url, headers=headers, params=params)
+
     print(f"Request URL: {response.url}")
     print(f"Response Status Code: {response.status_code}")
     print(f"Response Content: {response.content}")
+
     if response.status_code == 200:
         data = response.json()
         if symbol in data:
@@ -65,7 +74,12 @@ def fetch_market_data(symbol):
         messagebox.showerror("Error", f"Error fetching market data: {response.status_code}")
         return pd.DataFrame()
 
-def fetch_historical_data(symbol, start_date, end_date, period_type='year', period=1):
+
+def fetch_historical_data(symbol, start_date, end_date, period_type='year', period=1, access_token=None):
+    if not access_token:
+        from Core.config import shared_state
+        access_token = shared_state.access_token
+
     base_url = "https://api.schwabapi.com/marketdata/v1/pricehistory"
     period_type_to_frequency_type = {
         'day': 'minute',
@@ -85,14 +99,13 @@ def fetch_historical_data(symbol, start_date, end_date, period_type='year', peri
         'frequency': 1,
         'needExtendedHoursData': 'true'
     }
-    headers = {'Authorization': f'Bearer {shared_state.access_token}'}
+    headers = {'Authorization': f'Bearer {access_token}'}
     response = requests.get(base_url, headers=headers, params=params)
-    
+
     if response.status_code == 200:
         data = response.json()
         if 'candles' in data:
-            historical_data = data['candles']
-            df = pd.DataFrame(historical_data)
+            df = pd.DataFrame(data['candles'])
             pd.set_option('display.max_rows', 100)
             return df
         else:
@@ -102,16 +115,19 @@ def fetch_historical_data(symbol, start_date, end_date, period_type='year', peri
         print(f"Error fetching historical data: {response.status_code}\n{response.text}")
         return pd.DataFrame()
     
-def get_account_data_for_ai():
-    headers = {'Authorization': f'Bearer {shared_state.access_token}'}
-    response = requests.get("https://api.schwabapi.com/trader/v1/accounts?fields=positions", headers=headers)
+def get_account_data_for_ai(access_token=None):
+    if not access_token:
+        from Core.config import shared_state
+        access_token = shared_state.access_token
 
+    headers = {'Authorization': f'Bearer {access_token}'}
+    response = requests.get("https://api.schwabapi.com/trader/v1/accounts?fields=positions", headers=headers)
 
     if response.status_code != 200:
         return f"⚠️ Failed to fetch account data. Status: {response.status_code}"
 
     try:
-        account_data_list = response.json()  # ✅ /accounts returns a list
+        account_data_list = response.json()
     except Exception:
         return "⚠️ Failed to parse account data response."
 

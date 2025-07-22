@@ -26,3 +26,23 @@ export const updateUserProfile = async (req, res) => {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
+
+export const updatePreferences = async (req, res) => {
+  const { model, format } = req.body;
+  const user = await User.findById(req.user._id);
+
+  if (!user) return res.status(404).json({ message: 'User not found' });
+
+  user.preferences = { model, format };
+  await user.save();
+
+  res.json({ message: 'Preferences updated' });
+};
+
+export const getPreferences = async (req, res) => {
+  const user = await User.findById(req.user._id);
+
+  if (!user) return res.status(404).json({ message: 'User not found' });
+
+  res.json(user.preferences || { model: 'llama3', format: 'markdown' });
+};
