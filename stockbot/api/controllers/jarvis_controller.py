@@ -37,7 +37,7 @@ async def start_voice(request):
     config = {
         "model": request.model,
         "format": request.format,
-        "access_token": "abc123"
+        "access_token": request.access_token,
     }
 
     json_path = os.path.abspath("Core/config/shared_state.json")
@@ -87,3 +87,21 @@ async def voice_stream():
             listeners.remove(queue)
 
     return EventSourceResponse(event_generator())
+
+
+def store_schwab_tokens(req):
+    # Store to shared_state Python module
+    shared_state.access_token = req.access_token
+    shared_state.refresh_token = req.refresh_token
+    shared_state.expires_at = req.expires_at
+
+    # Optional: update model + format if desired
+    shared_state.model = getattr(shared_state, "model", "qwen3")
+    shared_state.format_type = getattr(shared_state, "format_type", "markdown")
+
+    print("✅ Schwab tokens set in shared_state:")
+    print("access_token:", shared_state.access_token)
+    print("refresh_token:", shared_state.refresh_token)
+    print("expires_at:", shared_state.expires_at)
+
+    return {"message": "Schwab tokens stored in shared_state."}

@@ -39,6 +39,16 @@ export async function refreshSchwabToken(userId) {
     };
 
     await user.save();
+    try {
+      await axios.post(`${process.env.STOCKBOT_URL}/api/jarvis/authorize`, {
+        user_id: user._id,
+        access_token: data.access_token,
+        refresh_token: data.refresh_token || refresh_token,
+        expires_at: data.expires_at,
+      });
+    } catch (err) {
+      console.error('⚠ Failed to sync tokens with bot:', err.response?.data || err.message);
+    }
     return data.access_token;
 
   } catch (err) {

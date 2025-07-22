@@ -1,6 +1,7 @@
 import axios from "axios";
-import { spawn } from "child_process";
-import { env } from "../config/env.js"; 
+import { env } from "../config/env.js";
+import { refreshSchwabToken } from "../config/schwab.js";
+
 const STOCKBOT_URL = env.STOCKBOT_URL;
 
 // Global reference to running voice assistant process
@@ -15,13 +16,18 @@ export const handleJarvisPrompt = async (req, res) => {
   if (!prompt || !model || !format) {
     return res.status(400).json({ error: "Missing required fields." });
   }
-  console.log(STOCKBOT_URL)
 
   try {
+    const accessToken = await refreshSchwabToken(req.user._id);
+    if (!accessToken) {
+      return res.status(401).json({ error: "Failed to refresh Schwab token." });
+    }
+
     const response = await axios.post(`${STOCKBOT_URL}/api/jarvis/ask`, {
       prompt,
       model,
       format,
+      access_token: accessToken,
     });
 
     res.json({ response: response.data.response });
@@ -32,7 +38,6 @@ export const handleJarvisPrompt = async (req, res) => {
 };
 
 // ---- START VOICE ASSISTANT ----
-
 export const startVoiceAssistant = async (req, res) => {
   const { model, format } = req.body;
 
@@ -41,9 +46,15 @@ export const startVoiceAssistant = async (req, res) => {
   }
 
   try {
+    const accessToken = await refreshSchwabToken(req.user._id);
+    if (!accessToken) {
+      return res.status(401).json({ error: "Failed to refresh Schwab token." });
+    }
+
     const response = await axios.post(`${STOCKBOT_URL}/api/jarvis/voice/start`, {
       model,
       format,
+      access_token: accessToken,
     });
 
     res.json(response.data);
@@ -52,7 +63,6 @@ export const startVoiceAssistant = async (req, res) => {
     res.status(500).json({ error: "Failed to start voice assistant." });
   }
 };
-
 
 // ---- STOP VOICE ASSISTANT ----
 export const stopVoiceAssistant = async (req, res) => {
@@ -68,7 +78,7 @@ export const stopVoiceAssistant = async (req, res) => {
 // ---- INTERRUPT TTS ----
 export const interruptVoiceAssistant = async (req, res) => {
   try {
-    await axios.post(`${STOCKBOT_URL}/api/interrupt`); // You must implement this in FastAPI if needed
+    await axios.post(`${STOCKBOT_URL}/api/interrupt`);
     res.json({ message: "TTS interrupted." });
   } catch (e) {
     res.status(500).json({ error: "Interrupt failed." });
@@ -78,13 +88,14 @@ export const interruptVoiceAssistant = async (req, res) => {
 // ---- POLL VOICE STATUS ----
 export const getVoiceStatus = async (req, res) => {
   try {
-    const response = await axios.get(`${STOCKBOT_URL}/api/status`); // Also needs to be implemented on FastAPI side
+    const response = await axios.get(`${STOCKBOT_URL}/api/status`);
     res.json(response.data);
   } catch (e) {
     res.status(500).json({ error: "Failed to get voice status." });
   }
 };
 
+// ---- VOICE STREAM ----
 let clients = [];
 
 export const voiceStream = (req, res) => {
@@ -112,4 +123,3 @@ export const relayVoiceData = (req, res) => {
   );
   res.sendStatus(200);
 };
-

@@ -34,7 +34,7 @@ if __name__ == "__main__":
     shared_state.is_speaking = shared_state.is_speaking or Event()
 
     print(f"🔊 Starting voice assistant loop with model: {shared_state.model}, format: {shared_state.format_type}")
-    print(">>> voice_event is set:", shared_state.voice_event.is_set())
+    print (f"🔑 Access token: {shared_state.access_token}")
     
 
     # Call the loop

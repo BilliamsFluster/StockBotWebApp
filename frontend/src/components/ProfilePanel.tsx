@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { FC } from 'react';
+import { useAuth } from '@/context/AuthContext';
 
 interface ProfilePanelProps {
   isOpen: boolean;
@@ -12,12 +13,14 @@ interface ProfilePanelProps {
 
 const ProfilePanel: FC<ProfilePanelProps> = ({ isOpen, onClose, darkMode, setDarkMode }) => {
   const router = useRouter();
+  const { setUser } = useAuth();
 
   const handleLogout = () => {
-    localStorage.removeItem('token'); // clear token or session data
+    localStorage.removeItem('token');
+    setUser(null); // ✅ clear auth context immediately
     onClose();
-    router.push('/'); // Next.js equivalent of navigate("/auth")
-  };
+    router.push('/');
+};
 
   return (
     <div

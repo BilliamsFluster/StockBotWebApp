@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request
 from api.controllers import jarvis_controller
-from api.models.jarvis_models import PromptRequest, StartVoiceRequest
+from api.models.jarvis_models import PromptRequest, StartVoiceRequest, SchwabAuthRequest
 
 router = APIRouter()
 
@@ -24,3 +24,7 @@ async def voice_event(request: Request):
 @router.get("/voice/stream")
 async def voice_stream():
     return await jarvis_controller.voice_stream()
+
+@router.post("/authorize")
+async def authorize_schwab(req: SchwabAuthRequest):
+    return jarvis_controller.store_schwab_tokens(req)
