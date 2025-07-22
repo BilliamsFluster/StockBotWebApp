@@ -59,3 +59,12 @@ frontend/.eslintcache
 /backend/.cache/
 backend/dist/
 backend/build/
+# ========================
+# Python / FastAPI backend
+# ========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.env
