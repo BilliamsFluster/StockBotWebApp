@@ -56,3 +56,34 @@ export const stopVoiceAssistant = () =>
     {},
     getAuthConfig()
   );
+
+
+  type VoiceCallback = (data: { text: string }) => void;
+
+let eventSource: EventSource | null = null;
+
+export const subscribeToVoiceStream = (
+  callback: VoiceCallback
+): (() => void) => {
+  if (eventSource) {
+    eventSource.close();
+  }
+
+  eventSource = new EventSource("http://localhost:5001/api/jarvis/voice/stream");
+
+  eventSource.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    callback(data);
+  };
+
+  eventSource.onerror = (err) => {
+    console.warn("🔴 Voice stream error:", err);
+    eventSource?.close();
+  };
+
+  // Return cleanup function
+  return () => {
+    eventSource?.close();
+    eventSource = null;
+  };
+};
