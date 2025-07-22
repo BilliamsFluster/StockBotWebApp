@@ -5,11 +5,13 @@ import Core.config.shared_state as shared_state
 from Core.config.shared_state import access_token
 from requests.exceptions import HTTPError
 import threading, time, re
+import requests
 from queue import Queue, Empty
 from Core.web.web_search import fetch_financial_snippets
 from Core.API.data_fetcher import get_account_data_for_ai
 from datetime import datetime
 from Core.jarvis.core import call_jarvis_stream
+
 
 # State flags
 cancel_event = threading.Event()
@@ -144,7 +146,6 @@ async def stream_response_and_speak(
     inside_think = False
 
     def smart_split(txt: str) -> list[str]:
-        # split on true sentence boundaries
         pattern = r"(?<=[\.\?\!])\s+(?=[A-Z])"
         parts = re.split(pattern, txt)
         return [p.strip() for p in parts if p.strip()]
@@ -153,7 +154,6 @@ async def stream_response_and_speak(
         if cancel_event.is_set():
             return
 
-        # skip internal monologue
         if "<think>" in token:
             inside_think = True
             continue
@@ -166,19 +166,25 @@ async def stream_response_and_speak(
         buffer += token
         parts = smart_split(buffer)
 
-        # if there's more than one part, we have at least one full sentence
         if len(parts) > 1:
-            # speak all complete sentences
             for sent in parts[:-1]:
                 voice_output_queue.put({"role": "jarvis", "text": sent})
+                # 🔄 Send update to FastAPI for SSE or polling
+                try:
+                    requests.post("http://localhost:5001/api/jarvis/voice/event", json={"text": sent})
+                except Exception as e:
+                    print("[WARN] SSE publish failed:", e)
                 await speak_stream(sent)
-            # keep the last (incomplete) fragment in buffer
             buffer = parts[-1]
 
-    # final flush of anything left
     if buffer and not cancel_event.is_set():
         voice_output_queue.put({"role": "jarvis", "text": buffer})
+        try:
+            requests.post("http://localhost:5001/api/jarvis/voice/event", json={"text": buffer})
+        except Exception as e:
+            print("[WARN] Final SSE publish failed:", e)
         await speak_stream(buffer)
+
 # Continuously listen in background
 
 def background_listener():

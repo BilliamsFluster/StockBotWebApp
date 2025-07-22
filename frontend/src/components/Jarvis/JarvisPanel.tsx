@@ -92,6 +92,17 @@ export default function JarvisPanel() {
       setResponseLog((prev) => [...prev, '⚠️ Voice toggle failed.']);
     }
   };
+  useEffect(() => {
+  if (!voiceEnabled) return;
+
+  const source = new EventSource(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/voice/stream`);
+  source.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    setResponseLog((prev) => [...prev, `JARVIS: ${data.text}`]);
+  };
+
+  return () => source.close();
+}, [voiceEnabled]);
 
   return (
     <div className="bg-base-200 rounded-xl shadow-md p-4 flex flex-col gap-4 h-[90vh]">

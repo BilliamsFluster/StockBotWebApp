@@ -5,7 +5,9 @@ import {
   startVoiceAssistant,
   stopVoiceAssistant,
   interruptVoiceAssistant,
-  getVoiceStatus
+  getVoiceStatus,
+  voiceStream,
+  relayVoiceData
 } from "../controllers/jarvisController.js";
 
 const router = express.Router();
@@ -17,6 +19,9 @@ router.post("/ask", protectRoute, handleJarvisPrompt);
 router.post("/voice/start", protectRoute, startVoiceAssistant);
 router.post("/voice/stop", protectRoute, stopVoiceAssistant);
 router.post("/voice/interrupt", protectRoute, interruptVoiceAssistant);
-router.get("/voice/status", protectRoute, getVoiceStatus); // Optional
+router.get("/voice/status", protectRoute, getVoiceStatus); 
+router.get("/voice/stream", voiceStream);
+router.post("/voice/event", relayVoiceData);
+
 
 export default router;

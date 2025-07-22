@@ -84,3 +84,32 @@ export const getVoiceStatus = async (req, res) => {
     res.status(500).json({ error: "Failed to get voice status." });
   }
 };
+
+let clients = [];
+
+export const voiceStream = (req, res) => {
+  res.set({
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  });
+  res.flushHeaders();
+
+  const clientId = Date.now();
+  clients.push({ id: clientId, res });
+
+  req.on("close", () => {
+    clients = clients.filter(c => c.id !== clientId);
+  });
+};
+
+export const relayVoiceData = (req, res) => {
+  const { text } = req.body;
+  if (!text) return res.status(400).send("Missing text");
+
+  clients.forEach(c =>
+    c.res.write(`data: ${JSON.stringify({ text })}\n\n`)
+  );
+  res.sendStatus(200);
+};
+
