@@ -12,9 +12,9 @@ import schwabRoutes from './routes/schwabRoutes.js';
 
 connectDB();
 const app = express();
-app.use(express.json());
-app.use(cookieParser());
 app.use(cors(corsOptions));
+app.use(cookieParser());
+app.use(express.json());
 
 
 
