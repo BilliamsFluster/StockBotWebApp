@@ -11,7 +11,7 @@ const SchwabTokenSchema = new mongoose.Schema({
 const PreferencesSchema = new mongoose.Schema({
   model: {
     type: String,
-    default: 'llama3',
+    default: 'qwen3:8b',
   },
   format: {
     type: String,
