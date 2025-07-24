@@ -1,11 +1,13 @@
 // components/Jarvis/InputFooter.tsx
+'use client';
+
 import React, { RefObject } from 'react';
 import SettingsMenu from './SettingsMenu';
 
 interface InputFooterProps {
   prompt: string;
   setPrompt: (p: string) => void;
-  textareaRef: RefObject<HTMLTextAreaElement| null>;
+  textareaRef: RefObject<HTMLTextAreaElement | null>;
   onSend: () => void;
   model: string;
   setModel: (m: string) => void;
@@ -15,17 +17,23 @@ interface InputFooterProps {
   onVoiceToggle: () => void;
   settingsOpen: boolean;
   setSettingsOpen: (b: boolean) => void;
-  dropdownRef: RefObject<HTMLDivElement| null>;
+  dropdownRef: RefObject<HTMLDivElement | null>;
 }
 
 const InputFooter: React.FC<InputFooterProps> = ({
-  prompt, setPrompt, textareaRef,
+  prompt,
+  setPrompt,
+  textareaRef,
   onSend,
-  model, setModel,
-  format, setFormat,
-  voiceEnabled, onVoiceToggle,
-  settingsOpen, setSettingsOpen,
-  dropdownRef
+  model,
+  setModel,
+  format,
+  setFormat,
+  voiceEnabled,
+  onVoiceToggle,
+  settingsOpen,
+  setSettingsOpen,
+  dropdownRef,
 }) => (
   <div className="bg-base-100 rounded-lg p-4 shadow-inner space-y-3">
     <textarea
@@ -48,18 +56,34 @@ const InputFooter: React.FC<InputFooterProps> = ({
         <button
           aria-label="Settings"
           onClick={() => setSettingsOpen(!settingsOpen)}
-
-
           className="btn btn-sm btn-outline"
         >
           ⚙️
         </button>
-        <SettingsMenu
-          model={model} setModel={setModel}
-          format={format} setFormat={setFormat}
-          voiceEnabled={voiceEnabled} onVoiceToggle={onVoiceToggle}
-          settingsOpen={settingsOpen}
-        />
+
+{settingsOpen && (
+  <div
+    className="
+      absolute bottom-full left-0 mb-2 z-50
+      translate-x-0 sm:translate-x-2
+      max-w-[calc(100vw-2rem)]
+    "
+  >
+    <div className="w-56 max-w-xs">
+      <SettingsMenu
+        model={model}
+        setModel={setModel}
+        format={format}
+        setFormat={setFormat}
+        voiceEnabled={voiceEnabled}
+        onVoiceToggle={onVoiceToggle}
+        settingsOpen={settingsOpen}
+      />
+    </div>
+  </div>
+)}
+
+
       </div>
 
       <button
