@@ -28,21 +28,48 @@ export const updateUserProfile = async (req, res) => {
 };
 
 export const updatePreferences = async (req, res) => {
-  const { model, format } = req.body;
+  const { model, format, voiceEnabled } = req.body;
   const user = await User.findById(req.user._id);
 
   if (!user) return res.status(404).json({ message: 'User not found' });
 
-  user.preferences = { model, format };
-  await user.save();
+  user.preferences = {
+    ...user.preferences, 
+    ...(model !== undefined && { model }),
+    ...(format !== undefined && { format }),
+    ...(voiceEnabled !== undefined && { voiceEnabled }),
+  };
 
+  await user.save();
   res.json({ message: 'Preferences updated' });
 };
 
+
 export const getPreferences = async (req, res) => {
-  const user = await User.findById(req.user._id);
+  try {
+    const user = await User.findById(req.user._id);
 
-  if (!user) return res.status(404).json({ message: 'User not found' });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
 
-  res.json(user.preferences || { model: 'llama3', format: 'markdown' });
+    const defaults = {
+      model: 'llama3',
+      format: 'markdown',
+      voiceEnabled: false,
+    };
+
+    // 🛠 Convert Mongoose subdocument to plain object
+    const preferences = user.preferences?.toObject?.() || {};
+
+    return res.json({
+      preferences: {
+        ...defaults,
+        ...preferences, // ✅ now guaranteed to be plain JSON
+      },
+    });
+  } catch (err) {
+    console.error('❌ Error in getPreferences:', err);
+    return res.status(500).json({ message: 'Server error' });
+  }
 };

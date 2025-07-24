@@ -1,13 +1,13 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   askJarvis,
   startVoiceAssistant,
   stopVoiceAssistant,
   subscribeToVoiceStream,
 } from '@/api/jarvisApi';
-import { getUserPreferences } from '@/api/client';
+import { getUserPreferences, setUserPreferences } from '@/api/client';
 
 import SchwabAuth from '@/components/Auth/SchwabAuth';
 import ChatWindow from './ChatWindow';
@@ -16,45 +16,55 @@ import InputFooter from './InputFooter';
 const JarvisPanel: React.FC = () => {
   const [prompt, setPrompt] = useState('');
   const [user, setUser] = useState<any>(null);
-  const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [loading, setLoading] = useState(false);
   const [responseLog, setResponseLog] = useState<string[]>([]);
   const [token, setToken] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
+  const [model, setModel] = useState('llama3');
+  const [format, setFormat] = useState('markdown');
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+
   const dropdownRef = useRef<HTMLDivElement>(null);
   const endOfChatRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load access token on mount
+  // Poll for token
   useEffect(() => {
-    const t = localStorage.getItem('token');
-    if (t) setToken(t);
-  }, []);
+    const interval = setInterval(() => {
+      const t = localStorage.getItem('token');
+      if (t && t !== token) setToken(t);
+    }, 500);
+    return () => clearInterval(interval);
+  }, [token]);
 
-  // Autofocus input
-  useEffect(() => {
-    textareaRef.current?.focus();
-  }, []);
+  // Fetch and apply preferences
+  const loadPreferences = useCallback(async () => {
+    try {
+      console.log('[LOAD PREFS] Token detected, fetching preferences...');
+      const { data } = await getUserPreferences();
+      if (!data) return;
 
-  // Scroll on new message
-  useEffect(() => {
-    endOfChatRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [responseLog]);
+      const cleanUser = JSON.parse(JSON.stringify(data));
+      const prefs = cleanUser.preferences || {};
 
-  // Load full user preferences from DB
-  useEffect(() => {
-    const fetchUser = async () => {
-      try {
-        const { data } = await getUserPreferences();
-        setUser(data);
-      } catch (err) {
-        console.error('Failed to load user preferences:', err);
+      console.log('[PREFS LOADED]', prefs);
+      setUser(cleanUser);
+      prefs.model && setModel(prefs.model);
+      prefs.format && setFormat(prefs.format);
+      if (typeof prefs.voiceEnabled === 'boolean') {
+        setVoiceEnabled(prefs.voiceEnabled);
       }
-    };
-    fetchUser();
+    } catch (err) {
+      console.error('❌ Failed to load user preferences:', err);
+    }
   }, []);
 
+  useEffect(() => {
+    if (token) loadPreferences();
+  }, [token, loadPreferences]);
+
+  // Prompt submission
   const handleSendPrompt = async () => {
     if (!prompt.trim() || !user) return;
     setLoading(true);
@@ -74,9 +84,11 @@ const JarvisPanel: React.FC = () => {
     }
   };
 
+  // Toggle voice mode
   const handleVoiceToggle = async () => {
     const next = !voiceEnabled;
     setVoiceEnabled(next);
+    setUserPreferences({ voiceEnabled: next });
 
     try {
       if (next) {
@@ -91,45 +103,41 @@ const JarvisPanel: React.FC = () => {
     }
   };
 
-  // Live stream from voice assistant
+  // Scroll on new response
   useEffect(() => {
-    if (!voiceEnabled) return;
-    const unsubscribe = subscribeToVoiceStream(({ text }) => {
-      setResponseLog((prev) => [...prev, `JARVIS: ${text}`]);
-    });
-    return unsubscribe;
-  }, [voiceEnabled]);
+    endOfChatRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [responseLog]);
 
-  const model = user?.preferences?.model || 'llama3';
-  const format = user?.preferences?.format || 'markdown';
+  // Focus input
+  useEffect(() => {
+    textareaRef.current?.focus();
+  }, []);
 
   return (
     <div className="bg-base-200 rounded-xl shadow-md p-4 flex flex-col gap-4 h-[90vh]">
       {token && <SchwabAuth token={token} />}
+
       <ChatWindow
         responseLog={responseLog}
         loading={loading}
         endRef={endOfChatRef}
       />
+
       <InputFooter
         prompt={prompt}
         setPrompt={setPrompt}
         textareaRef={textareaRef}
         onSend={handleSendPrompt}
         model={model}
-        setModel={(m) =>
-          setUser((prev: any) => ({
-            ...prev,
-            preferences: { ...prev.preferences, model: m },
-          }))
-        }
+        setModel={(m) => {
+          setModel(m);
+          setUserPreferences({ model: m });
+        }}
         format={format}
-        setFormat={(f) =>
-          setUser((prev: any) => ({
-            ...prev,
-            preferences: { ...prev.preferences, format: f },
-          }))
-        }
+        setFormat={(f) => {
+          setFormat(f);
+          setUserPreferences({ format: f });
+        }}
         voiceEnabled={voiceEnabled}
         onVoiceToggle={handleVoiceToggle}
         settingsOpen={settingsOpen}
