@@ -8,64 +8,66 @@ from Core.config import shared_state
 from Core.web.web_search import fetch_financial_snippets
 from Core.API.data_fetcher import get_account_data_for_ai
 from Core.ollama.ollama_llm import generate_analysis
+from Core.jarvis.core import call_jarvis
 
 listeners: set[asyncio.Queue] = set()
 voice_process = None
 
 async def ask_jarvis(request):
     try:
+        print("🟡 Received prompt:", request.prompt)
+        print("🟡 Requested model:", request.model)
+
         headlines = fetch_financial_snippets()
         account_data = get_account_data_for_ai()
+
         combined_prompt = (
             f"{request.prompt}\n\n"
             f"---\nRecent Market Headlines:\n{headlines}\n\n"
             f"---\nAccount Summary:\n{account_data}"
         )
-        result = generate_analysis(
-            combined_prompt, model=request.model, output_format=request.format
+
+        print("🟡 Combined prompt:")
+        print(combined_prompt)
+
+        result = call_jarvis(
+            user_prompt=combined_prompt,
+            model=request.model,
         )
+
         return {"response": result}
+
     except Exception as e:
         print("🔴 Jarvis failed:", str(e))
         return {"error": "Failed to generate response"}
 
-async def start_voice(request):
-    global voice_process
 
-    if voice_process and voice_process.poll() is None:
-        return {"error": "Voice assistant already running."}
-
-    # Build config from request
+async def start_voice(request: StartVoiceRequest):
+    
     config = {
         "model": request.model,
         "format": request.format,
         "access_token": request.access_token,
     }
 
-    # Optional: Save to shared_state.json (can still be used elsewhere if needed)
-    json_path = os.path.abspath("Core/config/shared_state.json")
-    os.makedirs(os.path.dirname(json_path), exist_ok=True)
-    with open(json_path, "w") as f:
-        json.dump(config, f)
+    # Store in shared state (for future logging/LLM context/debug)
+    shared_state.model = request.model
+    shared_state.format_type = request.format
+    shared_state.access_token = request.access_token
 
+    # Save to shared_state.json for persistence or auditing
     try:
-        python_path = os.path.abspath("venv/Scripts/python.exe")
+        json_path = os.path.abspath("Core/config/shared_state.json")
+        os.makedirs(os.path.dirname(json_path), exist_ok=True)
+        with open(json_path, "w") as f:
+            json.dump(config, f)
 
-        # ✅ Inject model/format/access_token into subprocess environment
-        env_copy = os.environ.copy()
-        env_copy["MODEL"] = request.model
-        env_copy["FORMAT"] = request.format
-        env_copy["ACCESS_TOKEN"] = request.access_token
+        print("✅ Voice assistant initialized (client-driven).")
+        return {"message": "Voice assistant initialized on client."}
 
-        voice_process = subprocess.Popen(
-            [python_path, "Core/ollama/voice_entrypoint.py"],
-            env=env_copy
-        )
-
-        return {"message": "Voice assistant started."}
     except Exception as e:
-        print("❌ Launch failed:", str(e))
-        return {"error": f"Failed to start voice assistant: {str(e)}"}
+        print("❌ Failed to save voice config:", str(e))
+        return {"error": "Failed to initialize voice assistant config."}
 
 async def stop_voice():
     global voice_process

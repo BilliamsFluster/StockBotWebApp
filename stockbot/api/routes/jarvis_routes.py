@@ -5,7 +5,7 @@ from api.models.jarvis_models import PromptRequest, StartVoiceRequest, SchwabAut
 router = APIRouter()
 
 
-@router.post("/ask")
+@router.post("/chat/ask")
 async def ask_jarvis(req: PromptRequest):
     return await jarvis_controller.ask_jarvis(req)
 
