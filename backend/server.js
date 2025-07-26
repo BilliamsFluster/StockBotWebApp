@@ -3,11 +3,8 @@ import { env } from './config/env.js';
 import cors from 'cors';
 import corsOptions from './config/corsOptions.js';
 import connectDB from './config/db.js';
-import authRoutes from './routes/authRoutes.js';
-import userRoutes from './routes/userRoutes.js';
 import cookieParser from 'cookie-parser';
-import jarvisRoutes from './routes/jarvisRoutes.js';
-import schwabRoutes from './routes/schwabRoutes.js';
+import apiRoutes from './routes/index.js';
 
 
 connectDB();
@@ -26,10 +23,7 @@ app.get('/', (req, res) => {
 
 
 // Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/users', userRoutes);
-app.use("/api/jarvis", jarvisRoutes);
-app.use('/api/schwab', schwabRoutes);
+app.use('/api', apiRoutes);
 
 // Server
 const PORT = env.PORT || 5000;

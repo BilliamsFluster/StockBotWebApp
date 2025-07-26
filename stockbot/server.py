@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.routes.jarvis_routes import router as jarvis_router
+from api.routes import router as api_router
 
 app = FastAPI()
 
@@ -12,5 +12,5 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount routes
-app.include_router(jarvis_router, prefix="/api/jarvis")
+# Mount versioned API routes
+app.include_router(api_router, prefix="/api")
