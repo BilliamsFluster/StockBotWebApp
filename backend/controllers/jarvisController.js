@@ -23,7 +23,7 @@ export const handleJarvisPrompt = async (req, res) => {
       return res.status(401).json({ error: "Failed to refresh Schwab token." });
     }
 
-    const response = await axios.post(`${STOCKBOT_URL}/api/jarvis/ask`, {
+    const response = await axios.post(`${STOCKBOT_URL}/api/jarvis/chat/ask`, {
       prompt,
       model,
       format,
@@ -37,7 +37,7 @@ export const handleJarvisPrompt = async (req, res) => {
   }
 };
 
-// ---- START VOICE ASSISTANT ----
+// Start voice assistant (client-driven)
 export const startVoiceAssistant = async (req, res) => {
   const { model, format } = req.body;
 
@@ -57,12 +57,14 @@ export const startVoiceAssistant = async (req, res) => {
       access_token: accessToken,
     });
 
-    res.json(response.data);
+    // ✅ Nothing to wait for — we don’t launch anything now
+    res.json({ message: 'Voice assistant ready on client.' });
   } catch (error) {
-    console.error("🔴 Failed to start voice assistant:", error.message);
-    res.status(500).json({ error: "Failed to start voice assistant." });
+    console.error("🔴 Failed to initialize voice assistant:", error.message);
+    res.status(500).json({ error: "Voice assistant init failed." });
   }
 };
+
 
 // ---- STOP VOICE ASSISTANT ----
 export const stopVoiceAssistant = async (req, res) => {
@@ -100,17 +102,19 @@ let clients = [];
 
 export const voiceStream = (req, res) => {
   res.set({
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
   });
   res.flushHeaders();
 
   const clientId = Date.now();
   clients.push({ id: clientId, res });
+  console.log(`[SSE] Client connected: ${clientId}. Total: ${clients.length}`);
 
-  req.on("close", () => {
+  req.on('close', () => {
     clients = clients.filter(c => c.id !== clientId);
+    console.log(`[SSE] Client disconnected: ${clientId}`);
   });
 };
 

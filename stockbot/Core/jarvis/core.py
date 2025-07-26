@@ -1,9 +1,10 @@
 import os
 import json
+import re
 from datetime import datetime
 import Core.config.shared_state as shared_state
 from Core.ollama.RAG import rag
-from Core.jarvis.models import generate_analysis
+from Core.ollama.ollama_llm import generate_analysis
 
 # Memory storage path
 MEMORY_PATH = os.path.join(os.path.dirname(__file__), "memory.json")
@@ -87,24 +88,41 @@ def add_profile_fact(fact: str):
     save_memory(mem)
 
 # -- Core API Calls --
+def call_jarvis(user_prompt: str, model: str = "deepseek-r1:14b") -> str:
+    print("🧪 CALL_JARVIS received prompt:")
+    print(user_prompt)
 
-def call_jarvis(user_prompt: str,
-                model: str = "deepseek-r1:14b") -> str:
-    """
-    Non-streaming entry point. Automatically injects system instruction,
-    memory, and returns the full response in plain text (markdown stripped).
-    """
-    # Force plain text output to strip headings and markdown
-    if DEBUG_MODE:
-        full_prompt = user_prompt
-    else:
-        full_prompt = format_memory(load_memory()) + user_prompt
-    return generate_analysis(
-        prompt=full_prompt,
+    result_gen = generate_analysis(
+        prompt=user_prompt,
         model=model,
-        output_format="text",
-        stream=False
+        output_format="text"
     )
+
+    if isinstance(result_gen, str):
+        cleaned = filter_prompt_text(result_gen)
+        print("🧪 CALL_JARVIS final result (cleaned):")
+        print(cleaned)
+        return cleaned
+
+    result = "".join(result_gen)
+    cleaned = filter_prompt_text(result)
+
+    print("🧪 CALL_JARVIS final result (cleaned):")
+    print(cleaned)
+
+    return cleaned
+
+
+def filter_prompt_text(text: str) -> str:
+    """
+    Cleans and filters the response text by removing markdown, think blocks, and extra whitespace.
+    """
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)  # remove full think blocks
+    text = re.sub(r"^#{1,6}\s*", "", text, flags=re.MULTILINE)        # remove markdown headers
+    text = re.sub(r"^[-*+]\s+", "", text, flags=re.MULTILINE)         # remove bullet markers
+    text = re.sub(r"[*_`~]", "", text)                                # remove markdown symbols
+    text = re.sub(r"\s+", " ", text)                                  # collapse multiple spaces
+    return text.strip()
 
 
 
