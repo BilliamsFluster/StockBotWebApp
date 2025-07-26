@@ -1,6 +1,6 @@
 from fastapi import Request
 from api.models.jarvis_models import PromptRequest, StartVoiceRequest
-import subprocess, os, json, asyncio
+import subprocess, os, json, asyncio, sys
 from sse_starlette.sse import EventSourceResponse
 
 # Local modules
@@ -49,7 +49,17 @@ async def start_voice(request):
         json.dump(config, f)
 
     try:
-        python_path = os.path.abspath("venv/Scripts/python.exe")
+        # Determine Python interpreter within the virtual environment
+        python_path = sys.executable
+        if not os.path.exists(python_path):
+            # Fallback for Windows/Unix style virtual envs
+            candidate = os.path.join(sys.prefix, 'bin', 'python')
+            if os.path.exists(candidate):
+                python_path = candidate
+            else:
+                candidate = os.path.join(sys.prefix, 'Scripts', 'python.exe')
+                if os.path.exists(candidate):
+                    python_path = candidate
 
         # ✅ Inject model/format/access_token into subprocess environment
         env_copy = os.environ.copy()
