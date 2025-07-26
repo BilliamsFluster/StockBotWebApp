@@ -18,46 +18,33 @@ import InputFooter from './InputFooter';
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
 
 const JarvisPanel: React.FC = () => {
-  // UI state
   const [prompt, setPrompt] = useState('');
   const [responseLog, setResponseLog] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Auth/user
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<any>(null);
 
-  // Voice toggle
   const [voiceEnabled, setVoiceEnabled] = useState(false);
-
-  // Native voices
   const [browserVoices, setBrowserVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [nativeVoiceIndex, setNativeVoiceIndex] = useState(0);
 
-  // Cloud voices fallback
   const cloudVoices = ['en-US-GuyNeural', 'en-US-JennyNeural', 'en-GB-RyanNeural'];
   const [cloudVoiceIndex, setCloudVoiceIndex] = useState(0);
 
-  // Settings panel
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // Refs
   const dropdownRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const stopVoiceRef = useRef<() => void>(() => {});
 
-  // Load voices
   useEffect(() => {
-    const load = () => {
-      const v = getBrowserVoices();
+    getBrowserVoices().then((v) => {
       if (v.length) setBrowserVoices(v);
-    };
-    load();
-    window.speechSynthesis.onvoiceschanged = load;
+    });
   }, []);
 
-  // Poll token
   useEffect(() => {
     const iv = setInterval(() => {
       const t = localStorage.getItem('token');
@@ -66,7 +53,6 @@ const JarvisPanel: React.FC = () => {
     return () => clearInterval(iv);
   }, [token]);
 
-  // Load prefs
   const loadPrefs = useCallback(async () => {
     const { data } = await getUserPreferences();
     if (!data) return;
@@ -78,17 +64,18 @@ const JarvisPanel: React.FC = () => {
     if (data.preferences?.cloudVoiceIndex !== undefined)
       setCloudVoiceIndex(data.preferences.cloudVoiceIndex);
   }, []);
-  useEffect(() => { if (token) loadPrefs(); }, [token, loadPrefs]);
 
-  // Prime audio + focus
+  useEffect(() => {
+    if (token) loadPrefs();
+  }, [token, loadPrefs]);
+
   useEffect(() => {
     primeAudio();
     taRef.current?.focus();
   }, []);
 
-  // STT → Jarvis → TTS loop
+  // ✅ VOICE ASSISTANT HOOK WITH THINKING STATE
   useEffect(() => {
-    // stop existing
     stopVoiceRef.current();
 
     if (voiceEnabled && user) {
@@ -102,19 +89,18 @@ const JarvisPanel: React.FC = () => {
           } else {
             return cloudVoices[cloudVoiceIndex];
           }
-        }
+        },
+        (thinking: boolean) => setLoading(thinking) // ✅ tie in thinking bubble
       );
     }
 
     return () => stopVoiceRef.current();
   }, [voiceEnabled, user, nativeVoiceIndex, cloudVoiceIndex, browserVoices]);
 
-  // Auto-scroll
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [responseLog]);
 
-  // Send prompt + TTS
   const handleSendPrompt = async () => {
     if (!prompt.trim() || !user) return;
     setLoading(true);
@@ -140,7 +126,6 @@ const JarvisPanel: React.FC = () => {
     }
   };
 
-  // Toggle voice
   const handleVoiceToggle = () => {
     const next = !voiceEnabled;
     setVoiceEnabled(next);
@@ -148,7 +133,6 @@ const JarvisPanel: React.FC = () => {
     setResponseLog(r => [...r, next ? '🎤 Voice enabled' : '🔇 Voice disabled']);
   };
 
-  // Persist indexes
   useEffect(() => {
     setUserPreferences({ nativeVoiceIndex, cloudVoiceIndex });
   }, [nativeVoiceIndex, cloudVoiceIndex]);

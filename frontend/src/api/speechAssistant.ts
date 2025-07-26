@@ -1,4 +1,5 @@
-// File: src/api/speechAssistant.ts
+// File: speechAssistant.ts
+
 import { askJarvis } from '@/api/jarvisApi';
 
 type User = Parameters<typeof askJarvis>[1];
@@ -26,16 +27,34 @@ export function primeAudio(): void {
   });
 }
 
-export function getBrowserVoices(): SpeechSynthesisVoice[] {
-  return window.speechSynthesis.getVoices();
+export async function getBrowserVoices(): Promise<SpeechSynthesisVoice[]> {
+  const synth = window.speechSynthesis;
+  let voices = synth.getVoices();
+
+  if (voices.length) return voices;
+
+  return new Promise((resolve) => {
+    const handler = () => {
+      voices = synth.getVoices();
+      synth.removeEventListener('voiceschanged', handler);
+      resolve(voices);
+    };
+    synth.addEventListener('voiceschanged', handler);
+  });
 }
 
-export function speakWithBrowser(text: string, voice?: SpeechSynthesisVoice): void {
-  if (!('speechSynthesis' in window)) return;
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = voice?.lang ?? 'en-US';
-  if (voice) u.voice = voice;
-  window.speechSynthesis.speak(u);
+export function speakWithBrowser(text: string, voice?: SpeechSynthesisVoice): Promise<void> {
+  return new Promise((resolve) => {
+    if (!('speechSynthesis' in window)) return resolve();
+
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = voice?.lang ?? 'en-US';
+    if (voice) u.voice = voice;
+
+    u.onend = () => resolve();
+    u.onerror = () => resolve(); // treat interrupted as success
+    speechSynthesis.speak(u);
+  });
 }
 
 export function getTtsUrl(text: string, voice: string): string {
@@ -51,7 +70,10 @@ export async function playTtsBuffer(text: string, voice: string): Promise<void> 
   const src = ctx.createBufferSource();
   src.buffer = buf;
   src.connect(ctx.destination);
-  src.start();
+  return new Promise((resolve) => {
+    src.onended = () => resolve();
+    src.start();
+  });
 }
 
 const SR = typeof window !== 'undefined'
@@ -59,15 +81,14 @@ const SR = typeof window !== 'undefined'
   : null;
 
 /**
- * STT → askJarvis → append to chat → TTS.
- * onUser and onJarvis are callbacks to push into your UI.
- * getTtsVoice returns either a SpeechSynthesisVoice or a cloud‐voice string.
+ * Full voice loop: STT → askJarvis → TTS → loop again
  */
 export function startVoiceAssistant(
   user: User,
   onUser: (text: string) => void,
   onJarvis: (text: string) => void,
-  getTtsVoice: () => SpeechSynthesisVoice | string | undefined
+  getTtsVoice: () => SpeechSynthesisVoice | string | undefined,
+  onThinking?: (active: boolean) => void
 ): () => void {
   if (!SR || !user) return () => {};
 
@@ -78,37 +99,57 @@ export function startVoiceAssistant(
 
   let stopped = false;
   let speaking = false;
+  let listening = false;
+
+  const cancelSpeech = () => {
+    if (speechSynthesis.speaking) speechSynthesis.cancel();
+  };
 
   const listen = () => {
-    if (stopped || speaking) return;
-    try { recognition.start(); }
-    catch { setTimeout(listen, 300); }
+    if (stopped || speaking || listening) return;
+    try {
+      recognition.start();
+      listening = true;
+    } catch {
+      setTimeout(() => {
+        listening = false;
+        listen();
+      }, 300);
+    }
   };
 
   recognition.onresult = async (evt: any) => {
     const txt = evt.results[0][0].transcript.trim();
     if (!txt) return listen();
+
     onUser(txt);
-
     speaking = true;
+    listening = false;
     recognition.stop();
+    cancelSpeech();
 
-    // Query Jarvis
     let reply = 'No response';
     try {
+      onThinking?.(true);
       const { response, error } = await askJarvis(txt, user);
       reply = response || error || reply;
     } catch {
       reply = '⚠️ Voice input failed.';
+    } finally {
+      onThinking?.(false);
     }
+
     onJarvis(reply);
 
-    // TTS
     const ttsVoice = getTtsVoice();
-    if (typeof ttsVoice === 'string') {
-      await playTtsBuffer(reply, ttsVoice);
-    } else {
-      speakWithBrowser(reply, ttsVoice);
+    try {
+      if (typeof ttsVoice === 'string') {
+        await playTtsBuffer(reply, ttsVoice);
+      } else {
+        await speakWithBrowser(reply, ttsVoice);
+      }
+    } catch (err) {
+      console.warn('TTS error:', err);
     }
 
     speaking = false;
@@ -116,13 +157,29 @@ export function startVoiceAssistant(
   };
 
   recognition.onerror = (e: any) => {
-    console.error('STT error:', e.error);
-    if (!stopped) setTimeout(listen, 800);
+    console.warn('🟡 STT error:', e.error);
+    listening = false;
+
+    if (!stopped) {
+      if (['no-speech', 'network', 'audio-capture'].includes(e.error)) {
+        setTimeout(listen, 600);
+      } else {
+        setTimeout(listen, 1500);
+      }
+    }
+  };
+
+  recognition.onend = () => {
+    listening = false;
+    if (!stopped && !speaking) {
+      listen();
+    }
   };
 
   listen();
   return () => {
     stopped = true;
     recognition.stop();
+    cancelSpeech();
   };
 }
