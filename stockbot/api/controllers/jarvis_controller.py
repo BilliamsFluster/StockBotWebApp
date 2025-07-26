@@ -83,69 +83,6 @@ def detect_prompt_type(prompt: str) -> dict:
     }
 
 
-
-async def start_voice(request: StartVoiceRequest):
-    
-    config = {
-        "model": request.model,
-        "format": request.format,
-        "access_token": request.access_token,
-    }
-
-    # Store in shared state (for future logging/LLM context/debug)
-    shared_state.model = request.model
-    shared_state.format_type = request.format
-    shared_state.access_token = request.access_token
-
-    # Save to shared_state.json for persistence or auditing
-    try:
-
-        json_path = os.path.abspath("Core/config/shared_state.json")
-        os.makedirs(os.path.dirname(json_path), exist_ok=True)
-        with open(json_path, "w") as f:
-            json.dump(config, f)
-
-
-        print("✅ Voice assistant initialized (client-driven).")
-        return {"message": "Voice assistant initialized on client."}
-
-    except Exception as e:
-        print("❌ Failed to save voice config:", str(e))
-        return {"error": "Failed to initialize voice assistant config."}
-
-async def stop_voice():
-    global voice_process
-    if voice_process and voice_process.poll() is None:
-        voice_process.terminate()
-        voice_process.wait()
-        voice_process = None
-        return {"message": "Voice assistant stopped."}
-    return {"error": "Voice assistant not running."}
-
-async def voice_event(request: Request):
-    payload = await request.json()
-    text = payload.get("text")
-    for q in listeners:
-        await q.put(text)
-    return {"ok": True}
-
-async def voice_stream():
-    queue: asyncio.Queue = asyncio.Queue()
-    listeners.add(queue)
-
-    async def event_generator():
-        try:
-            while True:
-                text = await queue.get()
-                yield {"event": "message", "data": text}
-        except asyncio.CancelledError:
-            pass
-        finally:
-            listeners.remove(queue)
-
-    return EventSourceResponse(event_generator())
-
-
 def store_schwab_tokens(req):
     # Store to shared_state Python module
     shared_state.access_token = req.access_token
