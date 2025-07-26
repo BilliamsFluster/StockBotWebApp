@@ -9,6 +9,7 @@ import apiRoutes from './routes/index.js';
 
 connectDB();
 const app = express();
+const API_VERSION = 'v1';
 app.use(cors(corsOptions));
 app.use(cookieParser());
 app.use(express.json());
@@ -23,7 +24,8 @@ app.get('/', (req, res) => {
 
 
 // Routes
-app.use('/api', apiRoutes);
+app.use(`/api/${API_VERSION}`, apiRoutes);
+
 
 // Server
 const PORT = env.PORT || 5000;
