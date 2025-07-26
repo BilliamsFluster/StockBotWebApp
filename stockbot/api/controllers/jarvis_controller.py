@@ -1,6 +1,6 @@
 from fastapi import Request
 from api.models.jarvis_models import PromptRequest, StartVoiceRequest
-import subprocess, os, json, asyncio
+import subprocess, os, json, asyncio, sys
 from sse_starlette.sse import EventSourceResponse
 
 # Local modules
@@ -99,10 +99,12 @@ async def start_voice(request: StartVoiceRequest):
 
     # Save to shared_state.json for persistence or auditing
     try:
+
         json_path = os.path.abspath("Core/config/shared_state.json")
         os.makedirs(os.path.dirname(json_path), exist_ok=True)
         with open(json_path, "w") as f:
             json.dump(config, f)
+
 
         print("✅ Voice assistant initialized (client-driven).")
         return {"message": "Voice assistant initialized on client."}

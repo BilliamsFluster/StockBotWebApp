@@ -1,6 +1,7 @@
 import axios from "axios";
 import { env } from "../config/env.js";
 import { refreshSchwabToken } from "../config/schwab.js";
+import { log } from "../utils/logger.js";
 
 const STOCKBOT_URL = env.STOCKBOT_URL;
 
@@ -10,8 +11,7 @@ let voiceProcess = null;
 // ---- TEXT PROMPT → LLM ----
 export const handleJarvisPrompt = async (req, res) => {
   const { prompt, model, format } = req.body;
-  console.log("Body:", { prompt, model, format });
-  console.log("User:", req.user);
+  log("Jarvis prompt:", { prompt, model, format });
 
   if (!prompt || !model || !format) {
     return res.status(400).json({ error: "Missing required fields." });
