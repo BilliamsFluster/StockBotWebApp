@@ -1,5 +1,6 @@
 import User from '../models/User.js';
 import jwt from 'jsonwebtoken';
+import { log } from '../utils/logger.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'yoursecretkey';
 const REFRESH_SECRET = process.env.REFRESH_SECRET || 'refreshsecretkey';
@@ -30,7 +31,7 @@ export const registerUser = async (req, res) => {
 
     res.status(201).json({ message: 'User registered successfully' });
   } catch (err) {
-    console.error("❌ REGISTER ERROR:", err); // Add this
+    log('REGISTER ERROR:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
@@ -38,7 +39,6 @@ export const registerUser = async (req, res) => {
 export const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
-    console.log("Login body:", req.body);
     
 
     if (!email || !password) {

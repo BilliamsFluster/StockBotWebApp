@@ -53,9 +53,6 @@ userSchema.pre('save', async function (next) {
 // Method to compare passwords
 userSchema.methods.matchPassword = async function (enteredPassword) {
   const match = await bcrypt.compare(enteredPassword, this.password);
-  console.log("Entered Password:", enteredPassword);
-  console.log("Stored Hashed Password:", this.password);
-  console.log("Match Result:", match);
   return match;
 };
 
