@@ -1,4 +1,7 @@
-import React from 'react';
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import { fetchAvailableModels } from '@/api/jarvisApi';
 
 interface SettingsMenuProps {
   model: string;
@@ -9,14 +12,6 @@ interface SettingsMenuProps {
   onVoiceToggle: () => void;
   settingsOpen: boolean;
 }
-
-const MODELS = [
-  { value: 'qwen3:8b', label: 'qwen3:8b' },
-  { value: 'llama3', label: 'llama3' },
-  { value: 'mistral', label: 'mistral' },
-  { value: 'vanilj/palmyra-fin-70b-32k', label: 'palmyra-fin' },
-  { value: 'deepseek-r1:14b', label: 'deepseek-r1' },
-];
 
 const FORMATS = [
   { value: 'markdown', label: 'Markdown' },
@@ -43,6 +38,20 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({
   onVoiceToggle,
   settingsOpen,
 }) => {
+  const [models, setModels] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetchAvailableModels().then((models) => {
+      console.log('Fetched models:', models);
+      setModels(models);
+
+      // Ensure selected model is valid
+      if (models.length > 0 && !models.includes(model)) {
+        setModel(models[0]);
+      }
+    });
+  }, []);
+
   if (!settingsOpen) return null;
 
   return (
@@ -58,13 +67,20 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({
         <select
           className="select select-sm select-bordered w-full"
           value={model}
-          onChange={(e) => setModel(e.target.value)}
+          onChange={(e) => {
+            console.log('Selected model:', e.target.value);
+            setModel(e.target.value);
+          }}
         >
-          {MODELS.map(({ value, label }) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
+          {models.length === 0 ? (
+            <option disabled>Loading models...</option>
+          ) : (
+            models.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))
+          )}
         </select>
       </Field>
 
@@ -72,7 +88,10 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({
         <select
           className="select select-sm select-bordered w-full"
           value={format}
-          onChange={(e) => setFormat(e.target.value)}
+          onChange={(e) => {
+            console.log('Selected format:', e.target.value);
+            setFormat(e.target.value);
+          }}
         >
           {FORMATS.map(({ value, label }) => (
             <option key={value} value={value}>

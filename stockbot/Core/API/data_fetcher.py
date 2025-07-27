@@ -237,34 +237,47 @@ def get_transactions(account_number: str, headers: Dict[str, str]) -> List[Dict[
 
 
 # ───── Main Entry ─────
-def get_account_data_for_ai(access_token: Optional[str] = None) -> Dict[str, Any]:
+def get_account_data_for_ai(
+    access_token: Optional[str] = None,
+    include_summary: bool = True,
+    include_positions: bool = True,
+    include_orders: bool = True,
+    include_transactions: bool = True
+) -> Dict[str, Any]:
     if not access_token:
         from Core.config import shared_state
         access_token = shared_state.access_token
 
     headers = get_auth_headers(access_token)
+    result = {}
 
-    # Step 1: Get full account list with balances/positions
-    accounts_data = get_account_list(headers)
-    if not accounts_data:
-        raise Exception("No accounts returned.")
+    plain_account_number = None
 
-    summary, positions, plain_account_number = get_account_summary(accounts_data[0])
-    structured_positions = structure_positions(positions)
+    # Summary and positions require full account list
+    if include_summary or include_positions:
+        accounts_data = get_account_list(headers)
+        if not accounts_data:
+            raise Exception("No accounts returned.")
+        summary, positions, plain_account_number = get_account_summary(accounts_data[0])
+        if include_summary:
+            result["summary"] = summary
+        if include_positions:
+            result["positions"] = structure_positions(positions)
+    else:
+        # Fallback to get account number without fetching positions
+        account_list = get_account_list(headers)
+        plain_account_number = account_list[0].get("securitiesAccount", {}).get("accountNumber", None)
 
-    # Step 2: Get encrypted mapping
-    encrypted_map = get_encrypted_account_map(headers)
-    encrypted_account_number = encrypted_map.get(plain_account_number)
-    if not encrypted_account_number:
-        raise Exception("Encrypted account number not found for provided account.")
+    if include_orders or include_transactions:
+        encrypted_map = get_encrypted_account_map(headers)
+        encrypted_account_number = encrypted_map.get(plain_account_number)
+        if not encrypted_account_number:
+            raise Exception("Encrypted account number not found for provided account.")
 
-    # Step 3: Orders and Transactions
-    orders = get_orders(encrypted_account_number, headers)
-    transactions = get_transactions(encrypted_account_number, headers)
+        if include_orders:
+            result["orders"] = get_orders(encrypted_account_number, headers)
 
-    return {
-        "summary": summary,
-        "positions": structured_positions,
-        "orders": orders,
-        "transactions": transactions
-    }
+        if include_transactions:
+            result["transactions"] = get_transactions(encrypted_account_number, headers)
+
+    return result

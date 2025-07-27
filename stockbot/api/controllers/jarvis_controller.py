@@ -22,12 +22,28 @@ async def ask_jarvis(request):
         print("🟡 Requested model:", request.model)
 
         user_id = getattr(request, "user_id", "default")
-
-        # Step 1: Detect what data is needed
         prompt = request.prompt.lower()
-        flags = detect_prompt_type(prompt)
 
-        # Step 2: Pull short-term memory
+        # Step 1: Detect flags based on prompt keywords
+        flags = {
+            "needs_market_data": any(k in prompt for k in [
+                "stock", "stocks", "market", "nasdaq", "s&p", "dow", "headline", "finance", "economic", "inflation", "fed"
+            ]),
+            "needs_summary": any(k in prompt for k in [
+                "portfolio", "summary", "account value", "total balance"
+            ]),
+            "needs_positions": any(k in prompt for k in [
+                "holdings", "positions", "assets", "what do i own"
+            ]),
+            "needs_orders": any(k in prompt for k in [
+                "orders", "pending orders", "placed orders"
+            ]),
+            "needs_transactions": any(k in prompt for k in [
+                "transactions", "history", "activity", "recent activity"
+            ])
+        }
+
+        # Step 2: Load memory
         chat_history = memory.format_memory(user_id)
 
         # Step 3: Build enrichment blocks
@@ -40,9 +56,14 @@ async def ask_jarvis(request):
             except Exception as e:
                 print("⚠️ Market fetch failed:", str(e))
 
-        if flags["needs_account_data"]:
+        if any([flags["needs_summary"], flags["needs_positions"], flags["needs_orders"], flags["needs_transactions"]]):
             try:
-                account_data = get_account_data_for_ai()
+                account_data = get_account_data_for_ai(
+                    include_summary=flags["needs_summary"],
+                    include_positions=flags["needs_positions"],
+                    include_orders=flags["needs_orders"],
+                    include_transactions=flags["needs_transactions"]
+                )
                 enrichment_blocks.append(f"---\nAccount Summary:\n{account_data}")
             except Exception as e:
                 print("⚠️ Account fetch failed:", str(e))
@@ -69,7 +90,6 @@ async def ask_jarvis(request):
     except Exception as e:
         print("🔴 Jarvis failed:", str(e))
         return {"error": "Failed to generate response"}
-
 
 def detect_prompt_type(prompt: str) -> dict:
     prompt = prompt.lower()

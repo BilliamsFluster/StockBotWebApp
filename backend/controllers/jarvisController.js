@@ -1,6 +1,6 @@
 import axios from "axios";
 import { env } from "../config/env.js";
-import { refreshSchwabToken } from "../config/schwab.js";
+import { refreshSchwabAccessTokenInternal } from "../config/schwab.js";
 import { log } from "../utils/logger.js";
 
 const STOCKBOT_URL = env.STOCKBOT_URL;
@@ -18,7 +18,7 @@ export const handleJarvisPrompt = async (req, res) => {
   }
 
   try {
-    const accessToken = await refreshSchwabToken(req.user._id);
+    const accessToken = await refreshSchwabAccessTokenInternal(req.user._id);
     if (!accessToken) {
       return res.status(401).json({ error: "Failed to refresh Schwab token." });
     }
@@ -130,7 +130,7 @@ export const relayVoiceData = (req, res) => {
 
 export const getPortfolioData = async (req, res) => {
   try {
-    const accessToken = await refreshSchwabToken(req.user._id);
+    const accessToken = await refreshSchwabAccessTokenInternal(req.user._id);
     if (!accessToken) {
       return res.status(401).json({ error: "Failed to refresh Schwab token." });
     }
@@ -144,4 +144,17 @@ export const getPortfolioData = async (req, res) => {
     console.error("🔴 Failed to get portfolio data:", error.message);
     res.status(500).json({ error: "Failed to get portfolio data." });
   }
-}
+};
+
+export const fetchModels = async (req, res) => {
+  try {
+    const response = await axios.get('http://localhost:11434/api/tags');
+
+    const models = (response.data.models || []).map((model) => model.name);
+    res.json(models);
+  } catch (err) {
+    console.error('🔴 Failed to fetch models from Ollama:', err.message);
+    res.status(500).json({ error: 'Failed to fetch models' });
+  }
+};
+

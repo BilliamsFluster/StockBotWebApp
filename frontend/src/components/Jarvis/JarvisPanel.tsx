@@ -28,11 +28,12 @@ const JarvisPanel: React.FC = () => {
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [browserVoices, setBrowserVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [nativeVoiceIndex, setNativeVoiceIndex] = useState(0);
-
   const cloudVoices = ['en-US-GuyNeural', 'en-US-JennyNeural', 'en-GB-RyanNeural'];
   const [cloudVoiceIndex, setCloudVoiceIndex] = useState(0);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [model, setModel] = useState('llama3');
+  const [format, setFormat] = useState('markdown');
 
   const dropdownRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -54,16 +55,27 @@ const JarvisPanel: React.FC = () => {
   }, [token]);
 
   const loadPrefs = useCallback(async () => {
-    const { data } = await getUserPreferences();
-    if (!data) return;
-    setUser(data);
-    if (data.preferences?.voiceEnabled !== undefined)
-      setVoiceEnabled(data.preferences.voiceEnabled);
-    if (data.preferences?.nativeVoiceIndex !== undefined)
-      setNativeVoiceIndex(data.preferences.nativeVoiceIndex);
-    if (data.preferences?.cloudVoiceIndex !== undefined)
-      setCloudVoiceIndex(data.preferences.cloudVoiceIndex);
-  }, []);
+  const { data } = await getUserPreferences();
+  if (!data) return;
+
+  setUser(data);
+
+  const prefs = data.preferences || {};
+  if (prefs.voiceEnabled !== undefined) setVoiceEnabled(prefs.voiceEnabled);
+  if (prefs.nativeVoiceIndex !== undefined) setNativeVoiceIndex(prefs.nativeVoiceIndex);
+  if (prefs.cloudVoiceIndex !== undefined) setCloudVoiceIndex(prefs.cloudVoiceIndex);
+
+  if (prefs.model) {
+    setModel(prefs.model);
+    setUserPreferences({ model: prefs.model });
+  }
+
+  if (prefs.format) {
+    setFormat(prefs.format);
+    setUserPreferences({ format: prefs.format }); 
+  }
+}, []);
+
 
   useEffect(() => {
     if (token) loadPrefs();
@@ -81,8 +93,8 @@ const JarvisPanel: React.FC = () => {
     if (voiceEnabled && user) {
       stopVoiceRef.current = startVoiceAssistant(
         user,
-        (txt: string) => setResponseLog(r => [...r, `USER: ${txt}`]),
-        (reply: string) => setResponseLog(r => [...r, `JARVIS: ${reply}`]),
+        (txt: string) => setResponseLog((r) => [...r, `USER: ${txt}`]),
+        (reply: string) => setResponseLog((r) => [...r, `JARVIS: ${reply}`]),
         () => {
           if (browserVoices.length > 0 && !isIOS) {
             return browserVoices[nativeVoiceIndex];
@@ -104,12 +116,12 @@ const JarvisPanel: React.FC = () => {
   const handleSendPrompt = async () => {
     if (!prompt.trim() || !user) return;
     setLoading(true);
-    setResponseLog(r => [...r, `USER: ${prompt}`]);
+    setResponseLog((r) => [...r, `USER: ${prompt}`]);
 
     try {
       const { response, error } = await askJarvis(prompt, user);
       const result = response || error || 'No response';
-      setResponseLog(r => [...r, `JARVIS: ${result}`]);
+      setResponseLog((r) => [...r, `JARVIS: ${result}`]);
 
       if (voiceEnabled) {
         if (browserVoices.length > 0 && !isIOS) {
@@ -119,7 +131,7 @@ const JarvisPanel: React.FC = () => {
         }
       }
     } catch {
-      setResponseLog(r => [...r, '⚠️ JARVIS: Error sending prompt.']);
+      setResponseLog((r) => [...r, '⚠️ JARVIS: Error sending prompt.']);
     } finally {
       setPrompt('');
       setLoading(false);
@@ -130,7 +142,7 @@ const JarvisPanel: React.FC = () => {
     const next = !voiceEnabled;
     setVoiceEnabled(next);
     setUserPreferences({ voiceEnabled: next });
-    setResponseLog(r => [...r, next ? '🎤 Voice enabled' : '🔇 Voice disabled']);
+    setResponseLog((r) => [...r, next ? '🎤 Voice enabled' : '🔇 Voice disabled']);
   };
 
   useEffect(() => {
@@ -149,7 +161,7 @@ const JarvisPanel: React.FC = () => {
           {browserVoices.length > 0 && !isIOS ? (
             <select
               value={nativeVoiceIndex}
-              onChange={e => setNativeVoiceIndex(Number(e.target.value))}
+              onChange={(e) => setNativeVoiceIndex(Number(e.target.value))}
               className="select select-sm select-bordered"
             >
               {browserVoices.map((v, i) => (
@@ -161,11 +173,13 @@ const JarvisPanel: React.FC = () => {
           ) : (
             <select
               value={cloudVoiceIndex}
-              onChange={e => setCloudVoiceIndex(Number(e.target.value))}
+              onChange={(e) => setCloudVoiceIndex(Number(e.target.value))}
               className="select select-sm select-bordered"
             >
               {cloudVoices.map((v, i) => (
-                <option key={v} value={i}>{v}</option>
+                <option key={v} value={i}>
+                  {v}
+                </option>
               ))}
             </select>
           )}
@@ -180,10 +194,16 @@ const JarvisPanel: React.FC = () => {
         setPrompt={setPrompt}
         textareaRef={taRef}
         onSend={handleSendPrompt}
-        model={user?.preferences?.model || 'llama3'}
-        setModel={m => setUserPreferences({ model: m })}
-        format={user?.preferences?.format || 'markdown'}
-        setFormat={f => setUserPreferences({ format: f })}
+        model={model}
+        setModel={(m) => {
+          setModel(m);
+          setUserPreferences({ model: m });
+        }}
+        format={format}
+        setFormat={(f) => {
+          setFormat(f);
+          setUserPreferences({ format: f });
+        }}
         voiceEnabled={voiceEnabled}
         onVoiceToggle={handleVoiceToggle}
         settingsOpen={settingsOpen}
