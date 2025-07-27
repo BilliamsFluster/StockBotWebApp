@@ -11,7 +11,7 @@ import HoldingPieChart from './HoldingPieChart';
 import GainLossBarChart from './GainLossBarChart';
 import InsightsPanel from './InsightsPanel';
 import TransactionsTable from './TransactionsTable';
-import TradingHistoryTable from './TradingHistoryTable'; // ✅ NEW
+import TradingHistoryTable from './TradingHistoryTable';
 import { usePortfolioData } from './usePortfolioData';
 
 const statWidgets = [
@@ -65,7 +65,7 @@ const PortfolioPage: React.FC = () => {
         <main className="flex-1 p-6 space-y-6">
           {/* HEADER */}
           <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">📊 Portfolio Dashboard</h1>
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">Portfolio Dashboard</h1>
             <span className="text-sm text-neutral-500">
               {new Date().toLocaleString(undefined, {
                 weekday: 'short',
@@ -95,7 +95,7 @@ const PortfolioPage: React.FC = () => {
             <div className="space-y-6">
               <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
                 <h2 className="text-sm font-semibold mb-2 text-white">Holdings Breakdown</h2>
-                <HoldingPieChart data={positions} />
+                <HoldingPieChart summary={summary} positions={positions} />
               </div>
               <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
                 <h2 className="text-sm font-semibold mb-2 text-white">AI Insights</h2>
@@ -119,8 +119,8 @@ const PortfolioPage: React.FC = () => {
               </div>
 
               {/* Transactions + Trades */}
-              <TransactionsTable transactions={transactions} />
               <TradingHistoryTable transactions={transactions} /> 
+              <TransactionsTable transactions={transactions} />
             </div>
           </div>
         </main>
