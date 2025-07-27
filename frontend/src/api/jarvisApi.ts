@@ -43,3 +43,10 @@ const getAuthConfig = () => {
   };
 };
 
+export async function getSchwabPortfolioData() {
+  const config = getAuthConfig();
+  const response = await axios.get(`${env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/portfolio`, config);
+  return response.data;
+}
+
+

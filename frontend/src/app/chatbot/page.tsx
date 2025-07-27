@@ -7,7 +7,7 @@ import ProfilePanel from '@/components/ProfilePanel';
 import JarvisPanel from '@/components/Jarvis/JarvisPanel';
 import env from '../../../config/env';
 
-export default function Home() {
+export default function Chatbot() {
   const containerRef     = useRef<HTMLDivElement>(null);
   const blob1Ref         = useRef<HTMLDivElement>(null);
   const blob2Ref         = useRef<HTMLDivElement>(null);
@@ -20,16 +20,13 @@ export default function Home() {
   const [profileOpen, setProfileOpen]   = useState(false);
   const [username, setUsername]         = useState('User');
 
-  // GSAP animations + fetch username
   useEffect(() => {
-    // Header reveal
     const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
     tl.fromTo('#jarvis-title',   { opacity: 0, y: 50 }, { opacity: 1, y: 0, duration: 1.2 })
       .fromTo('#jarvis-sub',     { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 1   }, '-=0.8')
       .fromTo('#jarvis-actions', { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.6 }, '-=0.6')
       .fromTo('#main-layout',    { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 1   }, '-=0.4');
 
-    // Floating blobs
     gsap.to(blob1Ref.current, {
       x: 50, y: -30, duration: 10, repeat: -1, yoyo: true, ease: 'sine.inOut',
     });
@@ -40,7 +37,6 @@ export default function Home() {
       x: 40, y: 40, duration: 8, repeat: -1, yoyo: true, ease: 'sine.inOut',
     });
 
-    // Fetch username
     const token = localStorage.getItem('token');
     if (token) {
       fetch(`${env.NEXT_PUBLIC_BACKEND_URL}/api/users/profile`, {
@@ -52,7 +48,6 @@ export default function Home() {
     }
   }, []);
 
-  // Close profile on outside click
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (
@@ -73,25 +68,27 @@ export default function Home() {
     <div
       ref={containerRef}
       className={`
-        relative flex flex-col h-screen
+        relative flex flex-col
         px-4 pt-4 pb-2
-        overflow-x-hidden overflow-y-hidden   /* hide horizontal, hide vertical on root */
-        ${darkMode ? 'bg-base-100 text-base-content' : 'bg-white text-black'}
+        min-h-screen
+        overflow-x-hidden
+        bg-[radial-gradient(circle_at_top_left,_#1f1f2e,_#0d0d12)]
+        text-neutral-200
       `}
     >
       {/* ─── Blobs ───────────────────────── */}
-      <div className="absolute inset-0 pointer-events-none">
+      <div className="absolute inset-0 pointer-events-none z-0">
         <div
           ref={blob1Ref}
-          className="absolute top-10 left-10 w-96 h-96 bg-primary/20 rounded-full blur-3xl"
+          className="absolute top-10 left-10 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl"
         />
         <div
           ref={blob2Ref}
-          className="absolute bottom-10 right-10 w-80 h-80 bg-secondary/20 rounded-full blur-2xl"
+          className="absolute bottom-10 right-10 w-80 h-80 bg-pink-600/20 rounded-full blur-2xl"
         />
         <div
           ref={blob3Ref}
-          className="absolute top-4 right-4 w-64 h-64 bg-accent/10 rounded-full blur-2xl"
+          className="absolute top-4 right-4 w-64 h-64 bg-indigo-600/10 rounded-full blur-2xl"
         />
       </div>
 
@@ -116,15 +113,15 @@ export default function Home() {
         />
       </div>
 
-      {/* ─── Main (vertical scroll only) ────── */}
+      {/* ─── Main ───────────────────────────── */}
       <div className="flex-1 overflow-y-auto pt-16" id="main-layout">
         <div className="text-center">
-          <h1 id="jarvis-title" className="text-5xl md:text-6xl font-bold text-primary">
+          <h1 id="jarvis-title" className="text-5xl md:text-6xl font-bold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
             Jarvis
           </h1>
           <p
             id="jarvis-sub"
-            className="text-lg md:text-xl text-secondary mt-4 max-w-3xl mx-auto"
+            className="text-lg md:text-xl text-neutral-400 mt-4 max-w-3xl mx-auto"
           >
             Your AI-powered market strategist. Ask anything, get real-time financial insight.
           </p>

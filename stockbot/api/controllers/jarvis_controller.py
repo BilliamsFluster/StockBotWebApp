@@ -99,3 +99,11 @@ def store_schwab_tokens(req):
     print("expires_at:", shared_state.expires_at)
 
     return {"message": "Schwab tokens stored in shared_state."}
+
+async def get_portfolio_data():
+    try:
+        account_data = get_account_data_for_ai()
+        return {"portfolio": account_data}
+    except Exception as e:
+        print("🔴 Failed to fetch portfolio data:", str(e))
+        return {"error": "Failed to fetch portfolio data"}

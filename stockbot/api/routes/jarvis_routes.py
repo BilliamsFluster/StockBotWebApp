@@ -28,3 +28,7 @@ async def voice_stream():
 @router.post("/authorize")
 async def authorize_schwab(req: SchwabAuthRequest):
     return jarvis_controller.store_schwab_tokens(req)
+
+@router.get("/portfolio")
+async def get_portfolio_data():
+    return await jarvis_controller.get_portfolio_data()

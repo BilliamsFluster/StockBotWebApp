@@ -19,7 +19,7 @@ export default function AuthRedirect() {
     }
 
     if (isLoggedIn && pathname === '/') {
-      router.replace('/home'); // or dashboard route
+      router.replace('/chatbot'); // or dashboard route
     }
   }, [user, loading, pathname, router]);
 

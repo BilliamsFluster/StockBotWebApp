@@ -1,8 +1,11 @@
 import requests
 from tkinter import messagebox
 import Core.config.shared_state as shared_state
+from datetime import datetime, timedelta
+from typing import Optional, Dict, List, Any
 import pandas as pd
 import time
+SCHWAB_BASE_URL = "https://api.schwabapi.com/trader/v1"
 
 def fetch_account_info(access_token=None):
     if not access_token:
@@ -115,56 +118,153 @@ def fetch_historical_data(symbol, start_date, end_date, period_type='year', peri
         print(f"Error fetching historical data: {response.status_code}\n{response.text}")
         return pd.DataFrame()
     
-def get_account_data_for_ai(access_token=None):
-    if not access_token:
-        from Core.config import shared_state
-        access_token = shared_state.access_token
+import requests
+from datetime import datetime, timedelta
+from typing import Optional, Dict, List, Any
 
-    headers = {'Authorization': f'Bearer {access_token}'}
-    response = requests.get("https://api.schwabapi.com/trader/v1/accounts?fields=positions", headers=headers)
+SCHWAB_BASE_URL = "https://api.schwabapi.com/trader/v1"
 
-    if response.status_code != 200:
-        return f"⚠️ Failed to fetch account data. Status: {response.status_code}"
+# ───── Helper: Authorization Header ─────
+def get_auth_headers(access_token: str) -> Dict[str, str]:
+    return {'Authorization': f'Bearer {access_token}'}
 
-    try:
-        account_data_list = response.json()
-    except Exception:
-        return "⚠️ Failed to parse account data response."
 
-    if not account_data_list:
-        return "⚠️ No accounts returned."
+# ───── Step 1: Account Data (with positions) ─────
+def get_account_list(headers: Dict[str, str]) -> List[Dict[str, Any]]:
+    url = f"{SCHWAB_BASE_URL}/accounts?fields=positions"
+    resp = requests.get(url, headers=headers)
+    resp.raise_for_status()
+    return resp.json()
 
-    account = account_data_list[0].get('securitiesAccount', {})
+
+# ───── Step 2: Account Hash Lookup ─────
+def get_encrypted_account_map(headers: Dict[str, str]) -> Dict[str, str]:
+    url = f"{SCHWAB_BASE_URL}/accounts/accountNumbers"
+    resp = requests.get(url, headers=headers)
+    resp.raise_for_status()
+    return {item['accountNumber']: item['hashValue'] for item in resp.json()}
+
+
+# ───── Step 3: Parse Account Summary ─────
+def get_account_summary(account_data: Dict[str, Any]) -> (Dict[str, Any], List[Dict[str, Any]], str):
+    account = account_data.get('securitiesAccount', {})
     account_number = account.get('accountNumber', 'N/A')
     balances = account.get('currentBalances', {})
     positions = account.get('positions', [])
-    print("[DEBUG] Raw Positions:", positions)
 
-    liquidation_value = balances.get('liquidationValue', 0)
-    equity = balances.get('equity', 0)
+    summary = {
+        "accountNumber": account_number,
+        "liquidationValue": balances.get('liquidationValue', 0),
+        "equity": balances.get('equity', 0),
+        "cash": balances.get('cashBalance', 0),
+        "buyingPower": balances.get('buyingPower', 0),
+        "dayTradingBuyingPower": balances.get('dayTradingBuyingPower', 0),
+        "cashAvailableForTrading": balances.get('cashAvailableForTrading', 0),
+        "cashAvailableForWithdrawal": balances.get('cashAvailableForWithdrawal', 0),
+        "accruedInterest": balances.get('accruedInterest', 0),
+        "marginBalance": balances.get('marginBalance', 0),
+        "shortBalance": balances.get('shortBalance', 0),
+    }
+    return summary, positions, account_number
 
-    position_summaries = []
+
+# ───── Step 4: Format Positions ─────
+def structure_positions(positions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    total_value = sum(p.get('marketValue', 0) for p in positions) or 1
+    structured = []
+
     for p in positions:
         symbol = p.get('instrument', {}).get('symbol', 'N/A')
         qty = p.get('longQuantity', 0)
         val = p.get('marketValue', 0)
         gain = p.get('currentDayProfitLoss', 0)
-        position_summaries.append(f"- {symbol}: {qty} shares, Market Value ${val:.2f}, P/L Today: ${gain:.2f}")
-
-    if not position_summaries:
-        position_summaries.append("No visible positions found.")
-
-    return f"""
-### 💼 Account Summary  
-- **Account Number**: {account_number}  
-- **Liquidation Value**: ${liquidation_value:,.2f}  
-- **Equity**: ${equity:,.2f}  
-
-### 📈 Positions  
-{chr(10).join(position_summaries)}
-"""
+        percentage = (val / total_value) * 100
+        structured.append({
+            "symbol": symbol,
+            "qty": qty,
+            "value": val,
+            "gain": gain,
+            "percentage": percentage
+        })
+    return structured
 
 
+# ───── Step 5: Orders ─────
+def get_orders(account_number: str, headers: Dict[str, str]) -> List[Dict[str, Any]]:
+    url = f"{SCHWAB_BASE_URL}/accounts/{account_number}/orders"
+    resp = requests.get(url, headers=headers)
+    return resp.json() if resp.status_code == 200 else []
 
 
+# ───── Step 6: Transactions ─────
+def get_transactions(account_number: str, headers: Dict[str, str]) -> List[Dict[str, Any]]:
+    now = datetime.utcnow()
+    start_date = now - timedelta(days=365)
 
+    params = {
+        "startDate": start_date.strftime('%Y-%m-%dT%H:%M:%S.000Z'),
+        "endDate": now.strftime('%Y-%m-%dT%H:%M:%S.000Z'),
+        "types": ",".join([
+            "TRADE",
+            "RECEIVE_AND_DELIVER",
+            "DIVIDEND_OR_INTEREST",
+            "ACH_RECEIPT",
+            "ACH_DISBURSEMENT",
+            "CASH_RECEIPT",
+            "CASH_DISBURSEMENT",
+            "ELECTRONIC_FUND",
+            "WIRE_OUT",
+            "WIRE_IN",
+            "JOURNAL",
+            "MEMORANDUM",
+            "MARGIN_CALL",
+            "MONEY_MARKET",
+            "SMA_ADJUSTMENT"
+        ])
+    }
+
+    url = f"{SCHWAB_BASE_URL}/accounts/{account_number}/transactions"
+    resp = requests.get(url, headers=headers, params=params)
+    print(f"Transaction fetch URL: {resp.json()}")
+
+    try:
+        resp.raise_for_status()
+    except Exception as e:
+        print("🔴 TRANSACTION ERROR:", resp.status_code, resp.text)
+        return []
+
+    return resp.json()
+
+
+# ───── Main Entry ─────
+def get_account_data_for_ai(access_token: Optional[str] = None) -> Dict[str, Any]:
+    if not access_token:
+        from Core.config import shared_state
+        access_token = shared_state.access_token
+
+    headers = get_auth_headers(access_token)
+
+    # Step 1: Get full account list with balances/positions
+    accounts_data = get_account_list(headers)
+    if not accounts_data:
+        raise Exception("No accounts returned.")
+
+    summary, positions, plain_account_number = get_account_summary(accounts_data[0])
+    structured_positions = structure_positions(positions)
+
+    # Step 2: Get encrypted mapping
+    encrypted_map = get_encrypted_account_map(headers)
+    encrypted_account_number = encrypted_map.get(plain_account_number)
+    if not encrypted_account_number:
+        raise Exception("Encrypted account number not found for provided account.")
+
+    # Step 3: Orders and Transactions
+    orders = get_orders(encrypted_account_number, headers)
+    transactions = get_transactions(encrypted_account_number, headers)
+
+    return {
+        "summary": summary,
+        "positions": structured_positions,
+        "orders": orders,
+        "transactions": transactions
+    }
