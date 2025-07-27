@@ -127,3 +127,21 @@ export const relayVoiceData = (req, res) => {
   );
   res.sendStatus(200);
 };
+
+export const getPortfolioData = async (req, res) => {
+  try {
+    const accessToken = await refreshSchwabToken(req.user._id);
+    if (!accessToken) {
+      return res.status(401).json({ error: "Failed to refresh Schwab token." });
+    }
+
+    const response = await axios.get(`${STOCKBOT_URL}/api/jarvis/portfolio`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    res.json(response.data);
+  } catch (error) {
+    console.error("🔴 Failed to get portfolio data:", error.message);
+    res.status(500).json({ error: "Failed to get portfolio data." });
+  }
+}

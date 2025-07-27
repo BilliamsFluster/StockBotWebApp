@@ -42,7 +42,7 @@ const LoginForm = () => {
 
     setUser(data.user || true);
     toast.success('Logged in!');
-    router.push('/home');
+    router.push('/chatbot'); // Redirect to chatbot page
   } catch (err: any) {
   const status = err.response?.status;
   const msg = err.response?.data?.message || 'Login failed';
