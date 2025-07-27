@@ -90,7 +90,7 @@ const JarvisPanel: React.FC = () => {
             return cloudVoices[cloudVoiceIndex];
           }
         },
-        (thinking: boolean) => setLoading(thinking) // ✅ tie in thinking bubble
+        (thinking: boolean) => setLoading(thinking)
       );
     }
 
@@ -141,36 +141,38 @@ const JarvisPanel: React.FC = () => {
     <div className="bg-base-200 rounded-xl p-4 flex flex-col gap-4 h-[90vh]">
       {token && <SchwabAuth token={token} />}
 
-      <ChatWindow responseLog={responseLog} loading={loading} endRef={endRef} />
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <ChatWindow responseLog={responseLog} loading={loading} endRef={endRef} />
 
-      <div ref={dropdownRef} className="flex justify-between items-center px-2">
-        <label className="text-sm font-semibold">Voice Model:</label>
-        {browserVoices.length > 0 && !isIOS ? (
-          <select
-            value={nativeVoiceIndex}
-            onChange={e => setNativeVoiceIndex(Number(e.target.value))}
-            className="select select-sm select-bordered"
-          >
-            {browserVoices.map((v, i) => (
-              <option key={v.name} value={i}>
-                {v.name} ({v.lang})
-              </option>
-            ))}
-          </select>
-        ) : (
-          <select
-            value={cloudVoiceIndex}
-            onChange={e => setCloudVoiceIndex(Number(e.target.value))}
-            className="select select-sm select-bordered"
-          >
-            {cloudVoices.map((v, i) => (
-              <option key={v} value={i}>{v}</option>
-            ))}
-          </select>
-        )}
-        <button onClick={handleVoiceToggle} className="btn btn-sm">
-          {voiceEnabled ? '🔇' : '🎤'}
-        </button>
+        <div ref={dropdownRef} className="flex justify-between items-center px-2 py-2 shrink-0">
+          <label className="text-sm font-semibold">Voice Model:</label>
+          {browserVoices.length > 0 && !isIOS ? (
+            <select
+              value={nativeVoiceIndex}
+              onChange={e => setNativeVoiceIndex(Number(e.target.value))}
+              className="select select-sm select-bordered"
+            >
+              {browserVoices.map((v, i) => (
+                <option key={v.name} value={i}>
+                  {v.name} ({v.lang})
+                </option>
+              ))}
+            </select>
+          ) : (
+            <select
+              value={cloudVoiceIndex}
+              onChange={e => setCloudVoiceIndex(Number(e.target.value))}
+              className="select select-sm select-bordered"
+            >
+              {cloudVoices.map((v, i) => (
+                <option key={v} value={i}>{v}</option>
+              ))}
+            </select>
+          )}
+          <button onClick={handleVoiceToggle} className="btn btn-sm">
+            {voiceEnabled ? '🔇' : '🎤'}
+          </button>
+        </div>
       </div>
 
       <InputFooter
