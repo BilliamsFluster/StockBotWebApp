@@ -8,7 +8,8 @@ import {
   getVoiceStatus,
   voiceStream,
   relayVoiceData,
-  getPortfolioData
+  getPortfolioData,
+  fetchModels
 } from "../controllers/jarvisController.js";
 
 const router = express.Router();
@@ -24,6 +25,7 @@ router.get("/voice/status", protectRoute, getVoiceStatus);
 router.get("/voice/stream", voiceStream);
 router.post("/voice/event", relayVoiceData);
 router.get("/portfolio", protectRoute, getPortfolioData);
+router.get("/models",  protectRoute, fetchModels)
 
 
 export default router;

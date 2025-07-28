@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import {
   FaWallet,
@@ -11,7 +13,8 @@ import HoldingPieChart from './HoldingPieChart';
 import GainLossBarChart from './GainLossBarChart';
 import InsightsPanel from './InsightsPanel';
 import TransactionsTable from './TransactionsTable';
-import TradingHistoryTable from './TradingHistoryTable'; // ✅ NEW
+import TradingHistoryTable from './TradingHistoryTable';
+import AccountBalanceGraph from './AccountBalanceGraph';
 import { usePortfolioData } from './usePortfolioData';
 
 const statWidgets = [
@@ -50,81 +53,72 @@ const PortfolioPage: React.FC = () => {
       <div className="absolute -top-24 -left-24 w-80 h-80 bg-purple-600/20 rounded-full blur-2xl pointer-events-none" />
       <div className="absolute -bottom-24 -right-24 w-96 h-96 bg-pink-600/20 rounded-full blur-3xl pointer-events-none" />
 
-      {/* Layout Shell */}
-      <div className="flex min-h-screen relative z-10">
-        <aside className="w-64 bg-black/20 backdrop-blur-lg p-4 border-r border-purple-400/20 hidden lg:block">
-          <div className="text-lg font-bold mb-6 text-white">💼 StockBot</div>
-          <ul className="space-y-2 text-sm text-neutral-400">
-            <li><a className="text-white">Dashboard</a></li>
-            <li><a>Portfolio</a></li>
-            <li><a>Insights</a></li>
-            <li><a>Transactions</a></li>
-          </ul>
-        </aside>
+      {/* Content */}
+      <main className="relative z-10 p-6 space-y-6 ml-20 lg:ml-64 transition-all duration-300">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">Portfolio Dashboard</h1>
+          <span className="text-sm text-neutral-500">
+            {new Date().toLocaleString(undefined, {
+              weekday: 'short',
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+          </span>
+        </div>
 
-        <main className="flex-1 p-6 space-y-6">
-          {/* HEADER */}
-          <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">📊 Portfolio Dashboard</h1>
-            <span className="text-sm text-neutral-500">
-              {new Date().toLocaleString(undefined, {
-                weekday: 'short',
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
-            </span>
-          </div>
-
-          {/* KPI Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {statWidgets.map(({ icon, label, field }) => (
-              <div key={label} className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
-                <div className="flex justify-between text-xs text-neutral-400 mb-1">{label}{icon}</div>
-                <div className="text-xl font-bold text-white">
-                  ${summary[field as keyof typeof summary].toLocaleString()}
-                </div>
+        {/* KPI Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {statWidgets.map(({ icon, label, field }) => (
+            <div key={label} className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
+              <div className="flex justify-between text-xs text-neutral-400 mb-1">{label}{icon}</div>
+              <div className="text-xl font-bold text-white">
+                ${summary[field as keyof typeof summary].toLocaleString()}
               </div>
-            ))}
-          </div>
-
-          {/* Grid Split 2 Cols */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="space-y-6">
-              <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
-                <h2 className="text-sm font-semibold mb-2 text-white">Holdings Breakdown</h2>
-                <HoldingPieChart data={positions} />
-              </div>
-              <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
-                <h2 className="text-sm font-semibold mb-2 text-white">AI Insights</h2>
-                <InsightsPanel positions={positions} />
-              </div>
-              <PortfolioSummaryCard summary={summary} />
             </div>
+          ))}
+        </div>
 
-            <div className="space-y-6">
-              <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
-                <h2 className="text-sm font-semibold mb-2 text-white">Daily P/L</h2>
-                <GainLossBarChart data={positions} />
-              </div>
-              <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
-                <h2 className="text-sm font-semibold mb-2 text-white">Your Positions</h2>
-                {positions.length ? (
-                  <PositionTable positions={positions} />
-                ) : (
-                  <p className="text-center text-neutral-500">No positions to display.</p>
-                )}
-              </div>
-
-              {/* Transactions + Trades */}
-              <TransactionsTable transactions={transactions} />
-              <TradingHistoryTable transactions={transactions} /> 
+        {/* Main Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="space-y-6">
+            <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
+              <h2 className="text-sm font-semibold mb-2 text-white">Holdings Breakdown</h2>
+              <HoldingPieChart summary={summary} positions={positions} />
+            </div>
+            <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
+              <h2 className="text-sm font-semibold mb-2 text-white">AI Insights</h2>
+              <InsightsPanel positions={positions} />
+            </div>
+            <PortfolioSummaryCard summary={summary} />
+            <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
+              <h2 className="text-sm font-semibold mb-2 text-white">Account Value Over Time</h2>
+              <AccountBalanceGraph trades={transactions} />
             </div>
           </div>
-        </main>
-      </div>
+
+          <div className="space-y-6">
+            <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
+              <h2 className="text-sm font-semibold mb-2 text-white">Daily P/L</h2>
+              <GainLossBarChart data={positions} />
+            </div>
+            <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
+              <h2 className="text-sm font-semibold mb-2 text-white">Your Positions</h2>
+              {positions.length ? (
+                <PositionTable positions={positions} />
+              ) : (
+                <p className="text-center text-neutral-500">No positions to display.</p>
+              )}
+            </div>
+
+            <TradingHistoryTable transactions={transactions} />
+            <TransactionsTable transactions={transactions} />
+          </div>
+        </div>
+      </main>
     </div>
   );
 };

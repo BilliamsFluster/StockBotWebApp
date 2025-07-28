@@ -49,4 +49,15 @@ export async function getSchwabPortfolioData() {
   return response.data;
 }
 
+export async function fetchAvailableModels(): Promise<string[]> {
+  try {
+    const config = getAuthConfig();
+    const response = await axios.get(`${env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/models`,config);
+    console.log(response.data)
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching models:', error);
+    return [];
+  }
+}
 
