@@ -1,5 +1,6 @@
 import { env } from '../config/env.js';
 import { exchangeCodeForTokensInternal, refreshSchwabAccessTokenInternal } from '../config/schwab.js';
+import axios from "axios"
 
 const STOCKBOT_URL = env.STOCKBOT_URL;
 
@@ -29,9 +30,38 @@ export const refreshSchwabAccessToken = async (req, res) => {
   }
 };
 
+export const getSchwabAccountStatus = async (req, res) => {
+  try {
+    const accessToken = await refreshSchwabAccessTokenInternal(req.user._id);
+    console.log
+    if (!accessToken) {
+      return res.status(401).json({
+        connected: false,
+        error: 'Unable to retrieve or refresh Schwab access token.',
+      });
+    }
 
+    // Ping Schwab's lightweight endpoint to validate connection
+    const response = await axios.get('https://api.schwabapi.com/trader/v1/accounts', {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
 
+    if (response.status === 200) {
+      return res.status(200).json({ connected: true });
+    } else {
+      return res.status(200).json({ connected: false });
+    }
 
+  } catch (err) {
+    console.error('❌ Schwab account status check failed:', err.response?.data || err.message);
+    return res.status(500).json({
+      connected: false,
+      error: 'Internal error checking Schwab account status.',
+    });
+  }
+};
 
 
 

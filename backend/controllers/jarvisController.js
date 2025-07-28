@@ -46,7 +46,7 @@ export const startVoiceAssistant = async (req, res) => {
   }
 
   try {
-    const accessToken = await refreshSchwabToken(req.user._id);
+    const accessToken = await refreshSchwabAccessTokenInternal(req.user._id);
     if (!accessToken) {
       return res.status(401).json({ error: "Failed to refresh Schwab token." });
     }

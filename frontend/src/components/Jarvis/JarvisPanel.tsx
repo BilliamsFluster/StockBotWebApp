@@ -151,7 +151,7 @@ const JarvisPanel: React.FC = () => {
 
   return (
     <div className="bg-base-200 rounded-xl p-4 flex flex-col gap-4 h-[90vh]">
-      {token && <SchwabAuth token={token} />}
+      
 
       <div className="flex-1 flex flex-col overflow-hidden">
         <ChatWindow responseLog={responseLog} loading={loading} endRef={endRef} />
