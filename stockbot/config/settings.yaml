@@ -1,0 +1,26 @@
+# Global runtime settings for the stockboty prototype
+
+# Mode can be either "backtest" or "simulation" (paper trading).
+mode: backtest
+
+# Initial account equity for the paper broker.  In live mode this
+# would come from the broker API.
+initial_cash: 100000.0
+
+# Risk configuration shared across strategies and the broker.  These
+# values are interpreted by the risk management layer.
+risk:
+  max_position_size: 100  # maximum number of shares per trade
+  max_drawdown: 0.10      # portfolio drawdown threshold (10%)
+
+# Logging and monitoring options.  If enabled, the bot will write
+# logs to the data/logs directory.  Metrics are always computed in
+# memory and printed to stdout.
+logging:
+  enable_file_logging: false
+  log_dir: data/logs
+
+# LLM / Jarvis integration.  If true, the jarvis module will run
+# periodic analysis and may recommend strategy adjustments.  When
+# disabled the bot will ignore the Jarvis layer entirely.
+llm_enabled: true

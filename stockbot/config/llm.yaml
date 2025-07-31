@@ -1,0 +1,8 @@
+# Configuration for the Jarvis (LLM) oversight layer
+
+jarvis:
+  analysis_frequency: 10  # perform analysis every N trades
+  max_recommended_position: 50  # maximum position Jarvis will suggest
+  sharpe_threshold: 0.0  # if Sharpe ratio falls below this, Jarvis acts
+  drawdown_threshold: 0.08  # if drawdown exceeds this, Jarvis warns
+  verbose: true  # print Jarvis suggestions to stdout

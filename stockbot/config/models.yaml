@@ -1,0 +1,15 @@
+# Model configuration for the stockboty prototype
+
+# In this simple example there is no external ML model being loaded.
+# The strategy relies on straightforward technical indicators.  The
+# structure below is provided to illustrate how one could specify
+# parameters for ML models if they were used.
+
+models:
+  ml_momentum:
+    enabled: false
+    model_path: "models/ml_momentum.pkl"
+    threshold: 0.5
+  sentiment_model:
+    enabled: false
+    model_path: "models/sentiment_model.pkl"

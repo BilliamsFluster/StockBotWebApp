@@ -1,0 +1,16 @@
+# Strategy definitions for the stockboty prototype
+
+# List of available strategies.  The selector module will use
+# the "active" field below to determine which strategy to run.
+strategies:
+  momentum:
+    window_short: 5
+    window_long: 15
+    threshold: 0.0
+  mean_reversion:
+    window: 20
+    threshold: 0.02
+
+# Name of the strategy to use.  Changing this value allows you to
+# experiment with different strategies without modifying code.
+active: momentum
