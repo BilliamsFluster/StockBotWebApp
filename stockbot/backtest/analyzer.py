@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Dict, Any, List
 
-from monitor.metrics import Metrics
+from ..monitor.metrics import Metrics
 
 
 class BacktestAnalyzer:

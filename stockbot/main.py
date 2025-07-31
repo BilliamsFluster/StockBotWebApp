@@ -14,10 +14,10 @@ import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from config import load_settings
-from ingestion import MockProvider
-from backtest import BacktestRunner
-from simulation import Simulator
+from .config import load_settings
+from .ingestion import MockProvider
+from .backtest import BacktestRunner
+from .simulation import Simulator
 
 
 def parse_args() -> argparse.Namespace:

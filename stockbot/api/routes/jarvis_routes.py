@@ -1,6 +1,10 @@
 from fastapi import APIRouter, Request
-from api.controllers import jarvis_controller
-from api.models.jarvis_models import PromptRequest, StartVoiceRequest, SchwabAuthRequest
+from ..controllers import jarvis_controller
+from ..models.jarvis_models import (
+    PromptRequest,
+    StartVoiceRequest,
+    SchwabAuthRequest,
+)
 
 router = APIRouter()
 
@@ -32,3 +36,4 @@ async def authorize_schwab(req: SchwabAuthRequest):
 @router.get("/portfolio")
 async def get_portfolio_data():
     return await jarvis_controller.get_portfolio_data()
+

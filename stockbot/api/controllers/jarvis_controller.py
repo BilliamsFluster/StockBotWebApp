@@ -1,15 +1,15 @@
 from fastapi import Request
-from api.models.jarvis_models import PromptRequest, StartVoiceRequest
+from ..models.jarvis_models import PromptRequest, StartVoiceRequest
 import subprocess, os, json, asyncio, sys
 from sse_starlette.sse import EventSourceResponse
 
 # Local modules
-from Core.config import shared_state
-from Core.web.web_search import fetch_financial_snippets
-from Core.API.data_fetcher import get_account_data_for_ai
-from Core.ollama.ollama_llm import generate_analysis
-from Core.jarvis.core import call_jarvis
-from Core.jarvis.memory_manager import MemoryManager
+from ...Core.config import shared_state
+from ...Core.web.web_search import fetch_financial_snippets
+from ...Core.API.data_fetcher import get_account_data_for_ai
+from ...Core.ollama.ollama_llm import generate_analysis
+from ...Core.jarvis.core import call_jarvis
+from ...Core.jarvis.memory_manager import MemoryManager
 
 listeners: set[asyncio.Queue] = set()
 voice_process = None

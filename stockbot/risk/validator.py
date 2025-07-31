@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from execution.base_broker import Order, OrderSide
+from ..execution.base_broker import Order, OrderSide
 
 
 @dataclass
