@@ -8,6 +8,7 @@ import userRoutes from './routes/userRoutes.js';
 import cookieParser from 'cookie-parser';
 import jarvisRoutes from './routes/jarvisRoutes.js';
 import schwabRoutes from './routes/schwabRoutes.js';
+import alpacaRoutes from './routes/alpacaRoute.js'
 
 
 connectDB();
@@ -29,7 +30,9 @@ app.get('/', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use("/api/jarvis", jarvisRoutes);
+
 app.use('/api/schwab', schwabRoutes);
+app.use('/api/alpaca', alpacaRoutes);
 
 // Server
 const PORT = env.PORT || 5000;

@@ -36,6 +36,7 @@ const getAuthConfig = () => {
 };
 
 export async function getSchwabPortfolioData() {
+  
   const response = await axios.get(
     `${env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/portfolio`,
     getAuthConfig()
