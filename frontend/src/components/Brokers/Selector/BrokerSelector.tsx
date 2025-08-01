@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
 import SchwabAuth from '@/components/Auth/SchwabAuth';
+import AlpacaAuth from '@/components/Auth/AlpacaAuth';
 
 type Preferences = {
   activeBroker: 'schwab' | 'alpaca';
@@ -21,6 +22,7 @@ export default function BrokerSelector() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [showSchwabAuth, setShowSchwabAuth] = useState(false);
+  const [showAlpacaAuth, setShowAlpacaAuth] = useState(false);
 
   const fetchData = async () => {
     try {
@@ -67,7 +69,7 @@ export default function BrokerSelector() {
     if (broker === 'schwab') {
       setShowSchwabAuth(true);
     } else {
-      window.location.href = `${process.env.NEXT_PUBLIC_BACKEND_URL}/connect/alpaca`;
+      setShowAlpacaAuth(true);
     }
   };
 
@@ -139,6 +141,7 @@ export default function BrokerSelector() {
         })}
       </div>
 
+      {/* Schwab Auth Modal */}
       {showSchwabAuth && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
           <div className="bg-white p-5 rounded-lg shadow-lg max-w-sm w-full">
@@ -156,6 +159,17 @@ export default function BrokerSelector() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Alpaca Auth Modal */}
+      {showAlpacaAuth && (
+        <AlpacaAuth
+          onConnected={() => {
+            setShowAlpacaAuth(false);
+            fetchData();
+          }}
+          onCancel={() => setShowAlpacaAuth(false)}
+        />
       )}
     </>
   );
