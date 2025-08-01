@@ -11,9 +11,9 @@ import {
 } from '@/api/speechAssistant';
 import { getUserPreferences, setUserPreferences } from '@/api/client';
 
-import SchwabAuth from '@/components/Auth/SchwabAuth';
 import ChatWindow from './ChatWindow';
 import InputFooter from './InputFooter';
+import env from '../../../config/env';
 
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
 
@@ -22,7 +22,6 @@ const JarvisPanel: React.FC = () => {
   const [responseLog, setResponseLog] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<any>(null);
 
   const [voiceEnabled, setVoiceEnabled] = useState(false);
@@ -40,53 +39,52 @@ const JarvisPanel: React.FC = () => {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const stopVoiceRef = useRef<() => void>(() => {});
 
+  /** Fetch available browser voices */
   useEffect(() => {
     getBrowserVoices().then((v) => {
       if (v.length) setBrowserVoices(v);
     });
   }, []);
 
-  useEffect(() => {
-    const iv = setInterval(() => {
-      const t = localStorage.getItem('token');
-      if (t && t !== token) setToken(t);
-    }, 500);
-    return () => clearInterval(iv);
-  }, [token]);
-
+  /** Load user + preferences from backend via cookie */
   const loadPrefs = useCallback(async () => {
-  const { data } = await getUserPreferences();
-  if (!data) return;
+    try {
+      const { data } = await getUserPreferences(); // should call backend with withCredentials: true
+      if (!data) return;
 
-  setUser(data);
+      setUser(data);
 
-  const prefs = data.preferences || {};
-  if (prefs.voiceEnabled !== undefined) setVoiceEnabled(prefs.voiceEnabled);
-  if (prefs.nativeVoiceIndex !== undefined) setNativeVoiceIndex(prefs.nativeVoiceIndex);
-  if (prefs.cloudVoiceIndex !== undefined) setCloudVoiceIndex(prefs.cloudVoiceIndex);
+      const prefs = data.preferences || {};
+      if (prefs.voiceEnabled !== undefined) setVoiceEnabled(prefs.voiceEnabled);
+      if (prefs.nativeVoiceIndex !== undefined) setNativeVoiceIndex(prefs.nativeVoiceIndex);
+      if (prefs.cloudVoiceIndex !== undefined) setCloudVoiceIndex(prefs.cloudVoiceIndex);
 
-  if (prefs.model) {
-    setModel(prefs.model);
-    setUserPreferences({ model: prefs.model });
-  }
+      if (prefs.model) {
+        setModel(prefs.model);
+        setUserPreferences({ model: prefs.model });
+      }
 
-  if (prefs.format) {
-    setFormat(prefs.format);
-    setUserPreferences({ format: prefs.format }); 
-  }
-}, []);
+      if (prefs.format) {
+        setFormat(prefs.format);
+        setUserPreferences({ format: prefs.format });
+      }
+    } catch (err) {
+      console.error('Error loading preferences:', err);
+    }
+  }, []);
 
-
+  /** On mount, fetch user + preferences securely */
   useEffect(() => {
-    if (token) loadPrefs();
-  }, [token, loadPrefs]);
+    loadPrefs();
+  }, [loadPrefs]);
 
+  /** Prepare audio + autofocus */
   useEffect(() => {
     primeAudio();
     taRef.current?.focus();
   }, []);
 
-  // ✅ VOICE ASSISTANT HOOK WITH THINKING STATE
+  /** Voice assistant hook */
   useEffect(() => {
     stopVoiceRef.current();
 
@@ -109,17 +107,19 @@ const JarvisPanel: React.FC = () => {
     return () => stopVoiceRef.current();
   }, [voiceEnabled, user, nativeVoiceIndex, cloudVoiceIndex, browserVoices]);
 
+  /** Scroll to bottom when log changes */
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [responseLog]);
 
+  /** Send a typed prompt */
   const handleSendPrompt = async () => {
     if (!prompt.trim() || !user) return;
     setLoading(true);
     setResponseLog((r) => [...r, `USER: ${prompt}`]);
 
     try {
-      const { response, error } = await askJarvis(prompt, user);
+      const { response, error } = await askJarvis(prompt, user); // askJarvis must use withCredentials: true internally
       const result = response || error || 'No response';
       setResponseLog((r) => [...r, `JARVIS: ${result}`]);
 
@@ -138,6 +138,7 @@ const JarvisPanel: React.FC = () => {
     }
   };
 
+  /** Toggle voice mode */
   const handleVoiceToggle = () => {
     const next = !voiceEnabled;
     setVoiceEnabled(next);
@@ -145,14 +146,13 @@ const JarvisPanel: React.FC = () => {
     setResponseLog((r) => [...r, next ? '🎤 Voice enabled' : '🔇 Voice disabled']);
   };
 
+  /** Save voice settings on change */
   useEffect(() => {
     setUserPreferences({ nativeVoiceIndex, cloudVoiceIndex });
   }, [nativeVoiceIndex, cloudVoiceIndex]);
 
   return (
     <div className="bg-base-200 rounded-xl p-4 flex flex-col gap-4 h-[90vh]">
-      
-
       <div className="flex-1 flex flex-col overflow-hidden">
         <ChatWindow responseLog={responseLog} loading={loading} endRef={endRef} />
 

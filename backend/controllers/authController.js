@@ -41,7 +41,6 @@ export const registerUser = async (req, res) => {
 export const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
-    
 
     if (!email || !password) {
       return res.status(400).json({ message: 'All fields are required' });
@@ -58,17 +57,25 @@ export const loginUser = async (req, res) => {
     user.refreshToken = refreshToken;
     await user.save();
 
-    
+    // ✅ Access token cookie
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'Strict',
+      maxAge: 20 * 60 * 1000, // 20 minutes
+      path: '/',
+    });
+
+    // ✅ Refresh token cookie
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
-      secure: false, // ✅ set to true in production with HTTPS
-      sameSite: 'Lax',
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'Strict',
       maxAge: REFRESH_EXPIRY_MS,
       path: '/',
     });
 
     res.json({
-      token,
       user: {
         id: user._id,
         username: user.username,
@@ -79,6 +86,7 @@ export const loginUser = async (req, res) => {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
+
 
 export const logoutUser = async (req, res) => {
   // Optionally: Remove stored refresh token from DB

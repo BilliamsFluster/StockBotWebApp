@@ -5,16 +5,9 @@ export function useSchwabStatus() {
   const [connected, setConnected] = useState<boolean | null>(null);
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    console.log('[Schwab] Token:', token);
-    if (!token) {
-      setConnected(false);
-      return;
-    }
-
     axios
       .get(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/schwab/account`, {
-        headers: { Authorization: `Bearer ${token}` },
+        withCredentials: true, // Send secure cookie automatically
       })
       .then((res) => {
         console.log('[Schwab] Response:', res.data);

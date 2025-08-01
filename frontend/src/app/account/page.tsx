@@ -60,7 +60,6 @@ export default function AccountPage() {
         <div className="bg-black/30 backdrop-blur-lg p-4 rounded-xl border border-purple-400/20 space-y-4">
           <LogoutButton/>
           <button className="btn btn-outline btn-error" onClick={() => {
-            localStorage.clear();
             location.reload();
           }}>
             Clear All Preferences

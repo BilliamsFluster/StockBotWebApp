@@ -21,46 +21,44 @@ export default function BrokerSelector() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [showSchwabAuth, setShowSchwabAuth] = useState(false);
-  const [token, setToken] = useState('');
 
-  // Load JWT from localStorage
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      console.log("JWT in localStorage:", localStorage.getItem('jwt'));
+  const fetchData = async () => {
+    try {
+      setLoading(true);
 
-      const t = localStorage.getItem('jwt') || '';
-      setToken(t);
+      const [prefsRes, profileRes] = await Promise.all([
+        axios.get<{ preferences: Preferences }>(
+          `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/user/preferences`,
+          { withCredentials: true }
+        ),
+        axios.get<Profile>(
+          `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/user/profile`,
+          { withCredentials: true }
+        ),
+      ]);
+
+      setPreferences(prefsRes.data.preferences);
+      setProfile(profileRes.data);
+    } catch (err: any) {
+      console.error(err);
+      if (err.response?.status === 401) {
+        // Not logged in, redirect or show message
+        window.location.href = '/login';
+      }
+    } finally {
+      setLoading(false);
     }
-  }, []);
-
-  const fetchData = () => {
-    setLoading(true);
-    Promise.all([
-      axios.get(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/user/preferences`, {
-        headers: { Authorization: `Bearer ${token}` }
-      }),
-      axios.get(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/user/profile`, {
-        headers: { Authorization: `Bearer ${token}` }
-      }),
-    ])
-      .then(([prefsRes, profileRes]) => {
-        setPreferences(prefsRes.data.preferences);
-        setProfile(profileRes.data);
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
   };
 
-  // Fetch after token is ready
   useEffect(() => {
-    if (token) fetchData();
-  }, [token]);
+    fetchData();
+  }, []);
 
   const setActiveBroker = async (broker: 'schwab' | 'alpaca') => {
     await axios.put(
       `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/user/preferences`,
       { activeBroker: broker },
-      { headers: { Authorization: `Bearer ${token}` } }
+      { withCredentials: true }
     );
     setPreferences(prev => (prev ? { ...prev, activeBroker: broker } : null));
   };
@@ -69,12 +67,10 @@ export default function BrokerSelector() {
     if (broker === 'schwab') {
       setShowSchwabAuth(true);
     } else {
-      // Alpaca key entry flow or OAuth
       window.location.href = `${process.env.NEXT_PUBLIC_BACKEND_URL}/connect/alpaca`;
     }
   };
 
-  if (!token) return <p>Loading authentication...</p>;
   if (loading) return <p>Loading brokers...</p>;
 
   const brokers = [
@@ -143,12 +139,10 @@ export default function BrokerSelector() {
         })}
       </div>
 
-      {/* Schwab Auth Modal */}
       {showSchwabAuth && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
           <div className="bg-white p-5 rounded-lg shadow-lg max-w-sm w-full">
             <SchwabAuth
-              token={token}
               onConnected={() => {
                 setShowSchwabAuth(false);
                 fetchData();
