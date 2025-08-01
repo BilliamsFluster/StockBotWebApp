@@ -1,5 +1,5 @@
 import express from 'express';
-import { env } from './config/env.js'; 
+
 import cors from 'cors';
 import corsOptions from './config/corsOptions.js';
 import connectDB from './config/db.js';
@@ -35,6 +35,6 @@ app.use('/api/schwab', schwabRoutes);
 app.use('/api/alpaca', alpacaRoutes);
 
 // Server
-const PORT = env.PORT || 5000;
+const PORT = process.env.BACKEND_PORT || 5000;
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server running on port ${PORT}`));
 

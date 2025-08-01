@@ -1,9 +1,9 @@
 import axios from 'axios';
 import base64 from 'base-64';
 import User from '../models/User.js';
-import { env } from './env.js';
 
-const STOCKBOT_URL = env.STOCKBOT_URL;
+
+const STOCKBOT_URL = process.env.STOCKBOT_URL;
 
 export async function refreshSchwabAccessTokenInternal(userId) {
   const user = await User.findById(userId);

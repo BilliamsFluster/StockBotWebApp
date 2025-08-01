@@ -13,7 +13,7 @@ import { getUserPreferences, setUserPreferences } from '@/api/client';
 
 import ChatWindow from './ChatWindow';
 import InputFooter from './InputFooter';
-import env from '../../../config/env';
+
 
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
 

@@ -1,9 +1,9 @@
 import axios from "axios";
-import { env } from "../config/env.js";
+
 import { refreshSchwabAccessTokenInternal } from "../config/schwab.js";
 import { log } from "../utils/logger.js";
 
-const STOCKBOT_URL = env.STOCKBOT_URL;
+const STOCKBOT_URL = process.env.STOCKBOT_URL;
 
 // Global reference to running voice assistant process
 let voiceProcess = null;

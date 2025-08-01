@@ -13,7 +13,8 @@ export default function SchwabAuth({ onConnected }: Props) {
   const [message, setMessage] = useState('');
 
   const openSchwabAuth = () => {
-    const clientId = 'IfsFyMXkiHgGiaGRgWqYs24jGhZCCZFz';
+    const clientId = `${process.env.NEXT_PUBLIC_SCHWAB_CLIENT_ID}`;
+    
     const url = `https://api.schwabapi.com/v1/oauth/authorize?client_id=${clientId}&redirect_uri=https://127.0.0.1`;
     window.open(url, '_blank');
   };
