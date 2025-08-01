@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "cross-env NODE_ENV=development next dev",
+    "dev": "infisical run -- next dev",
     "build": "cross-env NODE_ENV=production next build",
     "start": "next start",
     "lint": "next lint"
@@ -29,6 +29,7 @@
     "recharts": "^3.1.0"
   },
   "devDependencies": {
+    "@infisical/cli": "^0.41.96",
     "@types/node": "^20.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

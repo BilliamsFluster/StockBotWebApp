@@ -1,5 +1,5 @@
 import axios from 'axios';
-import env from '../../config/env'
+
 
 export interface ConnectAlpacaPayload {
   app_key: string;
@@ -18,7 +18,7 @@ const getAuthConfig = () => {
  * The backend should validate credentials before saving them.
  */
 export async function connectAlpaca(payload: ConnectAlpacaPayload) {
-  const url = `${env.NEXT_PUBLIC_BACKEND_URL}/api/alpaca/connect`; 
+  const url = `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/alpaca/connect`; 
   console.log('Connecting to Alpaca URL:', url);
 
   const res = await axios.post(url, payload, getAuthConfig());

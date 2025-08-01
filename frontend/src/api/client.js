@@ -1,11 +1,12 @@
 import axios from "axios";
-import env from "../../config/env";
+
 
 // Global API instance with cookie support
 const api = axios.create({
-  baseURL: `${env.NEXT_PUBLIC_BACKEND_URL}/api`,
+  baseURL: `${process.env.NEXT_PUBLIC_BACKEND_URL}/api`,
   withCredentials: true // ✅ Always send/receive cookies
 });
+console.log(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api`);
 
 // ✅ Auth endpoints (no token header required anymore)
 export const checkAuth = () =>

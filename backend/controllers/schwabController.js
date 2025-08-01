@@ -1,8 +1,8 @@
-import { env } from '../config/env.js';
+
 import { exchangeCodeForTokensInternal, refreshSchwabAccessTokenInternal } from '../config/schwab.js';
 import axios from "axios"
 
-const STOCKBOT_URL = env.STOCKBOT_URL;
+const STOCKBOT_URL = process.env.STOCKBOT_URL;
 
 export const exchangeCodeForTokens = async (req, res) => {
   const { code } = req.body;

@@ -5,7 +5,6 @@ import { gsap } from 'gsap';
 import { FaUserCircle } from 'react-icons/fa';
 import ProfilePanel from '@/components/ProfilePanel';
 import JarvisPanel from '@/components/Jarvis/JarvisPanel';
-import env from '../../../config/env';
 
 export default function Chatbot() {
   const containerRef     = useRef<HTMLDivElement>(null);
@@ -33,7 +32,7 @@ export default function Chatbot() {
     gsap.to(blob3Ref.current, { x: 40, y: 40, duration: 8, repeat: -1, yoyo: true, ease: 'sine.inOut' });
 
     // Secure cookie-based profile fetch
-    fetch(`${env.NEXT_PUBLIC_BACKEND_URL}/api/users/profile`, {
+    fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/users/profile`, {
       credentials: 'include', // send HTTP-only cookie
     })
       .then((r) => {

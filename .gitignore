@@ -68,3 +68,5 @@ __pycache__/
 *.pyd
 *.egg-info/
 *.env
+frontend/.infisical.json
+backend/.infisical.json
