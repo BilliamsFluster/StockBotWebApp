@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getUserPreferences, logoutUser } from '@/api/client'; // adjust these as needed
+import { getUserPreferences } from '@/api/client'; // adjust these as needed
+import LogoutButton from '@/components/LogoutButton';
 
 export default function AccountPage() {
   const [user, setUser] = useState<any>(null);
@@ -57,9 +58,7 @@ export default function AccountPage() {
       <section className="space-y-2">
         <h2 className="text-xl font-semibold text-white">Security</h2>
         <div className="bg-black/30 backdrop-blur-lg p-4 rounded-xl border border-purple-400/20 space-y-4">
-          <button className="btn btn-warning" onClick={logoutUser}>
-            Log Out
-          </button>
+          <LogoutButton/>
           <button className="btn btn-outline btn-error" onClick={() => {
             localStorage.clear();
             location.reload();

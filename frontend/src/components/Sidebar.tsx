@@ -36,6 +36,7 @@ const navSections = [
       { href: '/portfolio/positions', icon: <FaTable />, label: 'Holdings' },
       { href: '/portfolio/trades', icon: <FaHistory />, label: 'Trade History' },
       { href: '/portfolio/transactions', icon: <FaTable />, label: 'Transactions' },
+      { href: '/stockbot', icon: <FaTable />, label: 'Stockbot' },
     ],
   },
   {

@@ -5,8 +5,12 @@ import { protectRoute } from '../middleware/protectRoute.js';
 
 const router = express.Router();
 
+// User profile (identity info)
 router.get('/profile', protectRoute, getUserProfile);
 router.put('/profile', protectRoute, updateUserProfile);
+
+
+// User preferences (includes activeBroker)
 router.put('/preferences', protectRoute, updatePreferences);
 router.get('/preferences', protectRoute, getPreferences);
 

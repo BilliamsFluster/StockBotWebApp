@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import axios from 'axios';
 
-export default function SchwabAuth({ token }: { token: string }) {
+export default function SchwabAuth({ token, onConnected }: { token: string; onConnected: () => void }) {
   const [redirectUrl, setRedirectUrl] = useState('');
   const [status, setStatus] = useState<'idle' | 'success' | 'error' | 'missing'>('idle');
   const [message, setMessage] = useState('');
@@ -16,7 +16,8 @@ export default function SchwabAuth({ token }: { token: string }) {
 
   const submitCode = async () => {
     try {
-      const urlObj = new URL(redirectUrl.trim());
+      const cleanedUrl = redirectUrl.trim().replace(/\s+/g, '');
+      const urlObj = new URL(cleanedUrl);
       const code = urlObj.searchParams.get('code');
 
       if (!code) {
@@ -28,13 +29,12 @@ export default function SchwabAuth({ token }: { token: string }) {
       await axios.post(
         `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/schwab/authorize`,
         { code },
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
+        { headers: { Authorization: `Bearer ${token}` } }
       );
 
       setStatus('success');
       setMessage('Success! Tokens stored.');
+      onConnected();
     } catch (err) {
       console.error(err);
       setStatus('error');
@@ -43,17 +43,15 @@ export default function SchwabAuth({ token }: { token: string }) {
   };
 
   return (
-    <div className="space-y-3" onClick={(e) => e.stopPropagation()}>
-      <h3 className="text-sm font-bold text-base-content">Connect Schwab</h3>
+    <div className="space-y-3">
+      <h3 className="text-sm font-bold">Connect Schwab</h3>
 
       <button onClick={openSchwabAuth} className="btn btn-sm btn-neutral w-full">
         Login via Schwab
       </button>
 
       <div>
-        <label className="block mb-1 text-xs font-medium text-neutral-400">
-          Paste Redirected URL:
-        </label>
+        <label className="block mb-1 text-xs font-medium text-neutral-400">Paste Redirected URL:</label>
         <input
           type="text"
           placeholder="https://127.0.0.1/?code=..."

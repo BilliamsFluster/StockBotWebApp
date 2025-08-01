@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, ChangeEvent, FormEvent } from 'react';
-import { login } from '../../api/client'; // adjust path if needed
-import { useRouter } from 'next/navigation'; // Next.js App Router
+import { login } from '../../api/client'; // make sure this sends { withCredentials: true }
+import { useRouter } from 'next/navigation';
 import { toast } from 'react-hot-toast';
-import { useAuth } from '../../context/AuthContext'; // make sure context is typed
+import { useAuth } from '../../context/AuthContext';
 
 interface LoginFormFields {
   email: string;
@@ -13,7 +13,7 @@ interface LoginFormFields {
 
 const LoginForm = () => {
   const [form, setForm] = useState<LoginFormFields>({ email: '', password: '' });
-  const { setUser } = useAuth(); // update type in your AuthContext for best results
+  const { setUser } = useAuth();
   const router = useRouter();
 
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -22,40 +22,34 @@ const LoginForm = () => {
   };
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
-  e.preventDefault();
+    e.preventDefault();
 
-  // Basic client-side validation
-  if (!form.email || !form.password) {
-    return toast.error('Please fill in all fields.');
-  }
-
-  if (form.password.length < 6) {
-    return toast.error('Password must be at least 6 characters.');
-  }
-
-  try {
-    const { data } = await login(form);
-
-    if (data.token) {
-      localStorage.setItem('token', data.token); // ✅ Save token
+    // Basic client-side validation
+    if (!form.email || !form.password) {
+      return toast.error('Please fill in all fields.');
     }
 
-    setUser(data.user || true);
-    toast.success('Logged in!');
-    router.push('/chatbot'); // Redirect to chatbot page
-  } catch (err: any) {
-  const status = err.response?.status;
-  const msg = err.response?.data?.message || 'Login failed';
+    if (form.password.length < 6) {
+      return toast.error('Password must be at least 6 characters.');
+    }
 
-  // Debugging payload
-  console.error('❌ Login error:', err);
+    try {
+      // This request will set an HTTP-only cookie in the browser
+      const { data } = await login(form);
 
-  // 🔔 Show all possible info via toast
-  toast.error(`Status: ${status || 'N/A'} | ${msg}`);
-  toast.error(`Details: ${JSON.stringify(err.response?.data || {}, null, 2)}`);
-}
-};
+      // We don't store tokens in localStorage anymore — backend cookie handles auth
+      setUser(data.user || true);
 
+      toast.success('Logged in!');
+      router.push('/chatbot');
+    } catch (err: any) {
+      const status = err.response?.status;
+      const msg = err.response?.data?.message || 'Login failed';
+
+      console.error('❌ Login error:', err);
+      toast.error(`Status: ${status || 'N/A'} | ${msg}`);
+    }
+  };
 
   return (
     <form

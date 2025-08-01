@@ -28,44 +28,42 @@ export const updateUserProfile = async (req, res) => {
 };
 
 export const updatePreferences = async (req, res) => {
-  const { model, format, voiceEnabled } = req.body;
+  const { model, format, voiceEnabled, activeBroker } = req.body;
   const user = await User.findById(req.user._id);
 
   if (!user) return res.status(404).json({ message: 'User not found' });
 
   user.preferences = {
-    ...user.preferences, 
+    ...user.preferences,
     ...(model !== undefined && { model }),
     ...(format !== undefined && { format }),
     ...(voiceEnabled !== undefined && { voiceEnabled }),
+    ...(activeBroker !== undefined && { activeBroker }),
   };
 
   await user.save();
-  res.json({ message: 'Preferences updated' });
+  res.json({ message: 'Preferences updated', preferences: user.preferences });
 };
 
 
 export const getPreferences = async (req, res) => {
   try {
     const user = await User.findById(req.user._id);
-
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ message: 'User not found' });
 
     const defaults = {
-      model: 'llama3',
+      model: 'qwen3:8b',
       format: 'markdown',
       voiceEnabled: false,
+      activeBroker: 'alpaca', 
     };
 
-    // 🛠 Convert Mongoose subdocument to plain object
     const preferences = user.preferences?.toObject?.() || {};
 
     return res.json({
       preferences: {
         ...defaults,
-        ...preferences, // ✅ now guaranteed to be plain JSON
+        ...preferences,
       },
     });
   } catch (err) {
@@ -73,3 +71,4 @@ export const getPreferences = async (req, res) => {
     return res.status(500).json({ message: 'Server error' });
   }
 };
+

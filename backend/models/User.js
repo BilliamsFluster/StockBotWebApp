@@ -5,8 +5,24 @@ import bcrypt from 'bcryptjs';
 const SchwabTokenSchema = new mongoose.Schema({
   access_token: String,
   refresh_token: String,
-  expires_at: Number,
-});
+  expires_at: Number, // timestamp in ms
+}, { _id: false });
+
+const AlpacaTokenSchema = new mongoose.Schema({
+  app_key: {
+    type: String,
+    required: true,
+  },
+  app_secret: {
+    type: String,
+    required: true,
+  },
+  mode: {
+    type: String,
+    enum: ['paper', 'live'],
+    default: 'paper',
+  },
+}, { _id: false });
 
 const PreferencesSchema = new mongoose.Schema({
   model: {
@@ -17,7 +33,16 @@ const PreferencesSchema = new mongoose.Schema({
     type: String,
     default: 'markdown',
   },
-});
+  voiceEnabled: {
+    type: Boolean,
+    default: false,
+  },
+  activeBroker: {
+    type: String,
+    enum: ['schwab', 'alpaca'],
+    default: 'alpaca',
+  },
+}, { _id: false });
 
 const userSchema = new mongoose.Schema(
   {
@@ -38,7 +63,8 @@ const userSchema = new mongoose.Schema(
     },
     refreshToken: String,
     schwab_tokens: SchwabTokenSchema,
-    preferences: PreferencesSchema, 
+    alpaca_tokens: AlpacaTokenSchema,
+    preferences: PreferencesSchema,
   },
   { timestamps: true }
 );

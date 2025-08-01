@@ -19,6 +19,8 @@ interface AuthContextType {
   user: User | null;
   setUser: (user: User | null) => void;
   loading: boolean;
+  authChecked: boolean; // ✅ new flag so AuthRedirect knows when check is done
+  refreshSession: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -30,38 +32,52 @@ interface AuthProviderProps {
 export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [hydrated, setHydrated] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false); // ✅
 
-  // Ensure we're fully client-side before checking auth
+  // Track last refresh time
+  const [lastRefresh, setLastRefresh] = useState<number>(0);
+
+  const ACCESS_TOKEN_LIFETIME = 20 * 60 * 1000; // 20 minutes
+  const REFRESH_THRESHOLD = 5 * 60 * 1000; // refresh 5 min before expiry
+
+  const refreshSession = async (): Promise<void> => {
+    try {
+      const res = await checkAuth();
+      setUser(res.data.user || null);
+      setLastRefresh(Date.now());
+    } catch {
+      setUser(null);
+    } finally {
+      setAuthChecked(true); // ✅ Always set to true after check finishes
+    }
+  };
+
   useEffect(() => {
-    setHydrated(true);
+    const init = async () => {
+      await refreshSession();
+      setLoading(false);
+    };
+    init();
   }, []);
 
+  // Auto refresh if close to expiry
   useEffect(() => {
-    if (!hydrated) return;
+    const checkRefresh = () => {
+      const timeSinceLast = Date.now() - lastRefresh;
+      const timeUntilExpiry = ACCESS_TOKEN_LIFETIME - timeSinceLast;
 
-    const validateToken = async () => {
-      try {
-        const res = await checkAuth(); // hits /auth/refresh
-        setUser(res.data.user);
-
-        if (res.data.token) {
-          localStorage.setItem('token', res.data.token);
-        }
-      } catch (err) {
-        setUser(null);
-        localStorage.removeItem('token');
-      } finally {
-        setLoading(false);
+      if (timeUntilExpiry <= REFRESH_THRESHOLD) {
+        refreshSession();
       }
     };
 
-    validateToken();
-  }, [hydrated]);
+    const interval = setInterval(checkRefresh, 60 * 1000);
+    return () => clearInterval(interval);
+  }, [lastRefresh]);
 
   return (
     <AuthContext.Provider
-      value={{ user, setUser, loading: loading || !hydrated }}
+      value={{ user, setUser, loading, authChecked, refreshSession }}
     >
       {children}
     </AuthContext.Provider>
