@@ -3,7 +3,11 @@
 import { useState } from 'react';
 import axios from 'axios';
 
-export default function SchwabAuth({ token, onConnected }: { token: string; onConnected: () => void }) {
+interface Props {
+  onConnected: () => void;
+}
+
+export default function SchwabAuth({ onConnected }: Props) {
   const [redirectUrl, setRedirectUrl] = useState('');
   const [status, setStatus] = useState<'idle' | 'success' | 'error' | 'missing'>('idle');
   const [message, setMessage] = useState('');
@@ -29,7 +33,7 @@ export default function SchwabAuth({ token, onConnected }: { token: string; onCo
       await axios.post(
         `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/schwab/authorize`,
         { code },
-        { headers: { Authorization: `Bearer ${token}` } }
+        { withCredentials: true } // Send cookies
       );
 
       setStatus('success');

@@ -16,12 +16,7 @@ const ProfilePanel: FC<ProfilePanelProps> = ({ isOpen, onClose, darkMode, setDar
   const router = useRouter();
   const { setUser } = useAuth();
 
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    setUser(null); // ✅ clear auth context immediately
-    onClose();
-    router.push('/');
-};
+  
 
   return (
     <div

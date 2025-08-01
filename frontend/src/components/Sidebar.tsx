@@ -83,7 +83,7 @@ export default function Sidebar({ isMobileOpen, setMobileOpen }: SidebarProps) {
     <aside
       className={clsx(
         'h-screen fixed top-0 left-0 z-50 bg-black/20 backdrop-blur-lg border-r border-purple-400/20',
-        'transition-all duration-300 overflow-visible', // allow dropdown to show outside
+        'transition-all duration-300 overflow-visible',
         'w-64',
         expanded ? 'lg:w-64' : 'lg:w-20',
         isMobileOpen ? 'translate-x-0' : '-translate-x-full',
@@ -92,7 +92,7 @@ export default function Sidebar({ isMobileOpen, setMobileOpen }: SidebarProps) {
     >
       {/* Header: Logo and Schwab Connection */}
       <div className="relative flex items-center justify-between px-4 py-4">
-        {/* Logo or Title */}
+        {/* Logo */}
         <div
           className="flex items-center gap-2 cursor-pointer"
           onClick={() => {
@@ -122,7 +122,6 @@ export default function Sidebar({ isMobileOpen, setMobileOpen }: SidebarProps) {
           onClick={(e) => {
             e.stopPropagation();
             setAuthOpen(!authOpen);
-            console.log('Clicked Schwab dot');
           }}
         >
           <div
@@ -142,11 +141,12 @@ export default function Sidebar({ isMobileOpen, setMobileOpen }: SidebarProps) {
               className="absolute left-8 top-0 z-[9999] w-72 pointer-events-auto bg-base-100 text-base-content shadow-lg rounded-lg p-4"
             >
               <SchwabAuth
-                token={
-                  typeof window !== 'undefined'
-                    ? localStorage.getItem('token') ?? ''
-                    : ''
-                }
+                onConnected={() => {
+                  setAuthOpen(false);
+                  // Refresh connection status after linking
+                  // You can trigger re-fetch in useSchwabStatus or reload page
+                  window.location.reload(); 
+                }}
               />
             </div>
           )}
