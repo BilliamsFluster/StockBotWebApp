@@ -1,36 +1,30 @@
 import axios from "axios";
-import env from '../../config/env';
+import env from "../../config/env";
 
+// Global API instance with cookie support
 const api = axios.create({
   baseURL: `${env.NEXT_PUBLIC_BACKEND_URL}/api`,
-  withCredentials: true,
+  withCredentials: true // ✅ Always send/receive cookies
 });
 
-// ⬇️ Helper to get token and attach it
-const getAuthHeaders = () => {
-  const token = localStorage.getItem('token');
-  return token ? { Authorization: `Bearer ${token}` } : {};
-};
-
-// ✅ Auth endpoints
+// ✅ Auth endpoints (no token header required anymore)
 export const checkAuth = () =>
-  api.get("/auth/refresh", { withCredentials: true });
+  api.get("/auth/refresh"); // will use cookie
 
 export const signup = (data) =>
-  api.post("/auth/register", data, { withCredentials: true });
+  api.post("/auth/register", data);
 
 export const login = (data) =>
-  api.post("/auth/login", data, { withCredentials: true });
+  api.post("/auth/login", data); // sets cookie in browser
 
-// ✅ User Preferences
+export const logout = () =>
+  api.post("/auth/logout");
+
+// ✅ User Preferences (no manual token)
 export const getUserPreferences = () =>
-  api.get("/users/preferences", {
-    headers: getAuthHeaders(),
-  });
+  api.get("/users/preferences");
 
 export const setUserPreferences = (data) =>
-  api.put("/users/preferences", data, {
-    headers: getAuthHeaders(),
-  });
+  api.put("/users/preferences", data);
 
 export default api;

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { getUserPreferences, setUserPreferences } from '@/api/client';
+import BrokerSelector from '@/components/Brokers/Selector/BrokerSelector';
 
 const models = ['llama3', 'deepseek', 'qwen3'];
 const formats = ['markdown', 'text', 'json'];
@@ -129,15 +130,8 @@ export default function SettingsPage() {
          <label htmlFor="debugToggle" className="label cursor-pointer">
 
             <span className="label-text">Enable Debug Logs</span>
-            <input
-              type="checkbox"
-              className="checkbox"
-              checked={debug}
-              onChange={(e) => {
-                setDebug(e.target.checked);
-                update('debug', e.target.checked);
-              }}
-            />
+            <BrokerSelector/>
+            
           </label>
         </div>
       </section>

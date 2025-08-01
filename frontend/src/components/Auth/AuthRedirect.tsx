@@ -1,27 +1,25 @@
 'use client';
 
 import { useEffect } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 
 export default function AuthRedirect() {
-  const { user, loading } = useAuth();
+  const { user, loading, authChecked  } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
   useEffect(() => {
-    if (loading) return;
+    if (!authChecked) return; 
 
-    const isLoggedIn = !!user;
-
-    if (!isLoggedIn && pathname !== '/') {
+    if (!user && pathname !== '/') {
       router.replace('/');
     }
 
-    if (isLoggedIn && pathname === '/') {
-      router.replace('/chatbot'); // or dashboard route
+    if (user && pathname === '/') {
+      router.replace('/chatbot');
     }
-  }, [user, loading, pathname, router]);
+  }, [user, authChecked, pathname, router]);
 
   return null;
 }
