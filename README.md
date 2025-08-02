@@ -20,8 +20,8 @@ Clone the repository and set up each component.
 
 ```bash
 cd backend
-infisical init
 npm install
+infisical init
 npm run dev
 ```
 
@@ -29,8 +29,8 @@ npm run dev
 
 ```bash
 cd frontend
-infisical init
 npm install
+infisical init
 npm run dev
 ```
 
@@ -39,7 +39,7 @@ npm run dev
 ```bash
 cd stockbot
 setup_venv.bat   # run once to set up the virtual environment
-run_dev.bat       # start the bot server
+run_dev.bat       # start the bot server and sets up virtual environment
 ```
 
 > On non-Windows systems, run the equivalent shell scripts if provided or execute the Python modules directly.
