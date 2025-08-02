@@ -25,8 +25,8 @@ const TransactionsTable: React.FC<Props> = ({ transactions }) => {
       symbol:
         tx?.transferItems?.[0]?.instrument?.symbol?.replace('CURRENCY_', '') ?? 'N/A',
       type: tx.type ?? 'UNKNOWN',
-      quantity: tx?.transferItems?.[0]?.amount ?? 0,
-      amount: tx.netAmount ?? 0,
+      quantity: Number(tx?.transferItems?.[0]?.amount ?? 0), // ✅ Ensure numeric
+      amount: Number(tx.netAmount ?? 0), // ✅ Ensure numeric
     }));
   }, [transactions]);
 
@@ -64,7 +64,7 @@ const TransactionsTable: React.FC<Props> = ({ transactions }) => {
                 <td className="py-2">{tx.type}</td>
                 <td className="py-2 text-right">{tx.quantity}</td>
                 <td className="py-2 text-right">
-                  {typeof tx.amount === 'number' ? `$${tx.amount.toFixed(2)}` : '-'}
+                  {Number.isFinite(tx.amount) ? `$${tx.amount.toFixed(2)}` : '-'}
                 </td>
               </tr>
             ))}

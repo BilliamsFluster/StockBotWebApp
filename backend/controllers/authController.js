@@ -5,7 +5,9 @@ import { log } from '../utils/logger.js';
 const JWT_SECRET = process.env.JWT_SECRET || 'yoursecretkey';
 const REFRESH_SECRET = process.env.REFRESH_SECRET || 'refreshsecretkey';
 const TOKEN_EXPIRY = '20m';
-const REFRESH_EXPIRY = '7d';
+const REFRESH_EXPIRY = '8h';
+const REFRESH_EXPIRY_MS = 8 * 60 * 60 * 1000; // for cookie in ms
+
 
 const generateToken = (userId) =>
   jwt.sign({ id: userId }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
@@ -39,7 +41,6 @@ export const registerUser = async (req, res) => {
 export const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
-    
 
     if (!email || !password) {
       return res.status(400).json({ message: 'All fields are required' });
@@ -56,17 +57,25 @@ export const loginUser = async (req, res) => {
     user.refreshToken = refreshToken;
     await user.save();
 
-    // ✅ Set refresh token as secure HTTP-only cookie
+    // ✅ Access token cookie
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'Strict',
+      maxAge: 20 * 60 * 1000, // 20 minutes
+      path: '/',
+    });
+
+    // ✅ Refresh token cookie
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
-      secure: false, // ✅ set to true in production with HTTPS
-      sameSite: 'Lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'Strict',
+      maxAge: REFRESH_EXPIRY_MS,
       path: '/',
     });
 
     res.json({
-      token,
       user: {
         id: user._id,
         username: user.username,
@@ -79,6 +88,31 @@ export const loginUser = async (req, res) => {
 };
 
 
+export const logoutUser = async (req, res) => {
+  // Optionally: Remove stored refresh token from DB
+  if (req.user) {
+    await User.findByIdAndUpdate(req.user.id, { refreshToken: null });
+  }
+
+  // Clear both cookies
+  res.clearCookie("token", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "Strict",
+    path: "/",
+  });
+
+  res.clearCookie("refreshToken", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "Strict",
+    path: "/",
+  });
+
+  res.status(200).json({ message: "Logged out successfully" });
+};
+
+
 export const refreshAccessToken = async (req, res) => {
   try {
     const refreshToken = req.cookies.refreshToken;
@@ -88,12 +122,13 @@ export const refreshAccessToken = async (req, res) => {
 
     const decoded = jwt.verify(refreshToken, REFRESH_SECRET);
     const user = await User.findById(decoded.id);
-
     if (!user || user.refreshToken !== refreshToken) {
       return res.status(403).json({ message: 'Invalid refresh token' });
     }
 
+    // Only generate new access token — keep refresh token as is
     const newAccessToken = generateToken(user._id);
+
     res.json({
       token: newAccessToken,
       user: {

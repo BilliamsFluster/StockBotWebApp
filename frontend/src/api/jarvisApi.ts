@@ -1,5 +1,5 @@
 import axios from 'axios';
-import env from '../../config/env';
+
 
 type UserPreferences = {
   model?: string;
@@ -12,41 +12,48 @@ type User = {
 
 // Submit text prompt to Jarvis
 export const askJarvis = async (prompt: string, user: User) => {
-  const token = localStorage.getItem('token');
   const model = user?.preferences?.model || 'llama3';
   const format = user?.preferences?.format || 'markdown';
 
-  return axios
-    .post(
-      `${env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/ask`,
-      { prompt, model, format },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        withCredentials: true,
-      }
-    )
-    .then((res) => res.data);
+  const res = await axios.post(
+    `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/ask`,
+    { prompt, model, format },
+    {
+      withCredentials: true, // send cookie
+      headers: { 'Content-Type': 'application/json' },
+    }
+  );
+
+  return res.data;
 };
 
-// Auth header for internal use
+// Base config for authenticated requests
 const getAuthConfig = () => {
-  const token = localStorage.getItem('token');
   return {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    withCredentials: true,
+    withCredentials: true, // send cookie
+    headers: { 'Content-Type': 'application/json' },
   };
 };
 
 export async function getSchwabPortfolioData() {
-  const config = getAuthConfig();
-  const response = await axios.get(`${env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/portfolio`, config);
+  
+  const response = await axios.get(
+    `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/portfolio`,
+    getAuthConfig()
+  );
   return response.data;
 }
 
-
+export async function fetchAvailableModels(): Promise<string[]> {
+  try {
+    const response = await axios.get(
+      `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/models`,
+      getAuthConfig()
+    );
+    console.log(response.data);
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching models:', error);
+    return [];
+  }
+}

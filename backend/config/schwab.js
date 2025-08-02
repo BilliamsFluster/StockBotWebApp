@@ -2,16 +2,56 @@ import axios from 'axios';
 import base64 from 'base-64';
 import User from '../models/User.js';
 
-export async function refreshSchwabToken(userId) {
-  const user = await User.findById(userId);
-  if (!user?.schwab_tokens) return null;
+const STOCKBOT_URL = process.env.STOCKBOT_URL;
 
-  const { refresh_token, expires_at } = user.schwab_tokens;
+/**
+ * 🔐 Update Schwab tokens securely while preserving app_key/app_secret.
+ */
+async function updateSchwabTokens(user, updates) {
+  const decrypted = user.getDecryptedTokens();
+  const { app_key, app_secret } = decrypted.schwab_tokens;
+
+  user.schwab_tokens = {
+    app_key,
+    app_secret,
+    access_token: updates.access_token || decrypted.schwab_tokens.access_token,
+    refresh_token: updates.refresh_token || decrypted.schwab_tokens.refresh_token,
+    expires_at: updates.expires_at || decrypted.schwab_tokens.expires_at
+  };
+
+  await user.save();
+
+  // 🔁 Sync with STOCKBOT
+  try {
+    await axios.post(`${STOCKBOT_URL}/api/jarvis/authorize`, {
+      user_id: user._id,
+      access_token: updates.access_token || decrypted.schwab_tokens.access_token,
+      refresh_token: updates.refresh_token || decrypted.schwab_tokens.refresh_token,
+      expires_at: updates.expires_at || decrypted.schwab_tokens.expires_at,
+    });
+  } catch (err) {
+    console.error('⚠ Failed to sync tokens with bot:', err.response?.data || err.message);
+  }
+}
+
+/**
+ * ♻ Refresh Schwab access token if expired
+ */
+export async function refreshSchwabAccessTokenInternal(userId) {
+  const user = await User.findById(userId);
+  if (!user || !user.schwab_tokens) return null;
+
+  const decrypted = user.getDecryptedTokens();
+  const { app_key, app_secret, refresh_token, access_token, expires_at } = decrypted.schwab_tokens;
   const now = Math.floor(Date.now() / 1000);
 
-  if (now < expires_at - 60) return user.schwab_tokens.access_token;
+  // ✅ If still valid, reuse
+  if (expires_at && now < expires_at - 60) {
+    return access_token;
+  }
 
-  const auth = base64.encode(`${process.env.SCHWAB_CLIENT_ID}:${process.env.SCHWAB_CLIENT_SECRET}`);
+  const redirectUri = 'https://127.0.0.1';
+  const encodedAuth = base64.encode(`${app_key}:${app_secret}`);
 
   try {
     const res = await axios.post(
@@ -19,41 +59,73 @@ export async function refreshSchwabToken(userId) {
       new URLSearchParams({
         grant_type: 'refresh_token',
         refresh_token,
-        redirect_uri: 'https://127.0.0.1',
+        redirect_uri: redirectUri,
       }),
       {
         headers: {
-          Authorization: `Basic ${auth}`,
+          Authorization: `Basic ${encodedAuth}`,
           'Content-Type': 'application/x-www-form-urlencoded',
         },
       }
     );
 
-    const data = res.data;
-    data.expires_at = now + data.expires_in;
+    const { access_token: newAccessToken, refresh_token: newRefreshToken, expires_in } = res.data;
+    const newExpiresAt = now + expires_in;
 
-    user.schwab_tokens = {
-      access_token: data.access_token,
-      refresh_token: data.refresh_token || refresh_token,
-      expires_at: data.expires_at,
-    };
+    await updateSchwabTokens(user, {
+      access_token: newAccessToken,
+      refresh_token: newRefreshToken || refresh_token,
+      expires_at: newExpiresAt
+    });
 
-    await user.save();
-    try {
-      await axios.post(`${process.env.STOCKBOT_URL}/api/jarvis/authorize`, {
-        user_id: user._id,
-        access_token: data.access_token,
-        refresh_token: data.refresh_token || refresh_token,
-        expires_at: data.expires_at,
-      });
-    } catch (err) {
-      console.error('⚠ Failed to sync tokens with bot:', err.response?.data || err.message);
-    }
-    return data.access_token;
-
+    return newAccessToken;
   } catch (err) {
-    console.error('Schwab refresh failed:', err.response?.data || err.message);
+    console.error('🔴 Token refresh failed:', err.response?.data || err.message);
     return null;
   }
 }
- 
+
+/**
+ * 🔑 Exchange OAuth code for Schwab tokens
+ */
+export async function exchangeCodeForTokensInternal(code, userId) {
+  const user = await User.findById(userId);
+  if (!user || !user.schwab_tokens) return null;
+
+  const decrypted = user.getDecryptedTokens();
+  const { app_key, app_secret } = decrypted.schwab_tokens;
+
+  const redirectUri = 'https://127.0.0.1';
+  const encodedAuth = base64.encode(`${app_key}:${app_secret}`);
+
+  try {
+    const res = await axios.post(
+      'https://api.schwabapi.com/v1/oauth/token',
+      new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirectUri,
+      }),
+      {
+        headers: {
+          Authorization: `Basic ${encodedAuth}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        }
+      }
+    );
+
+    const { access_token, refresh_token, expires_in } = res.data;
+    const expires_at = Math.floor(Date.now() / 1000) + expires_in;
+
+    await updateSchwabTokens(user, {
+      access_token,
+      refresh_token,
+      expires_at
+    });
+
+    return { access_token, refresh_token, expires_at };
+  } catch (err) {
+    console.error('🔴 Failed to exchange code:', err.response?.data || err.message);
+    throw err;
+  }
+}

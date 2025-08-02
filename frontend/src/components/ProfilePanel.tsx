@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { FC } from 'react';
 import { useAuth } from '@/context/AuthContext';
+import LogoutButton from '@/components/LogoutButton'
 
 interface ProfilePanelProps {
   isOpen: boolean;
@@ -15,12 +16,7 @@ const ProfilePanel: FC<ProfilePanelProps> = ({ isOpen, onClose, darkMode, setDar
   const router = useRouter();
   const { setUser } = useAuth();
 
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    setUser(null); // ✅ clear auth context immediately
-    onClose();
-    router.push('/');
-};
+  
 
   return (
     <div
@@ -41,12 +37,7 @@ const ProfilePanel: FC<ProfilePanelProps> = ({ isOpen, onClose, darkMode, setDar
             />
           </label>
         </div>
-        <button
-          className="btn btn-sm btn-outline btn-error mt-4 w-full"
-          onClick={handleLogout}
-        >
-          Log Out
-        </button>
+        <LogoutButton/>
       </div>
     </div>
   );

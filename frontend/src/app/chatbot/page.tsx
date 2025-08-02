@@ -5,7 +5,6 @@ import { gsap } from 'gsap';
 import { FaUserCircle } from 'react-icons/fa';
 import ProfilePanel from '@/components/ProfilePanel';
 import JarvisPanel from '@/components/Jarvis/JarvisPanel';
-import env from '../../../config/env';
 
 export default function Chatbot() {
   const containerRef     = useRef<HTMLDivElement>(null);
@@ -21,31 +20,31 @@ export default function Chatbot() {
   const [username, setUsername]         = useState('User');
 
   useEffect(() => {
+    // Animations
     const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
     tl.fromTo('#jarvis-title',   { opacity: 0, y: 50 }, { opacity: 1, y: 0, duration: 1.2 })
       .fromTo('#jarvis-sub',     { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 1   }, '-=0.8')
       .fromTo('#jarvis-actions', { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.6 }, '-=0.6')
       .fromTo('#main-layout',    { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 1   }, '-=0.4');
 
-    gsap.to(blob1Ref.current, {
-      x: 50, y: -30, duration: 10, repeat: -1, yoyo: true, ease: 'sine.inOut',
-    });
-    gsap.to(blob2Ref.current, {
-      x: -50, y: 30, duration: 12, repeat: -1, yoyo: true, ease: 'sine.inOut',
-    });
-    gsap.to(blob3Ref.current, {
-      x: 40, y: 40, duration: 8, repeat: -1, yoyo: true, ease: 'sine.inOut',
-    });
+    gsap.to(blob1Ref.current, { x: 50, y: -30, duration: 10, repeat: -1, yoyo: true, ease: 'sine.inOut' });
+    gsap.to(blob2Ref.current, { x: -50, y: 30, duration: 12, repeat: -1, yoyo: true, ease: 'sine.inOut' });
+    gsap.to(blob3Ref.current, { x: 40, y: 40, duration: 8, repeat: -1, yoyo: true, ease: 'sine.inOut' });
 
-    const token = localStorage.getItem('token');
-    if (token) {
-      fetch(`${env.NEXT_PUBLIC_BACKEND_URL}/api/users/profile`, {
-        headers: { Authorization: `Bearer ${token}` },
+    // Secure cookie-based profile fetch
+    fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/users/profile`, {
+      credentials: 'include', // send HTTP-only cookie
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error('Not authenticated');
+        return r.json();
       })
-        .then((r) => r.json())
-        .then((data) => data.username && setUsername(data.username))
-        .catch(() => {});
-    }
+      .then((data) => {
+        if (data.username) setUsername(data.username);
+      })
+      .catch(() => {
+        setUsername('Guest');
+      });
   }, []);
 
   useEffect(() => {
@@ -67,14 +66,14 @@ export default function Chatbot() {
   return (
     <div
       ref={containerRef}
-      className={`
+      className="
         relative flex flex-col
         px-4 pt-4 pb-2
         min-h-screen
         overflow-x-hidden
         bg-[radial-gradient(circle_at_top_left,_#1f1f2e,_#0d0d12)]
         text-neutral-200
-      `}
+      "
     >
       {/* ─── Blobs ───────────────────────── */}
       <div className="absolute inset-0 pointer-events-none z-0">
@@ -138,9 +137,7 @@ export default function Chatbot() {
             <button
               className="btn btn-outline btn-secondary"
               onClick={() =>
-                document
-                  .getElementById('jarvis-panel')
-                  ?.scrollIntoView({ behavior: 'smooth' })
+                document.getElementById('jarvis-panel')?.scrollIntoView({ behavior: 'smooth' })
               }
             >
               Type Your Prompt
