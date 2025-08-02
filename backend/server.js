@@ -8,7 +8,9 @@ import userRoutes from './routes/userRoutes.js';
 import cookieParser from 'cookie-parser';
 import jarvisRoutes from './routes/jarvisRoutes.js';
 import schwabRoutes from './routes/schwabRoutes.js';
-import alpacaRoutes from './routes/alpacaRoute.js'
+import alpacaRoutes from './routes/alpacaRoutes.js'
+import brokerRoutes from './routes/brokerRoutes.js';
+
 
 
 connectDB();
@@ -33,6 +35,7 @@ app.use("/api/jarvis", jarvisRoutes);
 
 app.use('/api/schwab', schwabRoutes);
 app.use('/api/alpaca', alpacaRoutes);
+app.use('/api/broker', brokerRoutes);
 
 // Server
 const PORT = process.env.BACKEND_PORT || 5000;

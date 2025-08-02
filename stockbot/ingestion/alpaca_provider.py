@@ -2,46 +2,59 @@
 
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
-from base_provider import BaseProvider
+from .base_provider import BaseProvider
+
 
 class AlpacaProvider(BaseProvider):
     """
-    Alpaca Trading API client for paper trading:
-    - Uses trading API (paper-api.alpaca.markets) for account, orders, and assets.
-    - Uses Market Data API (data.alpaca.markets) for trades/latest and historical bars with IEX feed.
+    Alpaca Trading API client for paper/live trading:
+    - Switches base URLs automatically based on mode.
+    - Uses Market Data API (data.alpaca.markets) for trades/latest and historical bars.
     """
+
     def __init__(
         self,
-        api_key: str,
-        api_secret: str,
-        base_url: str = "https://paper-api.alpaca.markets",
-        data_url: str = "https://data.alpaca.markets",
+        app_key: str,
+        app_secret: str,
+        mode: str = "paper",  # "paper" or "live"
         timeout: float = 5.0
     ):
-        super().__init__(api_key=api_key, base_url=base_url, timeout=timeout)
+        # Pick base trading API based on mode
+        if mode == "live":
+            base_url = "https://api.alpaca.markets"
+        else:
+            base_url = "https://paper-api.alpaca.markets"
+
+        data_url = "https://data.alpaca.markets"
+
+        # Init BaseProvider with API key
+        super().__init__(api_key=app_key, base_url=base_url, timeout=timeout)
+
+        self.mode = mode
         self.data_url = data_url
+
+        # Add Alpaca authentication headers
         self.session.headers.update({
-            "APCA-API-KEY-ID": api_key,
-            "APCA-API-SECRET-KEY": api_secret,
+            "APCA-API-KEY-ID": app_key,
+            "APCA-API-SECRET-KEY": app_secret,
         })
 
     def _request(self, method: str, path: str,
-             params: Optional[Dict[str, Any]] = None,
-             data: Optional[Dict[str, Any]] = None,
-             use_data_api: bool = False) -> Any:
+                 params: Optional[Dict[str, Any]] = None,
+                 data: Optional[Dict[str, Any]] = None,
+                 use_data_api: bool = False) -> Any:
         base = self.data_url if use_data_api else self.base_url
         resp = self.session.request(method, f"{base}{path}",
                                     params=params, json=data,
                                     timeout=self.timeout)
         resp.raise_for_status()
 
-        # No content to parse
         if resp.status_code == 204 or not resp.text.strip():
             return None
 
         return resp.json()
 
-
+    # --- Trading API Methods ---
     def get_assets(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
         params: Dict[str, Any] = {}
         if status:
@@ -65,10 +78,10 @@ class AlpacaProvider(BaseProvider):
             "feed": "iex"
         }
         resp = self._request("GET", f"/v2/stocks/{symbol}/bars", params=params, use_data_api=True)
-        bars = resp.get("bars")
-        return bars if bars else []
+        return resp.get("bars", [])
 
     def get_account(self) -> Dict[str, Any]:
+        print(self.api_key)
         return self._request("GET", "/v2/account")
 
     def get_positions(self) -> List[Dict[str, Any]]:
@@ -100,53 +113,26 @@ class AlpacaProvider(BaseProvider):
     def cancel_order(self, order_id: str) -> None:
         self._request("DELETE", f"/v2/orders/{order_id}")
 
-if __name__ == "__main__":
-    import os
-    from datetime import datetime, timezone, timedelta
-    from alpaca_provider import AlpacaProvider
+    # --- Unified Portfolio Method for Frontend ---
+    def get_portfolio_data(self) -> dict:
+        """
+        Combines account summary and positions into a single portfolio object.
+        Matches the structure expected by the frontend.
+        """
+        account = self.get_account()
+        positions = self.get_positions()
 
-    API_KEY    = os.getenv("ALPACA_API_KEY", "PKYT80KONI3I0L40UGXU")
-    API_SECRET = os.getenv("ALPACA_API_SECRET", "YQXDP3aoV7NY3gcBUnk45gYILWfTlt8RY0ghHNrg")
-    BASE_URL   = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
-    DATA_URL   = "https://data.alpaca.markets"
+        summary = {
+            "accountNumber": account.get("account_number", "—"),
+            "liquidationValue": float(account.get("portfolio_value", 0)),
+            "equity": float(account.get("equity", 0)),
+            "cash": float(account.get("cash", 0)),
+            "buyingPower": float(account.get("buying_power", 0)),
+            "dayTradingBuyingPower": float(account.get("daytrading_buying_power", 0)),
+        }
 
-    provider = AlpacaProvider(api_key=API_KEY,
-                              api_secret=API_SECRET,
-                              base_url=BASE_URL,
-                              data_url=DATA_URL,
-                              timeout=10.0)
-
-    now = datetime.now(timezone.utc)
-    print("=== Testing AlpacaProvider ===")
-
-    assets = provider.get_assets()
-    print(f"Assets count: {len(assets)} – sample: {assets[:3]}")  # Uses /v2/assets trading API :contentReference[oaicite:1]{index=1}
-
-    symbol = "AAPL"
-
-    price = provider.get_current_price(symbol)
-    print(f"{symbol} current price: {price}")  # Uses trades/latest from data API
-
-    start = (now - timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
-    bars = provider.get_historical_data(symbol, start=start, end=now, timeframe="1H")
-    print(f"Retrieved {len(bars)} bars – first timestamp: {bars[0]['t'] if bars else 'none'}")  # Handles null safety
-
-    account = provider.get_account()
-    print(f"Account status: {account.get('status')} | Equity: {account.get('equity')}")
-
-    positions = provider.get_positions()
-    print(f"Positions count: {len(positions)} – {positions}")
-
-    order = provider.submit_order(symbol=symbol, qty=1, side="buy", type_="market", time_in_force="day")
-    print(f"Order submitted: id={order.get('id')}")
-
-    open_orders = provider.get_orders(status="open", limit=5)
-    print(f"Open orders: {len(open_orders)} – {open_orders}")
-
-    provider.cancel_order(order.get("id"))
-    print(f"Cancelled order id={order.get('id')}")
-
-    open_after = provider.get_orders(status="open", limit=5)
-    print(f"Open orders after cancel: {len(open_after)}")
-
-    print("✅ All API tests ran without errors.")
+        return {
+            "summary": summary,
+            "positions": positions,
+            "transactions": []  # Can integrate Alpaca transactions later
+        }
