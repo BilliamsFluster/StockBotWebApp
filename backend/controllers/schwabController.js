@@ -1,6 +1,7 @@
 
 import { exchangeCodeForTokensInternal, refreshSchwabAccessTokenInternal } from '../config/schwab.js';
 import axios from "axios"
+import User from '../models/User.js';
 
 const STOCKBOT_URL = process.env.STOCKBOT_URL;
 
@@ -60,6 +61,61 @@ export const getSchwabAccountStatus = async (req, res) => {
       connected: false,
       error: 'Internal error checking Schwab account status.',
     });
+  }
+};
+
+
+export const setSchwabCredentials = async (req, res) => {
+  try {
+    const { app_key, app_secret } = req.body;
+    if (!app_key || !app_secret) {
+      return res.status(400).json({ message: 'Missing credentials' });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Mongoose pre-save hook will encrypt these
+    user.schwab_tokens = {
+      ...user.schwab_tokens,
+      app_key,
+      app_secret
+    };
+
+    await user.save();
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Error setting Schwab credentials:', err);
+    return res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// Check if Schwab credentials exist
+export const checkSchwabCredentials = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    const exists = !!(user?.schwab_tokens?.app_key && user?.schwab_tokens?.app_secret);
+    return res.json({ exists });
+  } catch (err) {
+    console.error('Error checking Schwab credentials:', err);
+    return res.status(500).json({ message: 'Server error' });
+  }
+};
+
+
+// controllers/schwabController.js
+export const disconnectSchwabAPI = async (req, res) => {
+  try {
+    await User.findByIdAndUpdate(req.user._id, {
+      $unset: { schwab_tokens: "" }
+    });
+
+    res.json({ message: 'Schwab disconnected successfully' });
+  } catch (err) {
+    console.error('❌ Error disconnecting Schwab:', err);
+    res.status(500).json({ message: 'Failed to disconnect Schwab' });
   }
 };
 

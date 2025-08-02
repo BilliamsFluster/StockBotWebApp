@@ -1,144 +1,92 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import axios from 'axios';
+import {setActiveBroker, disconnectBroker } from '@/api/brokerService';
+import { getUserPreferences } from '@/api/client';
+import { useSchwabStatus } from '@/hooks/useSchwabStatus';
+import { useAlpacaStatus } from '@/hooks/useAlpacaStatus';
+import BrokerCard from '@/components/Brokers/Cards/BrokerCard';
+import { brokersList } from '@/config/brokersConfig';
 import SchwabAuth from '@/components/Auth/SchwabAuth';
 import AlpacaAuth from '@/components/Auth/AlpacaAuth';
 
 type Preferences = {
-  activeBroker: 'schwab' | 'alpaca';
+  activeBroker: string;
   model?: string;
   format?: string;
   voiceEnabled?: boolean;
 };
 
-type Profile = {
-  schwab_tokens?: { access_token?: string };
-  alpaca_tokens?: { app_key?: string };
-};
-
 export default function BrokerSelector() {
   const [preferences, setPreferences] = useState<Preferences | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+
   const [showSchwabAuth, setShowSchwabAuth] = useState(false);
   const [showAlpacaAuth, setShowAlpacaAuth] = useState(false);
 
-  const fetchData = async () => {
+  // ✅ Status hooks
+  const isConnectedToSchwab = useSchwabStatus();
+  const isConnectedToAlpaca = useAlpacaStatus();
+
+  // ✅ Load preferences
+  const fetchPreferences = async () => {
     try {
       setLoading(true);
-
-      const [prefsRes, profileRes] = await Promise.all([
-        axios.get<{ preferences: Preferences }>(
-          `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/user/preferences`,
-          { withCredentials: true }
-        ),
-        axios.get<Profile>(
-          `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/user/profile`,
-          { withCredentials: true }
-        ),
-      ]);
-
-      setPreferences(prefsRes.data.preferences);
-      setProfile(profileRes.data);
-    } catch (err: any) {
-      console.error(err);
-      if (err.response?.status === 401) {
-        // Not logged in, redirect or show message
-        window.location.href = '/login';
-      }
+      const res = await getUserPreferences();
+      const prefs = res.data?.preferences || res.preferences; // supports both axios/obj return
+      setPreferences(prefs);
+    } catch (err) {
+      console.error('Error fetching preferences:', err);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchData();
+    fetchPreferences();
   }, []);
 
-  const setActiveBroker = async (broker: 'schwab' | 'alpaca') => {
-    await axios.put(
-      `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/user/preferences`,
-      { activeBroker: broker },
-      { withCredentials: true }
-    );
-    setPreferences(prev => (prev ? { ...prev, activeBroker: broker } : null));
+  // ✅ Handlers
+  const handleSetActive = async (broker: string) => {
+    await setActiveBroker(broker);
+    setPreferences((prev) => (prev ? { ...prev, activeBroker: broker } : null));
   };
 
-  const openConnectFlow = (broker: 'schwab' | 'alpaca') => {
-    if (broker === 'schwab') {
-      setShowSchwabAuth(true);
-    } else {
-      setShowAlpacaAuth(true);
-    }
+  const handleDisconnect = async (broker: string) => {
+    await disconnectBroker(broker);
+    fetchPreferences();
+  };
+
+  const handleConnect = (broker: string) => {
+    if (broker === 'schwab') setShowSchwabAuth(true);
+    if (broker === 'alpaca') setShowAlpacaAuth(true);
   };
 
   if (loading) return <p>Loading brokers...</p>;
 
-  const brokers = [
-    {
-      id: 'alpaca',
-      name: 'Alpaca',
-      description: 'Trading API for stocks and crypto.',
-      logo: '/alpaca-logo.svg',
-      connected: Boolean(profile?.alpaca_tokens?.app_key),
-    },
-    {
-      id: 'schwab',
-      name: 'Charles Schwab',
-      description: 'Direct brokerage account trading.',
-      logo: '/schwab-logo.svg',
-      connected: Boolean(profile?.schwab_tokens?.access_token),
-    },
-  ];
-
   return (
     <>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {brokers.map(broker => {
-          const isActive = preferences?.activeBroker === broker.id;
-          return (
-            <div
-              key={broker.id}
-              className={`border rounded-lg p-4 shadow-md flex flex-col items-start ${
-                isActive ? 'border-green-500' : 'border-gray-300'
-              }`}
-            >
-              <div className="flex items-center justify-between w-full mb-3">
-                <img src={broker.logo} alt={broker.name} className="h-10" />
-                <span
-                  className={`w-3 h-3 rounded-full ${
-                    broker.connected ? 'bg-green-500' : 'bg-gray-400'
-                  }`}
-                  title={broker.connected ? 'Connected' : 'Not Connected'}
-                />
-              </div>
-
-              <p className="font-semibold">{broker.name}</p>
-              <p className="text-sm text-gray-500 mb-4">{broker.description}</p>
-
-              {broker.connected ? (
-                <button
-                  onClick={() => setActiveBroker(broker.id as 'schwab' | 'alpaca')}
-                  className={`px-4 py-2 rounded-md ${
-                    isActive
-                      ? 'bg-green-500 text-white'
-                      : 'bg-gray-200 hover:bg-gray-300'
-                  }`}
-                >
-                  {isActive ? 'Active' : 'Set Active'}
-                </button>
-              ) : (
-                <button
-                  onClick={() => openConnectFlow(broker.id as 'schwab' | 'alpaca')}
-                  className="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600"
-                >
-                  Connect
-                </button>
-              )}
-            </div>
-          );
-        })}
+        {brokersList.map((broker) => (
+          <BrokerCard
+            key={broker.id}
+            id={broker.id}
+            name={broker.name}
+            description={broker.description}
+            logo={broker.logo}
+            connected={
+              broker.id === 'schwab'
+                ? isConnectedToSchwab
+                : broker.id === 'alpaca'
+                ? isConnectedToAlpaca
+                : null
+            }
+            isActive={preferences?.activeBroker === broker.id}
+            onSetActive={handleSetActive}
+            onConnect={handleConnect}
+            onDisconnect={handleDisconnect}
+          />
+        ))}
       </div>
 
       {/* Schwab Auth Modal */}
@@ -148,7 +96,7 @@ export default function BrokerSelector() {
             <SchwabAuth
               onConnected={() => {
                 setShowSchwabAuth(false);
-                fetchData();
+                fetchPreferences();
               }}
             />
             <button
@@ -166,7 +114,7 @@ export default function BrokerSelector() {
         <AlpacaAuth
           onConnected={() => {
             setShowAlpacaAuth(false);
-            fetchData();
+            fetchPreferences();
           }}
           onCancel={() => setShowAlpacaAuth(false)}
         />

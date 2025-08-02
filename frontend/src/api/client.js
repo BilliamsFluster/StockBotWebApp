@@ -22,8 +22,12 @@ export const logout = () =>
   api.post("/auth/logout");
 
 // ✅ User Preferences (no manual token)
-export const getUserPreferences = () =>
-  api.get("/users/preferences");
+export const getUserPreferences  = async () =>
+{
+  const res = await api.get("/users/preferences"); 
+  return res.data.preferences;
+
+}
 
 export const setUserPreferences = (data) =>
   api.put("/users/preferences", data);

@@ -66,3 +66,16 @@ export const getAlpacaAccountStatus = async (req, res) => {
     return res.status(500).json({ error: 'Failed to fetch Alpaca account status.' });
   }
 };
+
+export const disconnectAlpacaAPI = async (req, res) => {
+  try {
+    await User.findByIdAndUpdate(req.user._id, {
+      $unset: { alpaca_tokens: "" }
+    });
+
+    res.json({ message: 'Alpaca disconnected successfully' });
+  } catch (err) {
+    console.error('❌ Error disconnecting Alpaca:', err);
+    res.status(500).json({ message: 'Failed to disconnect Alpaca' });
+  }
+};
