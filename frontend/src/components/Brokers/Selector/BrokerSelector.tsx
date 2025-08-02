@@ -5,6 +5,8 @@ import {setActiveBroker, disconnectBroker } from '@/api/brokerService';
 import { getUserPreferences } from '@/api/client';
 import { useSchwabStatus } from '@/hooks/useSchwabStatus';
 import { useAlpacaStatus } from '@/hooks/useAlpacaStatus';
+import { checkSchwabCredentials } from '@/api/schwab';
+import { checkAlpacaCredentials } from '@/api/alpaca';
 import BrokerCard from '@/components/Brokers/Cards/BrokerCard';
 import { brokersList } from '@/config/brokersConfig';
 import SchwabAuth from '@/components/Auth/SchwabAuth';
@@ -17,6 +19,7 @@ type Preferences = {
   voiceEnabled?: boolean;
 };
 
+
 export default function BrokerSelector() {
   const [preferences, setPreferences] = useState<Preferences | null>(null);
   const [loading, setLoading] = useState(true);
@@ -24,19 +27,29 @@ export default function BrokerSelector() {
   const [showSchwabAuth, setShowSchwabAuth] = useState(false);
   const [showAlpacaAuth, setShowAlpacaAuth] = useState(false);
 
-  // ✅ Status hooks
-  const isConnectedToSchwab = useSchwabStatus();
-  const isConnectedToAlpaca = useAlpacaStatus();
+  // ✅ Local connection state (instant UI updates)
+  const [connectedStates, setConnectedStates] = useState<Record<string, boolean | null>>({
+    schwab: null,
+    alpaca: null,
+  });
 
-  // ✅ Load preferences
+  // Load preferences + connection statuses
   const fetchPreferences = async () => {
     try {
       setLoading(true);
       const res = await getUserPreferences();
-      const prefs = res.data?.preferences || res.preferences; // supports both axios/obj return
-      setPreferences(prefs);
+      setPreferences(res);
+
+      // ✅ Check backend connection status
+      const schwabStatus = await checkSchwabCredentials().catch(() => ({ exists: false }));
+      const alpacaStatus = await checkAlpacaCredentials().catch(() => ({ exists: false }));
+
+      setConnectedStates({
+        schwab: schwabStatus.exists,
+        alpaca: alpacaStatus.exists,
+      });
     } catch (err) {
-      console.error('Error fetching preferences:', err);
+      console.error('Error fetching preferences or connection statuses:', err);
     } finally {
       setLoading(false);
     }
@@ -46,20 +59,28 @@ export default function BrokerSelector() {
     fetchPreferences();
   }, []);
 
-  // ✅ Handlers
+  // Set active broker
   const handleSetActive = async (broker: string) => {
     await setActiveBroker(broker);
     setPreferences((prev) => (prev ? { ...prev, activeBroker: broker } : null));
   };
 
+  // Disconnect broker
   const handleDisconnect = async (broker: string) => {
     await disconnectBroker(broker);
-    fetchPreferences();
+    setConnectedStates((prev) => ({ ...prev, [broker]: false })); // ✅ instant UI update
   };
 
+  // Connect broker
   const handleConnect = (broker: string) => {
     if (broker === 'schwab') setShowSchwabAuth(true);
     if (broker === 'alpaca') setShowAlpacaAuth(true);
+  };
+
+  // Called when auth modal finishes connecting
+  const handleConnected = (broker: string) => {
+    setConnectedStates((prev) => ({ ...prev, [broker]: true })); // ✅ instant UI update
+    fetchPreferences(); // ✅ re-sync backend state
   };
 
   if (loading) return <p>Loading brokers...</p>;
@@ -74,13 +95,7 @@ export default function BrokerSelector() {
             name={broker.name}
             description={broker.description}
             logo={broker.logo}
-            connected={
-              broker.id === 'schwab'
-                ? isConnectedToSchwab
-                : broker.id === 'alpaca'
-                ? isConnectedToAlpaca
-                : null
-            }
+            connected={connectedStates[broker.id]}
             isActive={preferences?.activeBroker === broker.id}
             onSetActive={handleSetActive}
             onConnect={handleConnect}
@@ -92,16 +107,16 @@ export default function BrokerSelector() {
       {/* Schwab Auth Modal */}
       {showSchwabAuth && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-          <div className="bg-white p-5 rounded-lg shadow-lg max-w-sm w-full">
+          <div className="bg-black/40 backdrop-blur-lg border border-purple-400/20 p-5 rounded-lg shadow-lg max-w-sm w-full">
             <SchwabAuth
               onConnected={() => {
                 setShowSchwabAuth(false);
-                fetchPreferences();
+                handleConnected('schwab');
               }}
             />
             <button
               onClick={() => setShowSchwabAuth(false)}
-              className="mt-3 text-sm text-gray-500 underline w-full"
+              className="mt-3 text-sm text-neutral-400 underline w-full"
             >
               Cancel
             </button>
@@ -114,7 +129,7 @@ export default function BrokerSelector() {
         <AlpacaAuth
           onConnected={() => {
             setShowAlpacaAuth(false);
-            fetchPreferences();
+            handleConnected('alpaca');
           }}
           onCancel={() => setShowAlpacaAuth(false)}
         />

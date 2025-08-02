@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import clsx from 'clsx';
 import {
   FaRobot,
@@ -12,9 +12,6 @@ import {
   FaCog,
   FaUser,
 } from 'react-icons/fa';
-
-import SchwabAuth from '@/components/Auth/SchwabAuth';
-import { useSchwabStatus } from '@/hooks/useSchwabStatus';
 
 interface SidebarProps {
   isMobileOpen: boolean;
@@ -51,20 +48,6 @@ const navSections = [
 export default function Sidebar({ isMobileOpen, setMobileOpen }: SidebarProps) {
   const pathname = usePathname();
   const [expanded, setExpanded] = useState(true);
-  const [authOpen, setAuthOpen] = useState(false);
-  const isConnectedToSchwab = useSchwabStatus();
-  const dropdownRef = useRef<HTMLDivElement>(null);
-
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (authOpen && dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setAuthOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [authOpen]);
 
   // Always expanded on mobile
   useEffect(() => {
@@ -90,9 +73,8 @@ export default function Sidebar({ isMobileOpen, setMobileOpen }: SidebarProps) {
         'lg:translate-x-0'
       )}
     >
-      {/* Header: Logo and Schwab Connection */}
+      {/* Header: Logo */}
       <div className="relative flex items-center justify-between px-4 py-4">
-        {/* Logo */}
         <div
           className="flex items-center gap-2 cursor-pointer"
           onClick={() => {
@@ -111,42 +93,6 @@ export default function Sidebar({ isMobileOpen, setMobileOpen }: SidebarProps) {
                 src="/BotLogo.png"
                 alt="Jarvis Logo"
                 className="w-full h-full object-contain invert brightness-200 mix-blend-screen"
-              />
-            </div>
-          )}
-        </div>
-
-        {/* Schwab Dot */}
-        <div
-          className="relative group pointer-events-auto"
-          onClick={(e) => {
-            e.stopPropagation();
-            setAuthOpen(!authOpen);
-          }}
-        >
-          <div
-            className={clsx(
-              'w-3 h-3 rounded-full transition-all duration-300 group-hover:scale-125',
-              isConnectedToSchwab === null
-                ? 'bg-gray-400 animate-pulse'
-                : isConnectedToSchwab
-                ? 'bg-green-500 shadow-[0_0_10px_2px_rgba(34,197,94,0.6)]'
-                : 'bg-red-500 shadow-[0_0_10px_2px_rgba(239,68,68,0.6)]'
-            )}
-            title="Schwab Connection Status"
-          />
-          {authOpen && (
-            <div
-              ref={dropdownRef}
-              className="absolute left-8 top-0 z-[9999] w-72 pointer-events-auto bg-base-100 text-base-content shadow-lg rounded-lg p-4"
-            >
-              <SchwabAuth
-                onConnected={() => {
-                  setAuthOpen(false);
-                  // Refresh connection status after linking
-                  // You can trigger re-fetch in useSchwabStatus or reload page
-                  window.location.reload(); 
-                }}
               />
             </div>
           )}
