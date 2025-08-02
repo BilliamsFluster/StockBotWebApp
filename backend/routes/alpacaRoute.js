@@ -3,7 +3,8 @@ import { protectRoute } from '../middleware/protectRoute.js';
 import {
   connectAlpaca,
   getAlpacaAccountStatus, 
-  disconnectAlpacaAPI
+  disconnectAlpacaAPI,
+  getAlpacaStatus
 } from '../controllers/alpacaController.js';
 
 const router = express.Router();
@@ -13,6 +14,8 @@ router.post('/connect', protectRoute, connectAlpaca);
 
 // GET /api/alpaca/account → Fetch account info from Alpaca API
 router.get('/account', protectRoute, getAlpacaAccountStatus);
+
+router.get('/status', protectRoute, getAlpacaStatus);
 
 router.post('/disconnect', protectRoute, disconnectAlpacaAPI)
 

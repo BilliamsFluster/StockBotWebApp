@@ -79,3 +79,11 @@ export const disconnectAlpacaAPI = async (req, res) => {
     res.status(500).json({ message: 'Failed to disconnect Alpaca' });
   }
 };
+
+export const getAlpacaStatus = async (req, res) =>
+{
+  if (req.user?.alpaca_tokens?.app_key) {
+    return res.json({ exists: true });
+  }
+  return res.json({ exists: false });
+}

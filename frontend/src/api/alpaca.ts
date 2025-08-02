@@ -24,3 +24,9 @@ export async function connectAlpaca(payload: ConnectAlpacaPayload) {
   const res = await axios.post(url, payload, getAuthConfig());
   return res.data;
 }
+
+export const checkAlpacaCredentials = async () => {
+  const url = `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/alpaca/status`; 
+  const res = await axios.get(url, getAuthConfig());
+  return res.data;
+};

@@ -18,7 +18,6 @@ export default function SchwabAuth({ onConnected }: Props) {
   const [status, setStatus] = useState<'idle' | 'success' | 'error' | 'missing'>('idle');
   const [message, setMessage] = useState('');
 
-  // Check if credentials are already saved
   useEffect(() => {
     (async () => {
       try {
@@ -32,7 +31,6 @@ export default function SchwabAuth({ onConnected }: Props) {
     })();
   }, []);
 
-  // Save app key + secret
   const handleSaveCredentials = async () => {
     try {
       await saveSchwabCredentials(appKey, appSecret);
@@ -49,13 +47,11 @@ export default function SchwabAuth({ onConnected }: Props) {
     }
   };
 
-  // Open Schwab OAuth login
   const openSchwabAuth = () => {
     const url = `https://api.schwabapi.com/v1/oauth/authorize?client_id=${appKey || process.env.NEXT_PUBLIC_SCHWAB_CLIENT_ID}&redirect_uri=https://127.0.0.1`;
     window.open(url, '_blank');
   };
 
-  // Submit authorization code
   const submitCode = async () => {
     try {
       const cleanedUrl = redirectUrl.trim().replace(/\s+/g, '');
@@ -85,8 +81,8 @@ export default function SchwabAuth({ onConnected }: Props) {
   };
 
   return (
-    <div className="space-y-4">
-      <h3 className="text-sm font-bold">Connect Schwab</h3>
+    <div className="rounded-xl backdrop-blur-lg bg-black/30 p-5 shadow-xl border border-purple-400/20 space-y-4">
+      <h3 className="text-lg font-semibold text-white">Connect Schwab</h3>
 
       {/* Step 1: Save App Key + Secret */}
       {!credentialsSaved || editMode ? (
@@ -95,29 +91,29 @@ export default function SchwabAuth({ onConnected }: Props) {
             value={appKey}
             onChange={(e) => setAppKey(e.target.value)}
             placeholder="Schwab App Key"
-            className="input input-sm input-bordered w-full"
+            className="input input-sm w-full bg-neutral-900 border-purple-400/30 text-white"
           />
           <input
             type="password"
             value={appSecret}
             onChange={(e) => setAppSecret(e.target.value)}
             placeholder="Schwab App Secret"
-            className="input input-sm input-bordered w-full"
+            className="input input-sm w-full bg-neutral-900 border-purple-400/30 text-white"
           />
           <button
             onClick={handleSaveCredentials}
-            className="btn btn-sm btn-primary w-full"
+            className="w-full px-4 py-2 rounded-md text-sm font-medium bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:opacity-90 transition-all"
           >
             Save Credentials
           </button>
         </>
       ) : (
-        <div className="flex items-center justify-between bg-neutral-100 px-3 py-2 rounded">
-          <span className="text-xs font-medium text-neutral-500">
+        <div className="flex items-center justify-between bg-neutral-900 px-3 py-2 rounded border border-purple-400/20">
+          <span className="text-xs font-medium text-neutral-400">
             Credentials saved securely ••••••••
           </span>
           <button
-            className="btn btn-xs btn-outline"
+            className="px-3 py-1 rounded-md text-xs font-medium bg-neutral-700 text-white hover:bg-neutral-600"
             onClick={() => setEditMode(true)}
           >
             Edit
@@ -128,7 +124,7 @@ export default function SchwabAuth({ onConnected }: Props) {
       {/* Step 2: Login via Schwab */}
       <button
         onClick={openSchwabAuth}
-        className="btn btn-sm btn-neutral w-full"
+        className="w-full px-4 py-2 rounded-md text-sm font-medium bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:opacity-90 transition-all"
         disabled={!credentialsSaved}
       >
         Login via Schwab
@@ -144,13 +140,13 @@ export default function SchwabAuth({ onConnected }: Props) {
           placeholder="https://127.0.0.1/?code=..."
           value={redirectUrl}
           onChange={(e) => setRedirectUrl(e.target.value)}
-          className="input input-sm input-bordered w-full"
+          className="input input-sm w-full bg-neutral-900 border-purple-400/30 text-white"
         />
       </div>
 
       <button
         onClick={submitCode}
-        className="btn btn-sm btn-accent w-full"
+        className="w-full px-4 py-2 rounded-md text-sm font-medium bg-gradient-to-r from-green-400 to-emerald-500 text-black hover:opacity-90 transition-all"
         disabled={!redirectUrl}
       >
         Submit Code
@@ -159,13 +155,14 @@ export default function SchwabAuth({ onConnected }: Props) {
       {/* Status message */}
       {status !== 'idle' && (
         <div
-          className={`text-xs mt-1 px-3 py-2 rounded shadow ${
-            status === 'success'
-              ? 'bg-green-100 text-green-800'
-              : status === 'error'
-              ? 'bg-red-100 text-red-800'
-              : 'bg-yellow-100 text-yellow-800'
-          }`}
+          className={`text-xs mt-1 px-3 py-2 rounded shadow
+            ${
+              status === 'success'
+                ? 'bg-green-500/20 text-green-300 border border-green-400/30'
+                : status === 'error'
+                ? 'bg-red-500/20 text-red-300 border border-red-400/30'
+                : 'bg-yellow-500/20 text-yellow-300 border border-yellow-400/30'
+            }`}
         >
           {message}
         </div>
