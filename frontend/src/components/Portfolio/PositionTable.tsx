@@ -1,12 +1,11 @@
 import React from 'react';
 
-
 type Position = {
   symbol: string;
-  qty: number;
-  value: number;
-  gain: number;
-  percentage: number;
+  qty: number | null | undefined;
+  value: number | null | undefined;
+  gain: number | null | undefined;
+  percentage: number | null | undefined;
 };
 
 type Props = {
@@ -41,14 +40,26 @@ const PositionTable: React.FC<Props> = ({ positions }) => {
               className="border-b border-white/10 hover:bg-white/10 transition duration-150"
             >
               <td className="py-2 px-3 font-semibold text-white">{p.symbol}</td>
-              <td className="py-2 px-3 text-white/80">{p.qty}</td>
-              <td className="py-2 px-3 text-white/80">${p.value.toFixed(2)}</td>
-              <td
-                className={`py-2 px-3 font-medium ${p.gain >= 0 ? 'text-green-400' : 'text-red-400'}`}
-              >
-                {p.gain >= 0 ? '+' : ''}${p.gain.toFixed(2)}
+              <td className="py-2 px-3 text-white/80">
+                {Number.isFinite(p.qty) ? p.qty : '-'}
               </td>
-              <td className="py-2 px-3 text-white/80">{p.percentage.toFixed(2)}%</td>
+              <td className="py-2 px-3 text-white/80">
+                {Number.isFinite(p.value) ? `$${p.value!.toFixed(2)}` : '-'}
+              </td>
+              <td
+                className={`py-2 px-3 font-medium ${
+                  Number.isFinite(p.gain) && p.gain! >= 0
+                    ? 'text-green-400'
+                    : 'text-red-400'
+                }`}
+              >
+                {Number.isFinite(p.gain)
+                  ? `${p.gain! >= 0 ? '+' : ''}$${p.gain!.toFixed(2)}`
+                  : '-'}
+              </td>
+              <td className="py-2 px-3 text-white/80">
+                {Number.isFinite(p.percentage) ? `${p.percentage!.toFixed(2)}%` : '-'}
+              </td>
             </tr>
           ))}
         </tbody>

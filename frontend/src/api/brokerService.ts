@@ -18,3 +18,16 @@ export async function disconnectBroker(broker: string) {
     { withCredentials: true }
   );
 }
+
+export async function getActiveApiPortfolioData() {
+    const res = await axios.get(
+        `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/broker/portfolio`,
+        { 
+            withCredentials: true,
+            headers: { 'Content-Type': 'application/json' },
+
+        }
+    );
+    console.log("hello");
+  return res.data;
+}
