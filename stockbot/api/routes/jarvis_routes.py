@@ -1,5 +1,7 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, UploadFile, File
+from fastapi.responses import FileResponse
 from api.controllers import jarvis_controller
+
 from api.models.jarvis_models import PromptRequest, StartVoiceRequest, SchwabAuthRequest
 
 router = APIRouter()
@@ -32,3 +34,12 @@ async def authorize_schwab(req: SchwabAuthRequest):
 @router.get("/portfolio")
 async def get_portfolio_data():
     return await jarvis_controller.get_portfolio_data()
+
+
+@router.post("/audio")
+async def jarvis_audio(file: UploadFile = File(...)):
+    return await jarvis_controller.process_jarvis_audio(file)
+
+@router.get("/audio/play")
+def play_jarvis_audio():
+    return FileResponse(jarvis_controller.get_jarvis_audio_file(), media_type="audio/mpeg")

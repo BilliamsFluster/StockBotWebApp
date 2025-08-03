@@ -64,7 +64,82 @@ export const startVoiceAssistant = async (req, res) => {
     res.status(500).json({ error: "Voice assistant init failed." });
   }
 };
+// Handle audio upload from frontend → send to Stockbot backend
+export const processJarvisAudio = async (req, res) => {
+  try {
+    console.log("📥 Received voice/audio request");
+    console.log("➡️ req.file:", req.file ? `${req.file.originalname} (${req.file.mimetype}, ${req.file.size} bytes)` : "undefined");
+    console.log("➡️ req.body:", req.body);
 
+    const { language, voice } = req.body;
+
+    if (!req.file) {
+      console.error("❌ No file was received");
+      return res.status(400).json({ error: "Missing audio file." });
+    }
+
+    // Optionally refresh Schwab token if needed
+    const accessToken = await refreshSchwabAccessTokenInternal(req.user._id);
+    if (!accessToken) {
+      return res.status(401).json({ error: "Failed to refresh Schwab token." });
+    }
+
+    // Prepare form-data for backend
+    const formData = new FormData();
+    formData.append("file", req.file.buffer, { filename: req.file.originalname || "speech.wav" });
+    formData.append("language", language || "en");
+    formData.append("voice", voice || "en-US-AriaNeural");
+
+    console.log("📤 Forwarding audio to Stockbot:", `${STOCKBOT_URL}/jarvis/voice/audio`);
+
+    const response = await axios.post(
+      `${STOCKBOT_URL}/jarvis/voice/audio`,
+      formData,
+      {
+        headers: {
+          ...formData.getHeaders(),
+          Authorization: `Bearer ${accessToken}`,
+        },
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+      }
+    );
+
+    console.log("✅ Stockbot responded:", response.status);
+    res.json(response.data);
+
+  } catch (error) {
+    console.error("🔴 Failed to process Jarvis audio:", error.message);
+    if (error.response) {
+      console.error("🔴 Stockbot error response:", error.response.status, error.response.data);
+    }
+    res.status(500).json({ error: "Jarvis audio processing failed." });
+  }
+};
+
+
+
+export const playJarvisAudio = async (req, res) => {
+  try {
+    const accessToken = await refreshSchwabAccessTokenInternal(req.user._id);
+    if (!accessToken) {
+      return res.status(401).json({ error: "Failed to refresh Schwab token." });
+    }
+
+    const response = await axios.get(`${STOCKBOT_URL}/jarvis/audio/play`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      },
+      responseType: "arraybuffer" // important for binary data
+    });
+
+    res.set("Content-Type", "audio/mpeg");
+    res.send(response.data);
+  } catch (error) {
+    console.error("🔴 Failed to stream Jarvis audio:", error.message);
+    res.status(500).json({ error: "Audio playback failed." });
+  }
+};
 
 // ---- STOP VOICE ASSISTANT ----
 export const stopVoiceAssistant = async (req, res) => {

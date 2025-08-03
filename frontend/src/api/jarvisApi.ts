@@ -27,6 +27,7 @@ export const askJarvis = async (prompt: string, user: User) => {
   return res.data;
 };
 
+
 // Base config for authenticated requests
 const getAuthConfig = () => {
   return {
@@ -57,3 +58,29 @@ export async function fetchAvailableModels(): Promise<string[]> {
     return [];
   }
 }
+
+
+
+// Send recorded audio to Jarvis for STT → LLM → TTS
+export const sendJarvisAudio = async (audioBlob: Blob, language = "en", voice = "en-US-AriaNeural") => {
+  const formData = new FormData();
+  formData.append("file", audioBlob, "speech.wav");
+  formData.append("language", language);
+  formData.append("voice", voice);
+
+  const res = await axios.post(
+  `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/voice/audio`,
+  formData,
+  {
+    ...getAuthConfig(), // same as before
+    headers: {
+      ...getAuthConfig().headers,
+      // Let Axios set multipart boundary automatically
+      'Content-Type': undefined
+    }
+  }
+);
+
+  return res.data; // { transcript, response_text, audio_file_url }
+};
+

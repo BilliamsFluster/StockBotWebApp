@@ -1,7 +1,16 @@
-from fastapi import Request
+from fastapi import Request, UploadFile
+import os
+import tempfile
 from api.models.jarvis_models import PromptRequest, StartVoiceRequest
-import subprocess, os, json, asyncio, sys
+import asyncio
 from sse_starlette.sse import EventSourceResponse
+
+from jarvis.jarvis_service import JarvisService
+from jarvis.ollama_agent import OllamaAgent
+
+# Create single instances
+ollama_agent = OllamaAgent("qwen3:8b")
+jarvis_service = JarvisService(llm_agent=ollama_agent)
 
 # Local modules
 from Core.config import shared_state
@@ -127,3 +136,24 @@ async def get_portfolio_data():
     except Exception as e:
         print("🔴 Failed to fetch portfolio data:", str(e))
         return {"error": "Failed to fetch portfolio data"}
+    
+
+
+
+async def process_jarvis_audio(file: UploadFile):
+    # Save uploaded file to temp
+    temp_path = os.path.join(tempfile.gettempdir(), file.filename)
+    with open(temp_path, "wb") as f:
+        f.write(await file.read())
+
+    result = jarvis_service.process_audio(temp_path)
+
+    return {
+        "transcript": result["transcript"],
+        "response_text": result["response_text"],
+        "audio_file_url": "/jarvis/audio/play"
+    }
+
+def get_jarvis_audio_file():
+    audio_path = os.path.join(tempfile.gettempdir(), "jarvis_reply.mp3")
+    return audio_path
