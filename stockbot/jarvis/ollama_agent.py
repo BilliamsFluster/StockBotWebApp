@@ -21,3 +21,4 @@ class OllamaAgent(BaseAgent):
             raise RuntimeError(f"Ollama call failed: {res.status_code} {res.text}")
 
         return res.json().get("response", "").strip()
+    

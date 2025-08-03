@@ -28,6 +28,6 @@ export async function getActiveApiPortfolioData() {
 
         }
     );
-    console.log("hello");
+   
   return res.data;
 }

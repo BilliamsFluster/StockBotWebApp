@@ -1,22 +1,27 @@
 // backend/config/corsOptions.js
 const allowedOrigins = [
-  'http://localhost:5173',
-  'http://localhost:3000',
-  'http://192.168.1.163:3000',
+  `${process.env.FRONTEND_URL}`
   // Add more frontend origins as needed (e.g. production domains)
 ];
-
+console.log("📦 corsOptions loaded");
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow requests with no origin (e.g. Postman)
+    console.log("🔍 CORS DEBUG:");
+    console.log("   Incoming Origin:", origin);
+    console.log("   Allowed Origins:", allowedOrigins);
+
+    // Allow requests with no origin (Postman, curl, etc.)
     if (!origin || allowedOrigins.includes(origin)) {
+      console.log("   ✅ Allowed by CORS");
       callback(null, true);
     } else {
+      console.log("   ❌ Blocked by CORS");
       callback(new Error('Not allowed by CORS'));
     }
   },
   credentials: true,
-  optionsSuccessStatus: 200, // for legacy browsers
+  optionsSuccessStatus: 200
 };
+
 
 export default corsOptions;

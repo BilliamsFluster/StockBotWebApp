@@ -9,10 +9,16 @@ import {
   voiceStream,
   relayVoiceData,
   getPortfolioData,
-  fetchModels
+  fetchModels,
+  processJarvisAudio,
+  playJarvisAudio
 } from "../controllers/jarvisController.js";
 
+import multer from "multer";
+
+
 const router = express.Router();
+const upload = multer(); // In-memory storage
 
 // Text prompt → LLM → response
 router.post("/ask", protectRoute, handleJarvisPrompt);
@@ -26,6 +32,13 @@ router.get("/voice/stream", voiceStream);
 router.post("/voice/event", relayVoiceData);
 router.get("/portfolio", protectRoute, getPortfolioData);
 router.get("/models",  protectRoute, fetchModels)
+
+router.post("/voice/audio", protectRoute, upload.single("file"), (req, res, next) => {
+  console.log("📡 Incoming /voice/audio request");
+  next();
+}, processJarvisAudio);
+router.get("/voice/audio/play", protectRoute, playJarvisAudio);
+
 
 
 export default router;
