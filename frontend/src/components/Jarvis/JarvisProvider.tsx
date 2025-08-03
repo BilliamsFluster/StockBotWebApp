@@ -1,6 +1,15 @@
+// src/components/Jarvis/JarvisProvider.tsx
 "use client";
-import { createContext, useContext, useState, ReactNode, useEffect, useRef } from "react";
-import { sendJarvisAudio } from "@/api/jarvisApi"; // <-- your axios helper
+
+import React, {
+  createContext,
+  useContext,
+  useState,
+  ReactNode,
+  useEffect,
+  useRef,
+} from "react";
+import { sendJarvisAudio, fetchJarvisAudioBlob } from "@/api/jarvisApi";
 
 type JarvisState = "idle" | "listening" | "speaking";
 
@@ -16,48 +25,59 @@ const JarvisContext = createContext<JarvisContextProps | undefined>(undefined);
 export function JarvisProvider({ children }: { children: ReactNode }) {
   const [enabled, setEnabled] = useState(false);
   const [state, setState] = useState<JarvisState>("idle");
-  const mediaStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const silenceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Helper: detects silence
+  // Nullable AudioContext ref
+  const audioContextRef = useRef<AudioContext | null>(null);
+  // Lazily create & resume on first user gesture
+  function getAudioContext() {
+    let ctx = audioContextRef.current;
+    if (!ctx) {
+      ctx = new AudioContext();
+      audioContextRef.current = ctx;
+    }
+    if (ctx.state === "suspended") {
+      ctx.resume();
+    }
+    return ctx;
+  }
+
+  // Silence detection (same as before)
   const startSilenceDetection = (stream: MediaStream) => {
-    const audioContext = new AudioContext();
+    const audioContext = getAudioContext();
     const analyser = audioContext.createAnalyser();
     const micSource = audioContext.createMediaStreamSource(stream);
     micSource.connect(analyser);
-
     const dataArray = new Uint8Array(analyser.fftSize);
-    const SILENCE_THRESHOLD = 5; // volume threshold
-    const SILENCE_DURATION = 1500; // ms
+    const SILENCE_THRESHOLD = 5;
+    const SILENCE_DURATION = 1500;
 
     const checkSilence = () => {
       analyser.getByteFrequencyData(dataArray);
-      const avgVolume = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-
-      if (avgVolume < SILENCE_THRESHOLD) {
-        // Start silence timer
+      const avg = dataArray.reduce((s, v) => s + v, 0) / dataArray.length;
+      if (avg < SILENCE_THRESHOLD) {
         if (!silenceTimeoutRef.current) {
-          silenceTimeoutRef.current = setTimeout(() => {
-            console.log("⏸ Detected long silence, stopping recording...");
-            stopRecordingAndSend();
-          }, SILENCE_DURATION);
+          silenceTimeoutRef.current = setTimeout(stopRecording, SILENCE_DURATION);
         }
       } else {
-        // Reset silence timer
         if (silenceTimeoutRef.current) {
           clearTimeout(silenceTimeoutRef.current);
           silenceTimeoutRef.current = null;
         }
       }
-
       requestAnimationFrame(checkSilence);
     };
-
     checkSilence();
   };
 
-  // Start recording
+  // Stop the recorder
+  const stopRecording = () => {
+    const rec = mediaRecorderRef.current;
+    if (rec && rec.state !== "inactive") rec.stop();
+  };
+
+  // Kick off recording/upload/playback
   const startRecording = (stream: MediaStream) => {
     const recorder = new MediaRecorder(stream);
     mediaRecorderRef.current = recorder;
@@ -66,20 +86,36 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     recorder.ondataavailable = (e) => chunks.push(e.data);
 
     recorder.onstop = async () => {
-      const audioBlob = new Blob(chunks, { type: "audio/wav" });
       setState("speaking");
-      console.log("🎤 Sending audio to Jarvis...");
+      const blob = new Blob(chunks, { type: "audio/wav" });
+      let result;
       try {
-        const result = await sendJarvisAudio(audioBlob);
-        console.log("📜 Transcript:", result.transcript);
-        console.log("🤖 Response:", result.response_text);
-        const audio = new Audio(`${process.env.NEXT_PUBLIC_BACKEND_URL}${result.audio_file_url}`);
-        audio.play();
-      } catch (err) {
-        console.error("❌ Error sending audio:", err);
+        result = await sendJarvisAudio(blob);
+      } catch (e) {
+        console.error("Error sending audio:", e);
+        setState("idle");
+        return;
+      }
+
+      // **New:** fetch MP3 blob then play via AudioContext
+      try {
+        const mp3Blob = await fetchJarvisAudioBlob();
+        const arrayBuffer = await mp3Blob.arrayBuffer();
+        const ctx = getAudioContext();
+        const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+        const src = ctx.createBufferSource();
+        src.buffer = audioBuffer;
+        src.connect(ctx.destination);
+        src.start(0);
+      } catch (e) {
+        console.error("Error decoding/playing TTS buffer:", e);
       } finally {
-        setState("listening"); // Go back to listening mode
-        startRecording(stream); // Start listening again automatically
+        setState("listening");
+        // restart recording
+        navigator.mediaDevices
+          .getUserMedia({ audio: true })
+          .then((s) => startRecording(s))
+          .catch(() => setEnabled(false));
       }
     };
 
@@ -87,35 +123,22 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     startSilenceDetection(stream);
   };
 
-  const stopRecordingAndSend = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
-    }
-  };
-
-  // Watch for Jarvis being enabled/disabled
+  // Effect: run once after user taps “enable Jarvis”
   useEffect(() => {
-  if (!enabled) return;
-
-  // ✅ Only run in the browser
-  if (typeof navigator !== "undefined" && navigator.mediaDevices?.getUserMedia) {
-    navigator.mediaDevices.getUserMedia({ audio: true })
+    if (!enabled) return;
+    // unlock AudioContext here
+    getAudioContext();
+    navigator.mediaDevices
+      .getUserMedia({ audio: true })
       .then((stream) => {
-        mediaStreamRef.current = stream;
         setState("listening");
-        console.log("🎤 Mic enabled, Jarvis is listening");
         startRecording(stream);
       })
       .catch((err) => {
-        console.error("❌ Mic permission denied:", err);
+        console.error("Mic denied:", err);
         setEnabled(false);
       });
-  } else {
-    console.error("❌ navigator.mediaDevices.getUserMedia is not available in this environment.");
-    setEnabled(false);
-  }
-}, [enabled]);
-
+  }, [enabled]);
 
   return (
     <JarvisContext.Provider value={{ enabled, state, setEnabled, setState }}>

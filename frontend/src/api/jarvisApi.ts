@@ -62,25 +62,39 @@ export async function fetchAvailableModels(): Promise<string[]> {
 
 
 // Send recorded audio to Jarvis for STT → LLM → TTS
-export const sendJarvisAudio = async (audioBlob: Blob, language = "en", voice = "en-US-AriaNeural") => {
+// src/api/jarvisApi.ts
+
+
+export const sendJarvisAudio = async (
+  audioBlob: Blob,
+  language = 'en',
+  voice = 'en-US-AriaNeural'
+) => {
   const formData = new FormData();
-  formData.append("file", audioBlob, "speech.wav");
-  formData.append("language", language);
-  formData.append("voice", voice);
+  formData.append('file',    audioBlob, 'speech.wav');
+  formData.append('language', language);
+  formData.append('voice',    voice);
 
   const res = await axios.post(
-  `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/voice/audio`,
-  formData,
-  {
-    ...getAuthConfig(), // same as before
-    headers: {
-      ...getAuthConfig().headers,
-      // Let Axios set multipart boundary automatically
-      'Content-Type': undefined
+    `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/voice/audio`,
+    formData,
+    {
+      withCredentials: true,  // <— send cookie
+      // no headers.content-type: let the browser set "multipart/form-data; boundary=…"
     }
-  }
-);
+  );
 
   return res.data; // { transcript, response_text, audio_file_url }
 };
 
+
+export async function fetchJarvisAudioBlob(): Promise<Blob> {
+  const resp = await axios.get(
+    `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/voice/audio/play`,
+    {
+      responseType: "blob",
+      withCredentials: true,    // ← include cookies/credentials
+    }
+  );
+  return resp.data;
+}

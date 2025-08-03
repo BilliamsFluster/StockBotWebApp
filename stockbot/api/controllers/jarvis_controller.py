@@ -1,4 +1,4 @@
-from fastapi import Request, UploadFile
+from fastapi import Request, UploadFile, HTTPException
 import os
 import tempfile
 from api.models.jarvis_models import PromptRequest, StartVoiceRequest
@@ -141,18 +141,30 @@ async def get_portfolio_data():
 
 
 async def process_jarvis_audio(file: UploadFile):
-    # Save uploaded file to temp
-    temp_path = os.path.join(tempfile.gettempdir(), file.filename)
+    # 1) Save uploaded file to a temp path
+    suffix = os.path.splitext(file.filename)[1] or ".wav"
+    temp_path = os.path.join(tempfile.gettempdir(), f"upload{suffix}")
     with open(temp_path, "wb") as f:
         f.write(await file.read())
 
-    result = jarvis_service.process_audio(temp_path)
+    try:
+        # 2) Await the async service call so `result` is a dict, not a coroutine
+        result = await jarvis_service.process_audio(temp_path)
+    except Exception as e:
+        # return a 500 with the error message
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # 3) Clean up the uploaded file
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
 
+    # 4) Return the actual result fields
     return {
-        "transcript": result["transcript"],
-        "response_text": result["response_text"],
-        "audio_file_url": "/jarvis/audio/play"
+        "transcript":     result["transcript"],
+        "response_text":  result["response_text"],
+        "audio_file_url": "/api/jarvis/audio/play"  # or wherever you serve it from
     }
+
 
 def get_jarvis_audio_file():
     audio_path = os.path.join(tempfile.gettempdir(), "jarvis_reply.mp3")

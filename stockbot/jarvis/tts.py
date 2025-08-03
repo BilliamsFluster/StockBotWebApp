@@ -1,4 +1,5 @@
-# tts.py
+# stockbot/tts.py
+
 import edge_tts
 import asyncio
 import tempfile
@@ -15,5 +16,6 @@ class TextToSpeech:
         return output_path
 
     def synthesize_sync(self, text: str, output_path: str) -> str:
+        # fallback synchronous wrapper if you need it elsewhere
         asyncio.run(self.synthesize(text, output_path))
         return output_path
