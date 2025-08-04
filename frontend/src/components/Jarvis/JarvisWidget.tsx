@@ -1,14 +1,14 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useJarvis } from "@/components/Jarvis/JarvisProvider";
-import JarvisPopup from "@/components/Jarvis/JarvisPopup";
+import JarvisIndicator from "@/components/Jarvis/JarvisIndicator";
 import { gsap } from "gsap";
 import { Draggable } from "gsap/Draggable";
 
 gsap.registerPlugin(Draggable);
 
 export default function JarvisWidget() {
-  const { enabled, state } = useJarvis();
+  const { enabled, setEnabled, state } = useJarvis();
   const [showPopup, setShowPopup] = useState(false);
   const widgetRef = useRef<HTMLDivElement>(null);
 
@@ -19,14 +19,11 @@ export default function JarvisWidget() {
     const screenW = window.innerWidth;
     const screenH = window.innerHeight;
 
-    // Set starting position (bottom-right corner)
-    const startX = screenW - 80; // widget width (48px) + margin (20px) + buffer
-    const startY = screenH - 80;
-    gsap.set(el, { x: startX, y: startY });
+    gsap.set(el, { x: screenW - 80, y: screenH - 80 });
 
     Draggable.create(el, {
       type: "x,y",
-      inertia: true, // smooth momentum stop
+      inertia: true,
       bounds: window,
       edgeResistance: 0.75,
       onRelease: function () {
@@ -34,7 +31,6 @@ export default function JarvisWidget() {
         const widgetWidth = rect.width;
         const widgetHeight = rect.height;
 
-        // Distances to corners
         const distances = {
           "top-left": Math.hypot(rect.left, rect.top),
           "top-right": Math.hypot(screenW - rect.right, rect.top),
@@ -42,7 +38,6 @@ export default function JarvisWidget() {
           "bottom-right": Math.hypot(screenW - rect.right, screenH - rect.bottom),
         };
 
-        // Find closest corner
         const closestCorner = Object.entries(distances).reduce((a, b) =>
           a[1] < b[1] ? a : b
         )[0] as keyof typeof distances;
@@ -51,67 +46,40 @@ export default function JarvisWidget() {
         let targetY = 0;
 
         switch (closestCorner) {
-          case "top-left":
-            targetX = 20;
-            targetY = 20;
-            break;
-          case "top-right":
-            targetX = screenW - widgetWidth - 20;
-            targetY = 20;
-            break;
-          case "bottom-left":
-            targetX = 20;
-            targetY = screenH - widgetHeight - 20;
-            break;
+          case "top-left": targetX = 20; targetY = 20; break;
+          case "top-right": targetX = screenW - widgetWidth - 20; targetY = 20; break;
+          case "bottom-left": targetX = 20; targetY = screenH - widgetHeight - 20; break;
           case "bottom-right":
-          default:
-            targetX = screenW - widgetWidth - 20;
-            targetY = screenH - widgetHeight - 20;
-            break;
+          default: targetX = screenW - widgetWidth - 20; targetY = screenH - widgetHeight - 20; break;
         }
 
-        // Snap with a nice bounce
-        gsap.to(el, {
-          x: targetX,
-          y: targetY,
-          duration: 0.35,
-          ease: "elastic.out(1, 0.5)"
-        });
+        gsap.to(el, { x: targetX, y: targetY, duration: 0.35, ease: "elastic.out(1, 0.5)" });
       }
     });
   }, []);
-
-  const getStateColor = () => {
-  if (!enabled) return "bg-gray-500"; // Disabled
-
-  switch (state) {
-    case "listening":
-      return "bg-blue-500 animate-pulse"; // Listening
-    case "speaking":
-      return "bg-green-500 animate-pulse"; // Speaking
-    default:
-      return "bg-purple-500"; // Idle
-  }
-};
-
 
   return (
     <>
       <div
         ref={widgetRef}
-        className={`fixed w-12 h-12 rounded-full flex items-center justify-center shadow-lg text-white ${getStateColor()}`}
-        style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          cursor: "grab",
-          zIndex: 9999
-        }}
+        className="fixed w-14 h-14 rounded-full flex flex-col items-center justify-center shadow-lg bg-black/70 cursor-pointer select-none"
+        style={{ top: 0, left: 0, zIndex: 9999 }}
         onClick={() => setShowPopup(!showPopup)}
       >
-        🎤
+        {enabled ? <JarvisIndicator state={state} /> : <span className="text-xs text-gray-400">Off</span>}
+        
       </div>
-      {showPopup && <JarvisPopup />}
+
+      {showPopup && (
+        <div className="absolute bottom-20 right-4 bg-black/80 p-3 rounded-lg text-white text-sm space-y-2 shadow-lg">
+          <button
+            className="px-3 py-1 rounded bg-blue-500 hover:bg-blue-600"
+            onClick={() => setEnabled(!enabled)}
+          >
+            {enabled ? "Disable Voice Mode" : "Enable Voice Mode"}
+          </button>
+        </div>
+      )}
     </>
   );
 }
