@@ -3,6 +3,8 @@ import axios from "axios";
 import { refreshSchwabAccessTokenInternal } from "../config/schwab.js";
 import { log } from "../utils/logger.js";
 import FormData from 'form-data';
+import WebSocket from "ws";
+
 
 
 const STOCKBOT_URL = process.env.STOCKBOT_URL;
@@ -262,3 +264,42 @@ export const fetchModels = async (req, res) => {
   }
 };
 
+
+//----------------------------------------------------------------------------------------------
+export function proxyJarvisVoiceWs(clientWs, req) {
+  const baseUrl = process.env.STOCKBOT_URL;
+  const stockbotWsUrl = `${baseUrl}/api/jarvis/voice/ws`; // full path
+
+  console.log(`🔌 Proxying Jarvis WS → ${stockbotWsUrl}`);
+
+  const botWs = new WebSocket(stockbotWsUrl);
+
+  // Frontend → Stockbot
+  clientWs.on("message", (msg) => {
+    if (botWs.readyState === WebSocket.OPEN) {
+      botWs.send(msg);
+    }
+  });
+
+  // Stockbot → Frontend
+  botWs.on("message", (msg) => {
+    if (clientWs.readyState === WebSocket.OPEN) {
+      clientWs.send(msg);
+    }
+  });
+
+  botWs.on("open", () => console.log("✅ Connected to Stockbot WS"));
+  botWs.on("close", () => {
+    console.log("❌ Stockbot WS closed");
+    clientWs.close();
+  });
+  botWs.on("error", (err) => {
+    console.error("Stockbot WS error:", err);
+    clientWs.close();
+  });
+
+  clientWs.on("close", () => {
+    console.log("❌ Client WS closed");
+    botWs.close();
+  });
+}

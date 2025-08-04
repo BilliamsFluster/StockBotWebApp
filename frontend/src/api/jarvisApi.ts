@@ -62,39 +62,30 @@ export async function fetchAvailableModels(): Promise<string[]> {
 
 
 // Send recorded audio to Jarvis for STT → LLM → TTS
-// src/api/jarvisApi.ts
 
+export function connectJarvisWebSocket(): WebSocket {
+  // Ensure we switch to ws:// or wss:// based on environment
+  const baseUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "";
+  const wsUrl = baseUrl
+    .replace(/^http/, "ws") // convert http/https to ws/wss
+    .replace(/\/$/, "");    // remove trailing slash if any
 
-export const sendJarvisAudio = async (
-  audioBlob: Blob,
-  language = 'en',
-  voice = 'en-US-AriaNeural'
-) => {
-  const formData = new FormData();
-  formData.append('file',    audioBlob, 'speech.wav');
-  formData.append('language', language);
-  formData.append('voice',    voice);
+  // Full endpoint for Jarvis voice streaming
+  const fullUrl = `${wsUrl}/api/jarvis/voice/ws`;
 
-  const res = await axios.post(
-    `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/voice/audio`,
-    formData,
-    {
-      withCredentials: true,  // <— send cookie
-      // no headers.content-type: let the browser set "multipart/form-data; boundary=…"
-    }
-  );
+  const ws = new WebSocket(fullUrl);
 
-  return res.data; // { transcript, response_text, audio_file_url }
-};
+  ws.onopen = () => {
+    console.log("🔌 Connected to Jarvis voice WebSocket");
+  };
 
+  ws.onerror = (err) => {
+    console.error("WebSocket error:", err);
+  };
 
-export async function fetchJarvisAudioBlob(): Promise<Blob> {
-  const resp = await axios.get(
-    `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/voice/audio/play`,
-    {
-      responseType: "blob",
-      withCredentials: true,    // ← include cookies/credentials
-    }
-  );
-  return resp.data;
+  ws.onclose = (e) => {
+    console.log(`Jarvis voice WebSocket closed: code=${e.code} reason=${e.reason}`);
+  };
+
+  return ws;
 }

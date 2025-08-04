@@ -1,21 +1,38 @@
-# stockbot/tts.py
+"""
+Text-to-speech (TTS) module for Jarvis.
+Generates unique filenames to avoid concurrency issues.
+"""
 
-import edge_tts
-import asyncio
+import os
 import tempfile
+import asyncio
+import uuid
+import edge_tts
+
 
 class TextToSpeech:
-    def __init__(self, voice: str = "en-US-AriaNeural", rate: str = "+0%", pitch: str = "+0Hz"):
-        self.voice = voice
-        self.rate = rate
-        self.pitch = pitch
+    def __init__(
+        self,
+        voice: str = None,
+        rate: str = None,
+        pitch: str = None,
+    ):
+        self.voice = voice or os.getenv("EDGE_TTS_VOICE", "en-US-AriaNeural")
+        self.rate = rate or os.getenv("EDGE_TTS_RATE", "+0%")
+        self.pitch = pitch or os.getenv("EDGE_TTS_PITCH", "+0Hz")
 
-    async def synthesize(self, text: str, output_path: str) -> str:
-        communicate = edge_tts.Communicate(text, self.voice, rate=self.rate, pitch=self.pitch)
+    async def synthesize(self, text: str, output_path: str = None) -> str:
+        if not output_path:
+            output_path = os.path.join(
+                tempfile.gettempdir(), f"tts_{uuid.uuid4().hex}.mp3"
+            )
+
+        communicate = edge_tts.Communicate(
+            text, self.voice, rate=self.rate, pitch=self.pitch
+        )
         await communicate.save(output_path)
         return output_path
 
-    def synthesize_sync(self, text: str, output_path: str) -> str:
-        # fallback synchronous wrapper if you need it elsewhere
+    def synthesize_sync(self, text: str, output_path: str = None) -> str:
         asyncio.run(self.synthesize(text, output_path))
         return output_path
