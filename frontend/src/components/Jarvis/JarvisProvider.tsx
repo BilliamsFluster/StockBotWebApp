@@ -30,7 +30,8 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
   const audioContextRef = useRef<AudioContext | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const isRecordingRef = useRef(false);
-  const currentPlaybackRef = useRef<HTMLAudioElement | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const audioElementRef = useRef<HTMLAudioElement | null>(null);
 
   function getAudioContext() {
     let ctx = audioContextRef.current;
@@ -41,9 +42,17 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     return ctx;
   }
 
+  function createAndUnlockAudioElement() {
+    if (!audioElementRef.current) {
+      const el = new Audio();
+      el.src = "data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAAAAA";
+      el.play().catch(() => {});
+      audioElementRef.current = el;
+    }
+  }
+
   async function handleWebSocketMessage(evt: MessageEvent) {
     let jsonString: string;
-
     if (typeof evt.data === "string") {
       jsonString = evt.data;
     } else if (evt.data instanceof Blob) {
@@ -52,9 +61,7 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
       } catch {
         return;
       }
-    } else {
-      return;
-    }
+    } else return;
 
     let msg: any;
     try {
@@ -71,11 +78,8 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
         setState("idle");
         break;
       case "interrupt":
-        if (currentPlaybackRef.current) {
-          try {
-            currentPlaybackRef.current.pause();
-          } catch {}
-          currentPlaybackRef.current = null;
+        if (audioElementRef.current) {
+          try { audioElementRef.current.pause(); } catch {}
         }
         setState("listening");
         break;
@@ -83,28 +87,20 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
         console.log("🤖 Response:", msg.data);
         break;
       case "tts_audio":
-        getAudioContext().resume().then(() => {
-          const audioBytes = Uint8Array.from(atob(msg.data), c =>
-            c.charCodeAt(0)
-          );
-          const blob = new Blob([audioBytes], { type: "audio/mpeg" });
-          const url = URL.createObjectURL(blob);
-          const audio = new Audio(url);
-          currentPlaybackRef.current = audio;
-
+        if (state === "listening") return; // prevent speaking over listening
+        const audioBytes = Uint8Array.from(atob(msg.data), c => c.charCodeAt(0));
+        const blob = new Blob([audioBytes], { type: "audio/mpeg" });
+        const url = URL.createObjectURL(blob);
+        if (audioElementRef.current) {
           wsRef.current?.send(JSON.stringify({ event: "tts_start" }));
-
-          audio.onplay = () => setState("speaking");
-          audio.onended = () => {
+          audioElementRef.current.src = url;
+          audioElementRef.current.onplay = () => setState("speaking");
+          audioElementRef.current.onended = () => {
             wsRef.current?.send(JSON.stringify({ event: "tts_end" }));
             setState("idle");
-            currentPlaybackRef.current = null;
           };
-
-          audio.play().catch(err => console.error("❌ Audio play() error:", err));
-        });
-        break;
-      default:
+          audioElementRef.current.play().catch(err => console.error("❌ play() error:", err));
+        }
         break;
     }
   }
@@ -116,6 +112,28 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     const audioCtx = getAudioContext();
     const source = audioCtx.createMediaStreamSource(stream);
 
+    if (audioCtx.audioWorklet) {
+      const recorder = new AudioWorkletNode(audioCtx, "recorder-processor");
+      recorder.port.onmessage = e => {
+        const bytes = new Uint8Array(e.data);
+        const b64 = btoa(String.fromCharCode(...bytes));
+        if (wsRef.current?.readyState === WebSocket.OPEN && state !== "speaking") {
+          wsRef.current.send(JSON.stringify({ event: "pcm_chunk", data: b64 }));
+        }
+      };
+      source.connect(recorder);
+    }
+  }
+
+  function stopRecording() {
+    if (!isRecordingRef.current) return;
+    wsRef.current?.send(JSON.stringify({ event: "end_audio" }));
+    isRecordingRef.current = false;
+  }
+
+  async function preloadWorklet() {
+    const audioCtx = getAudioContext();
+    if (!audioCtx.audioWorklet) return;
     const workletCode = `
       class RecorderProcessor extends AudioWorkletProcessor {
         process(inputs) {
@@ -134,29 +152,9 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
       }
       registerProcessor('recorder-processor', RecorderProcessor);
     `;
-
     const blob = new Blob([workletCode], { type: "application/javascript" });
     const url = URL.createObjectURL(blob);
     await audioCtx.audioWorklet.addModule(url);
-
-    const recorder = new AudioWorkletNode(audioCtx, "recorder-processor");
-    recorder.connect(audioCtx.destination);
-
-    recorder.port.onmessage = e => {
-      const bytes = new Uint8Array(e.data);
-      const b64 = btoa(String.fromCharCode(...bytes));
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ event: "pcm_chunk", data: b64 }));
-      }
-    };
-
-    source.connect(recorder);
-  }
-
-  function stopRecording() {
-    if (!isRecordingRef.current) return;
-    wsRef.current?.send(JSON.stringify({ event: "end_audio" }));
-    isRecordingRef.current = false;
   }
 
   function startWebSocketAndRecording() {
@@ -166,31 +164,48 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     ws.onmessage = handleWebSocketMessage;
     ws.onopen = async () => {
       await getAudioContext().resume();
-      navigator.mediaDevices
-        .getUserMedia({ audio: true })
-        .then(stream => {
-          setState("listening");
-          ws.send(JSON.stringify({ event: "start_audio" }));
-          startRecording(stream);
-        })
-        .catch(() => setEnabled(false));
+      const stream = micStreamRef.current;
+      if (!stream) {
+        setEnabled(false);
+        return;
+      }
+      setState("listening");
+      ws.send(JSON.stringify({ event: "start_audio" }));
+      startRecording(stream);
     };
     wsRef.current = ws;
   }
 
-  function toggleJarvis() {
+  async function toggleJarvis() {
     if (enabled) {
       stopRecording();
       wsRef.current?.close();
       wsRef.current = null;
       setEnabled(false);
       setState("idle");
-    } else {
-      getAudioContext()
-        .resume()
-        .then(() => {
-          setEnabled(true);
-        });
+      return;
+    }
+
+    try {
+      const ctx = getAudioContext();
+      await ctx.resume();
+      createAndUnlockAudioElement();
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          channelCount: 1,
+          sampleRate: TARGET_SAMPLE_RATE,
+        },
+      });
+      micStreamRef.current = stream;
+
+      await preloadWorklet();
+      setEnabled(true);
+    } catch (err) {
+      setEnabled(false);
+      setState("idle");
     }
   }
 
@@ -201,7 +216,14 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
   }, [enabled]);
 
   return (
-    <JarvisContext.Provider value={{ enabled, state, setEnabled: toggleJarvis, setState }}>
+    <JarvisContext.Provider
+      value={{
+        enabled,
+        state,
+        setEnabled: toggleJarvis,
+        setState,
+      }}
+    >
       {children}
     </JarvisContext.Provider>
   );
