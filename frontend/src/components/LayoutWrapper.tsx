@@ -12,7 +12,7 @@ export default function LayoutWrapper({ children }: { children: React.ReactNode 
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
-    <JarvisProvider>
+    
       <div className="flex h-screen overflow-hidden">
         {/* Sidebar */}
         <Sidebar isMobileOpen={sidebarOpen} setMobileOpen={setSidebarOpen} />
@@ -41,8 +41,8 @@ export default function LayoutWrapper({ children }: { children: React.ReactNode 
         </main>
 
         {/* Floating Jarvis Widget (Global, draggable) */}
-        <JarvisWidget />
+        
       </div>
-    </JarvisProvider>
+    
   );
 }

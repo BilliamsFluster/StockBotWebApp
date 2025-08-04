@@ -11,6 +11,7 @@ import BrokerCard from '@/components/Brokers/Cards/BrokerCard';
 import { brokersList } from '@/config/brokersConfig';
 import SchwabAuth from '@/components/Auth/SchwabAuth';
 import AlpacaAuth from '@/components/Auth/AlpacaAuth';
+import {useWarmPortfolioData} from '@/hooks/useWarmPortfolioData'
 
 type Preferences = {
   activeBroker: string;
@@ -21,6 +22,7 @@ type Preferences = {
 
 
 export default function BrokerSelector() {
+  useWarmPortfolioData();
   const [preferences, setPreferences] = useState<Preferences | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -63,6 +65,8 @@ export default function BrokerSelector() {
   const handleSetActive = async (broker: string) => {
     await setActiveBroker(broker);
     setPreferences((prev) => (prev ? { ...prev, activeBroker: broker } : null));
+    useWarmPortfolioData();
+
   };
 
   // Disconnect broker
