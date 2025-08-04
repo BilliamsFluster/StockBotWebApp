@@ -80,3 +80,5 @@ backend/certs/ca.crt
 backend/certs/ca.key
 backend/certs/cert.crt
 backend/certs/cert.key
+stockbot/models
+
