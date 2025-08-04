@@ -9,7 +9,9 @@ import React, {
   useEffect,
   useRef,
 } from "react";
-import { sendJarvisAudio, fetchJarvisAudioBlob } from "@/api/jarvisApi";
+import { connectJarvisWebSocket } from "@/api/jarvisApi";
+
+const TARGET_SAMPLE_RATE = 16000;
 
 type JarvisState = "idle" | "listening" | "speaking";
 
@@ -26,137 +28,205 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
   const [enabled, setEnabled] = useState(false);
   const [state, setState] = useState<JarvisState>("idle");
 
-  // refs
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const silenceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
-  const isRecordingRef = useRef(false); // <-- guard
+  const wsRef = useRef<WebSocket | null>(null);
+  const isRecordingRef = useRef(false);
+  const currentPlaybackRef = useRef<HTMLAudioElement | null>(null);
 
-  // Lazily create/resume AudioContext
   function getAudioContext() {
     let ctx = audioContextRef.current;
     if (!ctx) {
-      ctx = new AudioContext();
+      ctx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
       audioContextRef.current = ctx;
-    }
-    if (ctx.state === "suspended") {
-      ctx.resume();
     }
     return ctx;
   }
 
-  // Silence detection
-  function startSilenceDetection(stream: MediaStream) {
-    const ctx = getAudioContext();
-    const analyser = ctx.createAnalyser();
-    const source = ctx.createMediaStreamSource(stream);
-    source.connect(analyser);
+  async function handleWebSocketMessage(evt: MessageEvent) {
+  let jsonString: string;
 
-    const data = new Uint8Array(analyser.fftSize);
-    const THRESH = 5;
-    const DURATION = 1500;
-
-    const check = () => {
-      analyser.getByteFrequencyData(data);
-      const avg = data.reduce((s, v) => s + v, 0) / data.length;
-
-      if (avg < THRESH) {
-        if (!silenceTimeoutRef.current) {
-          silenceTimeoutRef.current = setTimeout(stopRecording, DURATION);
-        }
-      } else {
-        if (silenceTimeoutRef.current) {
-          clearTimeout(silenceTimeoutRef.current);
-          silenceTimeoutRef.current = null;
-        }
-      }
-      requestAnimationFrame(check);
-    };
-
-    check();
-  }
-
-  // Stop the recorder
-  function stopRecording() {
-    if (mediaRecorderRef.current && isRecordingRef.current) {
-      mediaRecorderRef.current.stop();
+  // 1️⃣ Handle both string and Blob messages
+  if (typeof evt.data === "string") {
+    jsonString = evt.data;
+  } else if (evt.data instanceof Blob) {
+    console.warn("📦 Received Blob from WS, reading as text...");
+    try {
+      jsonString = await evt.data.text();
+    } catch (err) {
+      console.error("❌ Failed to read Blob as text:", err);
+      return;
     }
+  } else {
+    console.error("⚠️ Unrecognized WebSocket message type:", typeof evt.data);
+    return;
   }
 
-  // Start recording if not already recording
-  function startRecording(stream: MediaStream) {
-    if (isRecordingRef.current) return;            // <--- guard
-    isRecordingRef.current = true;                 // <--- set before
+  // 2️⃣ Parse JSON
+  let msg: any;
+  try {
+    msg = JSON.parse(jsonString);
+  } catch (err) {
+    console.error("❌ Failed to parse WS JSON:", err, "Data:", jsonString);
+    return;
+  }
 
-    const recorder = new MediaRecorder(stream);
-    mediaRecorderRef.current = recorder;
-    const chunks: Blob[] = [];
+  // 3️⃣ Switch on event type
+  switch (msg.event) {
+    case "speech_start":
+      console.log("🚀 speech_start");
+      setState("listening");
+      break;
 
-    recorder.ondataavailable = (e) => chunks.push(e.data);
+    case "speech_end":
+      console.log("🛑 speech_end");
+      setState("idle");
+      break;
 
-    recorder.onstop = async () => {
-      isRecordingRef.current = false;              // <--- reset
-      setState("speaking");
-      const audioBlob = new Blob(chunks, { type: "audio/wav" });
-
-      let result;
-      try {
-        result = await sendJarvisAudio(audioBlob);
-      } catch (e) {
-        console.error("Error sending audio:", e);
-        setState("idle");
-        return;
+    case "interrupt":
+      console.log("🔈 interrupt");
+      if (currentPlaybackRef.current) {
+        try {
+          currentPlaybackRef.current.pause();
+        } catch {}
+        currentPlaybackRef.current = null;
       }
+      setState("listening");
+      break;
 
-      try {
-        const mp3 = await fetchJarvisAudioBlob();
-        const buf = await mp3.arrayBuffer();
-        const ctx = getAudioContext();
-        const audioBuffer = await ctx.decodeAudioData(buf);
-        const src = ctx.createBufferSource();
-        src.buffer = audioBuffer;
-        src.connect(ctx.destination);
-        src.start();
-      } catch (e) {
-        console.error("Error decoding/playing TTS buffer:", e);
-      } finally {
-        setState("listening");
-        // clear any pending silence timer before next recording
-        if (silenceTimeoutRef.current) {
-          clearTimeout(silenceTimeoutRef.current);
-          silenceTimeoutRef.current = null;
+    case "transcript":
+      console.log("📝 Transcript:", msg.data);
+      break;
+
+    case "response_text":
+      console.log("🤖 Response:", msg.data);
+      break;
+      case "error":
+  console.error("❌ Jarvis error:", msg.message || msg.data);
+  break;
+
+    case "tts_audio":
+  console.log("🔊 Received TTS audio, length =", msg.data.length);
+  getAudioContext().resume().then(() => {
+    const audioBytes = Uint8Array.from(atob(msg.data), c => c.charCodeAt(0));
+    const blob = new Blob([audioBytes], { type: "audio/mpeg" });
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    currentPlaybackRef.current = audio;
+
+    wsRef.current?.send(JSON.stringify({ event: "tts_start" }));
+
+    audio.onplay = () => setState("speaking");
+    audio.onended = () => {
+      wsRef.current?.send(JSON.stringify({ event: "tts_end" }));
+      setState("idle");
+      currentPlaybackRef.current = null;
+    };
+
+    audio.play().catch(err => console.error("❌ Audio play() error:", err));
+  });
+  break;
+
+
+    default:
+      console.warn("⚠️ Unhandled WS event:", msg.event);
+      break;
+  }
+}
+
+
+  async function startRecording(stream: MediaStream) {
+    if (isRecordingRef.current) return;
+    isRecordingRef.current = true;
+
+    const audioCtx = getAudioContext();
+    const source = audioCtx.createMediaStreamSource(stream);
+
+    const workletCode = `
+      class RecorderProcessor extends AudioWorkletProcessor {
+        process(inputs) {
+          const inCh = inputs[0];
+          if (inCh && inCh[0].length) {
+            const f32 = inCh[0];
+            const i16 = new Int16Array(f32.length);
+            for (let i = 0; i < f32.length; i++) {
+              const s = Math.max(-1, Math.min(1, f32[i]));
+              i16[i] = s * 0x7FFF;
+            }
+            this.port.postMessage(i16.buffer, [i16.buffer]);
+          }
+          return true;
         }
-        // start next capture
-        startRecording(stream);
+      }
+      registerProcessor('recorder-processor', RecorderProcessor);
+    `;
+
+    const blob = new Blob([workletCode], { type: "application/javascript" });
+    const url = URL.createObjectURL(blob);
+    await audioCtx.audioWorklet.addModule(url);
+
+    const recorder = new AudioWorkletNode(audioCtx, "recorder-processor");
+    recorder.connect(audioCtx.destination);
+
+    recorder.port.onmessage = (e) => {
+      const bytes = new Uint8Array(e.data);
+      const b64 = btoa(String.fromCharCode(...bytes));
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ event: "pcm_chunk", data: b64 }));
       }
     };
 
-    recorder.start();
-    startSilenceDetection(stream);
+    source.connect(recorder);
   }
 
-  // On “enable” user gesture
-  useEffect(() => {
-    if (!enabled) return;
+  function stopRecording() {
+    if (!isRecordingRef.current) return;
+    wsRef.current?.send(JSON.stringify({ event: "end_audio" }));
+    isRecordingRef.current = false;
+  }
 
-    getAudioContext(); // unlock audio
+  function startWebSocketAndRecording() {
+    if (wsRef.current) return;
 
-    navigator.mediaDevices
-      .getUserMedia({ audio: true })
-      .then((stream) => {
-        mediaStreamRef.current = stream;
-        setState("listening");
-        startRecording(stream);
-      })
-      .catch((err) => {
-        console.error("Mic permission denied:", err);
-        setEnabled(false);
+    const ws = connectJarvisWebSocket();
+    ws.onmessage = handleWebSocketMessage;
+    ws.onopen = async () => {
+      await getAudioContext().resume();
+
+      navigator.mediaDevices
+        .getUserMedia({ audio: true })
+        .then((stream) => {
+          setState("listening");
+          ws.send(JSON.stringify({ event: "start_audio" }));
+          startRecording(stream);
+        })
+        .catch(() => {
+          setEnabled(false);
+        });
+    };
+    wsRef.current = ws;
+  }
+
+  // Unlock audio and enable Jarvis
+  function enableJarvis() {
+    getAudioContext()
+      .resume()
+      .then(() => {
+        console.log("🔓 Audio context unlocked");
+        setEnabled(true);
       });
+  }
+
+  useEffect(() => {
+    if (enabled) {
+      startWebSocketAndRecording();
+    } else {
+      stopRecording();
+      wsRef.current?.close();
+    }
   }, [enabled]);
 
   return (
-    <JarvisContext.Provider value={{ enabled, state, setEnabled, setState }}>
+    <JarvisContext.Provider value={{ enabled, state, setEnabled: enableJarvis, setState }}>
       {children}
     </JarvisContext.Provider>
   );

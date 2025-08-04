@@ -1,17 +1,18 @@
-from fastapi import Request, UploadFile, HTTPException
+from fastapi import Request, UploadFile, HTTPException, WebSocket, WebSocketDisconnect
 import os
 import tempfile
 from api.models.jarvis_models import PromptRequest, StartVoiceRequest
 import asyncio
 from sse_starlette.sse import EventSourceResponse
+import json
+import base64
+import uuid
+import torch
+import soundfile as sf
+import torchaudio
+from silero_vad import load_silero_vad, read_audio, get_speech_timestamps
 
-from jarvis.jarvis_service import JarvisService
-from jarvis.ollama_agent import OllamaAgent
-
-# Create single instances
-ollama_agent = OllamaAgent("qwen3:8b")
-jarvis_service = JarvisService(llm_agent=ollama_agent)
-
+from pydub import AudioSegment
 # Local modules
 from Core.config import shared_state
 from Core.web.web_search import fetch_financial_snippets
@@ -19,11 +20,170 @@ from Core.API.data_fetcher import get_account_data_for_ai
 from Core.ollama.ollama_llm import generate_analysis
 from Core.jarvis.core import call_jarvis
 from Core.jarvis.memory_manager import MemoryManager
+import math
 
-listeners: set[asyncio.Queue] = set()
-voice_process = None
+# Create single instances
 
 memory = MemoryManager()
+
+TARGET_SAMPLE_RATE = 16000
+SILENCE_DURATION_SEC = 0.8
+TRIGGER_WINDOW_SEC = 1
+MAX_HISTORY_SEC = 5
+
+# Load Silero VAD
+torch.set_num_threads(1)
+VAD_MODEL = load_silero_vad(onnx=False)
+
+# Threshold for ignoring low-volume TTS mic pickup
+# RMS suppression for Jarvis self-voice detection
+INTERRUPT_THRESHOLD = 0.05  # Adjust after testing
+SUPPRESSION_RELEASE_SEC = 0.15  # How long user must speak to disable suppression
+
+
+# === Helpers ===
+def calculate_rms(tensor: torch.Tensor) -> float:
+    return math.sqrt(float(torch.mean(tensor ** 2)))
+
+def decode_pcm_chunk_to_tensor(b64_data: str) -> torch.Tensor:
+    pcm_bytes = base64.b64decode(b64_data)
+
+    # bytearray is writable, so no warning
+    writable_bytes = bytearray(pcm_bytes)
+    raw = torch.frombuffer(writable_bytes, dtype=torch.int16)
+
+    tensor = raw.clone().float() / 32768.0
+    return tensor.unsqueeze(0)
+
+async def process_and_send_results(websocket: WebSocket, phrase_tensor: torch.Tensor):
+    # Save utterance to WAV
+    phrase_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4().hex}_final.wav")
+    torchaudio.save(phrase_path, phrase_tensor, TARGET_SAMPLE_RATE)
+    print(f"💾 Saved utterance to {phrase_path}")
+
+    try:
+        result = await jarvis_service.process_audio(phrase_path)
+    except Exception as e:
+        print(f"❌ process_audio failed: {e}")
+        await websocket.send_text(json.dumps({"event": "error", "message": str(e)}))
+        return
+
+    # Send transcript
+    await websocket.send_text(json.dumps({"event": "transcript", "data": result["transcript"]}))
+    print(f"📝 Sent transcript: {result['transcript']}")
+
+    # Send LLM response
+    await websocket.send_text(json.dumps({"event": "response_text", "data": result["response_text"]}))
+    print(f"🤖 Sent response_text: {result['response_text']}")
+
+    # Send TTS audio
+    try:
+        with open(result["tts_audio_path"], "rb") as f:
+            audio_bytes = f.read()
+        b64_audio = base64.b64encode(audio_bytes).decode("ascii")
+        await websocket.send_text(json.dumps({"event": "tts_audio", "data": b64_audio}))
+        print(f"📤 Sent TTS audio to client ({len(b64_audio)} base64 chars)")
+    except Exception as e:
+        print(f"❌ Failed to send TTS audio: {e}")
+
+# === Main WS handler ===
+async def handle_voice_ws(websocket: WebSocket):
+    await websocket.accept()
+    conn_id = str(uuid.uuid4())[:8]
+    print(f"🎤 WS client connected: {conn_id}")
+
+    phrase_waveform = torch.empty((1, 0))
+    trigger_waveform = torch.empty((1, 0))
+
+    speaking = False
+    silence_time = 0.0
+    tts_playing = False
+    suppression_active = False
+    suppression_release_time = 0.0
+
+    try:
+        while True:
+            msg_raw = await websocket.receive_text()
+            try:
+                msg = json.loads(msg_raw)
+            except:
+                print("⚠️ Invalid JSON from WS client")
+                continue
+
+            if msg.get("event") == "pcm_chunk":
+                chunk = decode_pcm_chunk_to_tensor(msg["data"])
+                volume = calculate_rms(chunk)
+
+                # Self-voice suppression
+                if tts_playing:
+                    if volume < INTERRUPT_THRESHOLD:
+                        print(f"🔇 Ignoring low-volume mic input during TTS (RMS={volume:.4f})")
+                        continue
+                    else:
+                        # User is loud enough → start release timer
+                        if not suppression_active:
+                            suppression_active = True
+                            suppression_release_time = asyncio.get_event_loop().time()
+                        elif asyncio.get_event_loop().time() - suppression_release_time >= SUPPRESSION_RELEASE_SEC:
+                            print("🎤 Suppression released — user interrupting TTS")
+                            tts_playing = False
+                            suppression_active = False
+                            await websocket.send_text(json.dumps({"event": "interrupt"}))
+
+                n = chunk.shape[1]
+
+                # Append to buffers
+                phrase_waveform = torch.cat((phrase_waveform, chunk), dim=1)
+                trigger_waveform = torch.cat((trigger_waveform, chunk), dim=1)
+
+                # Limit buffer sizes
+                if phrase_waveform.shape[1] > int(TARGET_SAMPLE_RATE * MAX_HISTORY_SEC):
+                    phrase_waveform = phrase_waveform[:, -int(TARGET_SAMPLE_RATE * MAX_HISTORY_SEC):]
+                if trigger_waveform.shape[1] > int(TARGET_SAMPLE_RATE * TRIGGER_WINDOW_SEC):
+                    trigger_waveform = trigger_waveform[:, -int(TARGET_SAMPLE_RATE * TRIGGER_WINDOW_SEC):]
+
+                # Run VAD
+                try:
+                    segments = get_speech_timestamps(trigger_waveform.squeeze(), VAD_MODEL, sampling_rate=TARGET_SAMPLE_RATE)
+                except Exception as e:
+                    print(f"❌ VAD error: {e}")
+                    continue
+
+                if segments:
+                    if not speaking:
+                        print("   🔔 Speech started")
+                        speaking = True
+                        silence_time = 0.0
+                        await websocket.send_text(json.dumps({"event": "speech_start"}))
+                else:
+                    if speaking:
+                        silence_time += n / TARGET_SAMPLE_RATE
+                        if silence_time >= SILENCE_DURATION_SEC:
+                            print("   🔚 Speech ended — sending phrase for processing")
+                            speaking = False
+                            await websocket.send_text(json.dumps({"event": "speech_end"}))
+
+                            # Double-buffer: clone current phrase & clear immediately
+                            phrase_to_process = phrase_waveform.clone()
+                            phrase_waveform = torch.empty((1, 0))
+                            trigger_waveform = torch.empty((1, 0))
+
+                            asyncio.create_task(process_and_send_results(websocket, phrase_to_process))
+
+            elif msg.get("event") == "tts_start":
+                tts_playing = True
+                suppression_active = False
+                suppression_release_time = 0.0
+
+            elif msg.get("event") == "tts_end":
+                tts_playing = False
+                suppression_active = False
+
+            elif msg.get("event") == "ping":
+                await websocket.send_text(json.dumps({"event": "pong"}))
+
+    except WebSocketDisconnect:
+        print(f"❌ Client disconnected: {conn_id}")
 
 async def ask_jarvis(request):
     try:
@@ -112,60 +272,3 @@ def detect_prompt_type(prompt: str) -> dict:
     }
 
 
-def store_schwab_tokens(req):
-    # Store to shared_state Python module
-    shared_state.access_token = req.access_token
-    shared_state.refresh_token = req.refresh_token
-    shared_state.expires_at = req.expires_at
-
-    # Optional: update model + format if desired
-    shared_state.model = getattr(shared_state, "model", "qwen3")
-    shared_state.format_type = getattr(shared_state, "format_type", "markdown")
-
-    print("✅ Schwab tokens set in shared_state:")
-    print("access_token:", shared_state.access_token)
-    print("refresh_token:", shared_state.refresh_token)
-    print("expires_at:", shared_state.expires_at)
-
-    return {"message": "Schwab tokens stored in shared_state."}
-
-async def get_portfolio_data():
-    try:
-        account_data = get_account_data_for_ai()
-        return {"portfolio": account_data}
-    except Exception as e:
-        print("🔴 Failed to fetch portfolio data:", str(e))
-        return {"error": "Failed to fetch portfolio data"}
-    
-
-
-
-async def process_jarvis_audio(file: UploadFile):
-    # 1) Save uploaded file to a temp path
-    suffix = os.path.splitext(file.filename)[1] or ".wav"
-    temp_path = os.path.join(tempfile.gettempdir(), f"upload{suffix}")
-    with open(temp_path, "wb") as f:
-        f.write(await file.read())
-
-    try:
-        # 2) Await the async service call so `result` is a dict, not a coroutine
-        result = await jarvis_service.process_audio(temp_path)
-    except Exception as e:
-        # return a 500 with the error message
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        # 3) Clean up the uploaded file
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
-
-    # 4) Return the actual result fields
-    return {
-        "transcript":     result["transcript"],
-        "response_text":  result["response_text"],
-        "audio_file_url": "/api/jarvis/audio/play"  # or wherever you serve it from
-    }
-
-
-def get_jarvis_audio_file():
-    audio_path = os.path.join(tempfile.gettempdir(), "jarvis_reply.mp3")
-    return audio_path

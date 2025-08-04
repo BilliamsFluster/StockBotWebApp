@@ -1,23 +1,29 @@
-# stockbot/api/services/jarvis_service.py
+"""
+Core JarvisService – orchestrates STT → LLM → TTS
+"""
 
 import os
 import tempfile
+import uuid
 from .stt import SpeechToText
 from .tts import TextToSpeech
 from .agent import BaseAgent
+from silero_vad import load_silero_vad
+
 
 class JarvisService:
     def __init__(self, llm_agent: BaseAgent):
-        self.stt   = SpeechToText(model_size="small", device="cpu")
-        self.tts   = TextToSpeech()
+        self.stt = SpeechToText()
+        self.tts = TextToSpeech()
         self.agent = llm_agent
+        self.vad_model = load_silero_vad(onnx=False)
 
     async def process_audio(self, audio_path: str) -> dict:
-        # 1) STT (sync)
+        # 1) STT
         transcript = self.stt.transcribe(audio_path)
         print(f"📝 Transcript: {transcript}")
 
-        # 2) LLM (sync)
+        # 2) LLM
         try:
             response_text = self.agent.generate(transcript, output_format="text")
             print(f"🤖 LLM Response: {response_text}")
@@ -25,8 +31,10 @@ class JarvisService:
             print("❌ Error in LLM step:", repr(e))
             raise
 
-        # 3) TTS (async)
-        out_path = os.path.join(tempfile.gettempdir(), "jarvis_reply.mp3")
+        # 3) TTS
+        out_path = os.path.join(
+            tempfile.gettempdir(), f"jarvis_reply_{uuid.uuid4().hex}.mp3"
+        )
         try:
             await self.tts.synthesize(response_text, out_path)
             print(f"🔊 TTS saved to: {out_path}")
@@ -35,7 +43,7 @@ class JarvisService:
             raise
 
         return {
-            "transcript":      transcript,
-            "response_text":   response_text,
-            "tts_audio_path":  out_path,
+            "transcript": transcript,
+            "response_text": response_text,
+            "tts_audio_path": out_path,
         }
