@@ -130,7 +130,27 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                 chunk = decode_pcm_chunk_to_tensor(msg["data"])
                 volume = calculate_rms(chunk)
 
-                # Ignore low-RMS noise
+                # Track silence for RMS-based detection
+                if volume < MIN_RMS_FOR_SPEECH:
+                    silence_time += chunk.shape[1] / TARGET_SAMPLE_RATE
+                else:
+                    silence_time = 0.0  # reset when loud enough
+
+                # RMS-based forced speech end
+                if speaking and silence_time >= SILENCE_DURATION_SEC:
+                    avg_rms = sum(phrase_rms_values) / max(1, len(phrase_rms_values))
+                    print(f"[{conn_id}] 🔴 Speech end (RMS silence) — duration={time.time() - speech_start_time:.2f}s, avg RMS={avg_rms:.4f}, peak={phrase_peak:.4f}")
+                    speaking = False
+                    await websocket.send_text(json.dumps({"event": "speech_end"}))
+
+                    if (phrase_waveform.shape[1] / TARGET_SAMPLE_RATE) >= MIN_PHRASE_SEC:
+                        phrase_to_process = phrase_waveform.clone()
+                        phrase_waveform = torch.empty((1, 0))
+                        trigger_waveform = torch.empty((1, 0))
+                        asyncio.create_task(process_and_send_results(websocket, phrase_to_process, jarvis_service))
+                    continue  # skip rest for this chunk
+
+                # Ignore very quiet chunks completely
                 if volume < MIN_RMS_FOR_SPEECH:
                     continue
 
@@ -160,7 +180,7 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                 if trigger_waveform.shape[1] > int(TARGET_SAMPLE_RATE * TRIGGER_WINDOW_SEC):
                     trigger_waveform = trigger_waveform[:, -int(TARGET_SAMPLE_RATE * TRIGGER_WINDOW_SEC):]
 
-                # Run VAD periodically
+                # Run VAD periodically (for speech start detection only)
                 now = time.time()
                 if now - last_vad_check > 0.05:
                     last_vad_check = now
@@ -170,48 +190,32 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                         print(f"[{conn_id}] ❌ VAD error: {e}")
                         continue
 
-                    if segments:  # speech detected
-                        if not speaking:
-                            speaking = True
-                            silence_time = 0.0
-                            phrase_rms_values.clear()
-                            phrase_peak = 0.0
-                            speech_start_time = now
-                            last_log_time = now
-                            print(f"[{conn_id}] 🟢 Speech start — segments={len(segments)}, buffer={trigger_waveform.shape[1]} samples")
-                            await websocket.send_text(json.dumps({"event": "speech_start"}))
+                    if segments and not speaking:
+                        speaking = True
+                        silence_time = 0.0
+                        phrase_rms_values.clear()
+                        phrase_peak = 0.0
+                        speech_start_time = now
+                        last_log_time = now
+                        print(f"[{conn_id}] 🟢 Speech start — segments={len(segments)}, buffer={trigger_waveform.shape[1]} samples")
+                        await websocket.send_text(json.dumps({"event": "speech_start"}))
 
-                        # Log every ~1s
-                        if now - last_log_time >= 1.0:
-                            avg_rms_so_far = sum(phrase_rms_values) / max(1, len(phrase_rms_values))
-                            print(f"[{conn_id}] 🎙️ Avg RMS so far: {avg_rms_so_far:.4f}, Peak so far: {phrase_peak:.4f}")
-                            last_log_time = now
+                    # Log every ~1s while speaking
+                    if speaking and (now - last_log_time) >= 1.0:
+                        avg_rms_so_far = sum(phrase_rms_values) / max(1, len(phrase_rms_values))
+                        print(f"[{conn_id}] 🎙️ Avg RMS so far: {avg_rms_so_far:.4f}, Peak so far: {phrase_peak:.4f}")
+                        last_log_time = now
 
-                        # Force end if too long
-                        if (now - speech_start_time) > MAX_SPEECH_DURATION_SEC:
-                            print(f"[{conn_id}] ⏹ Forced speech end — too long")
-                            speaking = False
-                            await websocket.send_text(json.dumps({"event": "speech_end"}))
-                            if (phrase_waveform.shape[1] / TARGET_SAMPLE_RATE) >= MIN_PHRASE_SEC:
-                                phrase_to_process = phrase_waveform.clone()
-                                phrase_waveform = torch.empty((1, 0))
-                                trigger_waveform = torch.empty((1, 0))
-                                asyncio.create_task(process_and_send_results(websocket, phrase_to_process, jarvis_service))
-
-                    else:  # no speech detected
-                        if speaking:
-                            silence_time += chunk.shape[1] / TARGET_SAMPLE_RATE
-                            if silence_time >= SILENCE_DURATION_SEC:
-                                speaking = False
-                                avg_rms = sum(phrase_rms_values) / max(1, len(phrase_rms_values))
-                                print(f"[{conn_id}] 🔴 Speech end — duration={now - speech_start_time:.2f}s, avg RMS={avg_rms:.4f}, peak={phrase_peak:.4f}")
-                                await websocket.send_text(json.dumps({"event": "speech_end"}))
-
-                                if (phrase_waveform.shape[1] / TARGET_SAMPLE_RATE) >= MIN_PHRASE_SEC:
-                                    phrase_to_process = phrase_waveform.clone()
-                                    phrase_waveform = torch.empty((1, 0))
-                                    trigger_waveform = torch.empty((1, 0))
-                                    asyncio.create_task(process_and_send_results(websocket, phrase_to_process, jarvis_service))
+                    # Force end if too long
+                    if speaking and (now - speech_start_time) > MAX_SPEECH_DURATION_SEC:
+                        print(f"[{conn_id}] ⏹ Forced speech end — too long")
+                        speaking = False
+                        await websocket.send_text(json.dumps({"event": "speech_end"}))
+                        if (phrase_waveform.shape[1] / TARGET_SAMPLE_RATE) >= MIN_PHRASE_SEC:
+                            phrase_to_process = phrase_waveform.clone()
+                            phrase_waveform = torch.empty((1, 0))
+                            trigger_waveform = torch.empty((1, 0))
+                            asyncio.create_task(process_and_send_results(websocket, phrase_to_process, jarvis_service))
 
             elif msg.get("event") == "tts_start":
                 tts_playing = True
