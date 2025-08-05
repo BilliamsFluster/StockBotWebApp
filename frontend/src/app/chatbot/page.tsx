@@ -5,8 +5,13 @@ import { gsap } from 'gsap';
 import { FaUserCircle } from 'react-icons/fa';
 import ProfilePanel from '@/components/ProfilePanel';
 import JarvisPanel from '@/components/Jarvis/JarvisPanel';
+import { useWarmPortfolioData } from '@/hooks/useWarmPortfolioData';
+
 
 export default function Chatbot() {
+  useWarmPortfolioData()
+  
+  
   const containerRef     = useRef<HTMLDivElement>(null);
   const blob1Ref         = useRef<HTMLDivElement>(null);
   const blob2Ref         = useRef<HTMLDivElement>(null);
