@@ -327,27 +327,4 @@ setup_venv.bat  # Windows
 - API rate limiting and CORS configuration
 - Broker credentials encrypted at rest
 
-## 🤝 Contributing
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## 📄 License
-
-This project is provided as-is without warranty. See individual directories for specific licensing details.
-
-## 🆘 Support
-
-For issues and questions:
-1. Check the troubleshooting section above
-2. Review logs for error messages
-3. Ensure all prerequisites are installed
-4. Verify Infisical configuration
-5. Open an issue on GitHub with detailed error information
-
----
-
-**⚠️ Important**: This software is for educational and development purposes. Always test thoroughly with paper trading before using real money. Trading involves risk of financial loss.
