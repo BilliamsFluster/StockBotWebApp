@@ -45,6 +45,8 @@ The project consists of three interconnected services:
 
 ## 🚀 Quick Start
 
+> **Note:** Use `.bat` scripts on Windows and `.command` scripts on macOS.
+
 ### 1. Clone and Initial Setup
 ```bash
 git clone https://github.com/BilliamsFluster/StockBotWebApp.git
@@ -64,10 +66,13 @@ curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.deb.sh
 sudo apt-get update && sudo apt-get install infisical
 ```
 
-### 3. Automated Setup (Windows)
+### 3. Automated Setup
 ```bash
-# Starts all three services automatically
+# Windows
 start-dev-all.bat
+
+# macOS
+./start-dev-all.command
 ```
 
 ### 4. Manual Setup (All Platforms)
@@ -93,10 +98,14 @@ npm run dev     # Starts on https://localhost:3000
 cd stockbot
 
 # Windows
-setup_venv.bat  # One-time setup
-run_dev.bat     # Start the service
+setup_venv.bat      # One-time setup
+run_dev.bat         # Start the service
 
-# macOS/Linux
+# macOS
+./setup_venv.command  # One-time setup
+./run_dev.command     # Start the service
+
+# Linux
 python -m venv venv
 source venv/bin/activate  # or `venv/bin/activate.fish` for fish shell
 pip install --upgrade pip
@@ -236,8 +245,9 @@ cd backend && npm run dev
 cd frontend && npm run dev
 
 # StockBot only
-cd stockbot && run_dev.bat  # Windows
-cd stockbot && source venv/bin/activate && uvicorn server:app --reload --host 0.0.0.0 --port 5002  # macOS/Linux
+cd stockbot && run_dev.bat         # Windows
+cd stockbot && ./run_dev.command   # macOS
+cd stockbot && source venv/bin/activate && uvicorn server:app --reload --host 0.0.0.0 --port 5002  # Linux
 ```
 
 ### Database Setup
@@ -279,8 +289,8 @@ cd stockbot && python -m pytest
 
 **Port Conflicts**
 - Backend: Change `BACKEND_PORT` in Infisical
-- Frontend: Change `FRONTEND_PORT` in Infisical  
-- StockBot: Modify port in `run_dev.bat` or startup command
+- Frontend: Change `FRONTEND_PORT` in Infisical
+- StockBot: Modify port in `run_dev.bat`/`run_dev.command` or startup command
 
 **SSL Certificate Issues**
 ```bash
@@ -297,8 +307,9 @@ mv localhost+2-key.pem cert.key
 # Clear and reinstall
 cd stockbot
 rm -rf venv
-setup_venv.bat  # Windows
-# or manual setup for macOS/Linux
+setup_venv.bat        # Windows
+./setup_venv.command  # macOS
+# or manual setup for Linux
 ```
 
 **Database Connection**
