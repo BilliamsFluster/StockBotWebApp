@@ -4,12 +4,20 @@ from api.controllers import jarvis_controller
 from jarvis.ws_handler import handle_voice_ws
 from jarvis.jarvis_service import JarvisService
 from jarvis.ollama_agent import OllamaAgent
+from jarvis.huggingFace_agent import HuggingFaceAgent
 
 from api.models.jarvis_models import PromptRequest, StartVoiceRequest, SchwabAuthRequest
 
 router = APIRouter()
 ollama_agent = OllamaAgent("qwen3:8b")
-jarvis_service = JarvisService(llm_agent=ollama_agent)
+hugging_face_agent = HuggingFaceAgent(
+    model="ceadar-ie/FinanceConnect-13B",
+    use_local=True,
+    local_cache_root=r"D:\huggingface\transformers",  # root that contains models--...
+    gen_timeout=15,                                   # watchdog seconds
+    default_max_new_tokens=96,                        # quick voice replies
+)
+jarvis_service = JarvisService(llm_agent=hugging_face_agent)
 
 @router.post("/chat/ask")
 async def ask_jarvis(req: PromptRequest):
