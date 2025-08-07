@@ -70,3 +70,15 @@ __pycache__/
 *.env
 frontend/.infisical.json
 backend/.infisical.json
+
+frontend/certs/ca.crt
+frontend/certs/ca.key
+frontend/certs/cert.crt
+frontend/certs/cert.key
+
+backend/certs/ca.crt
+backend/certs/ca.key
+backend/certs/cert.crt
+backend/certs/cert.key
+stockbot/models
+

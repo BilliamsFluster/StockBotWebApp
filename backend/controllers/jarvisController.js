@@ -2,6 +2,10 @@ import axios from "axios";
 
 import { refreshSchwabAccessTokenInternal } from "../config/schwab.js";
 import { log } from "../utils/logger.js";
+import FormData from 'form-data';
+import WebSocket from "ws";
+
+
 
 const STOCKBOT_URL = process.env.STOCKBOT_URL;
 
@@ -62,6 +66,108 @@ export const startVoiceAssistant = async (req, res) => {
   } catch (error) {
     console.error("🔴 Failed to initialize voice assistant:", error.message);
     res.status(500).json({ error: "Voice assistant init failed." });
+  }
+};
+// Handle audio upload from frontend → send to Stockbot backend
+export const processJarvisAudio = async (req, res) => {
+  try {
+    console.log("📥 Received voice/audio request");
+    console.log(
+      "➡️ req.file:",
+      req.file
+        ? `${req.file.originalname} (${req.file.mimetype}, ${req.file.size} bytes)`
+        : "undefined"
+    );
+    console.log("➡️ req.body:", req.body);
+
+    const { language = 'en', voice = 'en-US-AriaNeural' } = req.body;
+
+    if (!req.file) {
+      console.error("❌ No file was received");
+      return res.status(400).json({ error: "Missing audio file." });
+    }
+
+    const accessToken = await refreshSchwabAccessTokenInternal(req.user._id);
+    if (!accessToken) {
+      return res.status(401).json({ error: "Failed to refresh Schwab token." });
+    }
+
+    // Build multipart form for Stockbot
+    const formData = new FormData();
+
+    // If using memoryStorage:
+    formData.append(
+      'file',
+      req.file.buffer,
+      { filename: req.file.originalname || 'speech.wav', contentType: req.file.mimetype }
+    );
+
+    /*
+    // If using diskStorage instead, use this:
+    formData.append(
+      'file',
+      fs.createReadStream(req.file.path),
+      { filename: req.file.originalname, contentType: req.file.mimetype }
+    );
+    */
+
+    formData.append('language', language);
+    formData.append('voice', voice);
+
+    console.log(
+      "📤 Forwarding audio to Stockbot:",
+      `${STOCKBOT_URL}/api/jarvis/audio`
+    );
+
+    const response = await axios.post(
+      `${STOCKBOT_URL}/api/jarvis/audio`,
+      formData,
+      {
+        headers: {
+          ...formData.getHeaders(),
+          Authorization: `Bearer ${accessToken}`,
+        },
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+      }
+    );
+
+    console.log("✅ Stockbot responded:", response.status);
+    res.json(response.data);
+  } catch (error) {
+    console.error("🔴 Failed to process Jarvis audio:", error.message);
+    if (error.response) {
+      console.error(
+        "🔴 Stockbot error response:",
+        error.response.status,
+        error.response.data
+      );
+    }
+    res.status(500).json({ error: "Jarvis audio processing failed." });
+  }
+};
+
+// Stream Jarvis audio back to frontend
+export const playJarvisAudio = async (req, res) => {
+  try {
+    const accessToken = await refreshSchwabAccessTokenInternal(req.user._id);
+    if (!accessToken) {
+      return res.status(401).json({ error: "Failed to refresh Schwab token." });
+    }
+
+    const response = await axios.get(
+      `${STOCKBOT_URL}/api/jarvis/audio/play`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        responseType: 'arraybuffer',
+      }
+    );
+
+    res.set('Content-Type', 'audio/mpeg');
+    res.send(response.data);
+  } catch (error) {
+    console.error("🔴 Failed to stream Jarvis audio:", error.message);
+    res.status(500).json({ error: "Audio playback failed." });
   }
 };
 
@@ -158,3 +264,42 @@ export const fetchModels = async (req, res) => {
   }
 };
 
+
+//----------------------------------------------------------------------------------------------
+export function proxyJarvisVoiceWs(clientWs, req) {
+  const baseUrl = process.env.STOCKBOT_URL;
+  const stockbotWsUrl = `${baseUrl}/api/jarvis/voice/ws`; // full path
+
+  console.log(`🔌 Proxying Jarvis WS → ${stockbotWsUrl}`);
+
+  const botWs = new WebSocket(stockbotWsUrl);
+
+  // Frontend → Stockbot
+  clientWs.on("message", (msg) => {
+    if (botWs.readyState === WebSocket.OPEN) {
+      botWs.send(msg);
+    }
+  });
+
+  // Stockbot → Frontend
+  botWs.on("message", (msg) => {
+    if (clientWs.readyState === WebSocket.OPEN) {
+      clientWs.send(msg);
+    }
+  });
+
+  botWs.on("open", () => console.log("✅ Connected to Stockbot WS"));
+  botWs.on("close", () => {
+    console.log("❌ Stockbot WS closed");
+    clientWs.close();
+  });
+  botWs.on("error", (err) => {
+    console.error("Stockbot WS error:", err);
+    clientWs.close();
+  });
+
+  clientWs.on("close", () => {
+    console.log("❌ Client WS closed");
+    botWs.close();
+  });
+}

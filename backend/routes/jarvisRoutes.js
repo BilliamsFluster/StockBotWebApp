@@ -1,3 +1,4 @@
+// routes/jarvisRoutes.js
 import express from "express";
 import { protectRoute } from "../middleware/protectRoute.js";
 import {
@@ -9,23 +10,34 @@ import {
   voiceStream,
   relayVoiceData,
   getPortfolioData,
-  fetchModels
+  fetchModels,
+  proxyJarvisVoiceWs,
 } from "../controllers/jarvisController.js";
 
-const router = express.Router();
+export default function createJarvisRoutes(app) {
+  const router = express.Router();
 
-// Text prompt → LLM → response
-router.post("/ask", protectRoute, handleJarvisPrompt);
+  // =====================
+  // TEXT + CONTROL ROUTES
+  // =====================
+  router.post("/ask", protectRoute, handleJarvisPrompt);
 
-// Voice assistant controls
-router.post("/voice/start", protectRoute, startVoiceAssistant);
-router.post("/voice/stop", protectRoute, stopVoiceAssistant);
-router.post("/voice/interrupt", protectRoute, interruptVoiceAssistant);
-router.get("/voice/status", protectRoute, getVoiceStatus); 
-router.get("/voice/stream", voiceStream);
-router.post("/voice/event", relayVoiceData);
-router.get("/portfolio", protectRoute, getPortfolioData);
-router.get("/models",  protectRoute, fetchModels)
+  router.post("/voice/start", protectRoute, startVoiceAssistant);
+  router.post("/voice/stop", protectRoute, stopVoiceAssistant);
+  router.post("/voice/interrupt", protectRoute, interruptVoiceAssistant);
+  router.get("/voice/status", protectRoute, getVoiceStatus);
 
+  router.get("/voice/stream", voiceStream);
+  router.post("/voice/event", relayVoiceData);
 
-export default router;
+  router.get("/portfolio", protectRoute, getPortfolioData);
+  router.get("/models", protectRoute, fetchModels);
+
+  // =====================
+  // REAL-TIME VOICE WS
+  // =====================
+  // ✅ Register WS route on the main app, not the router
+  app.ws("/api/jarvis/voice/ws", proxyJarvisVoiceWs);
+
+  return router;
+}

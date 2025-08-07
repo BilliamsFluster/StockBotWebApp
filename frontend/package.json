@@ -2,12 +2,13 @@
   "name": "frontend",
   "version": "0.1.0",
   "private": true,
+  
   "scripts": {
-    "dev": "infisical run -- next dev",
-    "build": "cross-env NODE_ENV=production next build",
-    "start": "next start",
-    "lint": "next lint"
-  },
+  "dev": "infisical run -- node dev-https.js",
+  "build": "cross-env NODE_ENV=production next build",
+  "start": "next start",
+  "lint": "next lint"
+},
   "dependencies": {
     "@lobehub/tts": "^2.0.1",
     "@tanstack/react-query": "^5.0.0",
