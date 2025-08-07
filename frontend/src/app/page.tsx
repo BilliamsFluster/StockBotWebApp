@@ -1,151 +1,106 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { gsap } from 'gsap';
 import { Typewriter } from 'react-simple-typewriter';
-import LoginForm from '@/components/Auth/LoginForm';
-import SignupForm from '@/components/Auth/SignupForm';
+import { FaRobot, FaChartLine, FaShieldAlt } from 'react-icons/fa';
 
-export default function Auth() {
-  const [isSignup, setIsSignup] = useState(false);
-
-  const blob1Ref = useRef<HTMLDivElement>(null);
-  const blob2Ref = useRef<HTMLDivElement>(null);
+export default function Page() {
   const titleRef = useRef<HTMLHeadingElement>(null);
-  const descRef = useRef<HTMLParagraphElement>(null);
-  const formRef = useRef<HTMLDivElement>(null);
+  const subtitleRef = useRef<HTMLParagraphElement>(null);
 
   useEffect(() => {
-    // Clear prior animations
-    [titleRef.current, descRef.current, formRef.current, blob1Ref.current, blob2Ref.current].forEach(el => {
-      if (el) gsap.set(el, { clearProps: 'all' });
-    });
-
-    // Fade-in animation
     const tl = gsap.timeline({ defaults: { ease: 'power2.out' } });
-    tl.from(titleRef.current, { autoAlpha: 0, y: 30, duration: 0.8 });
-    tl.from(descRef.current,  { autoAlpha: 0, y: 20, duration: 0.8 }, '-=0.5');
-    tl.from(formRef.current,  { autoAlpha: 0, y: 30, duration: 0.8 }, '-=0.5');
-
-    // Blob movement
-    const blob1Tween = gsap.to(blob1Ref.current, {
-      x: 50, y: -50, duration: 12, repeat: -1, yoyo: true, ease: 'sine.inOut',
-    });
-    const blob2Tween = gsap.to(blob2Ref.current, {
-      x: -50, y: 50, duration: 14, repeat: -1, yoyo: true, ease: 'sine.inOut',
-    });
-
-    // Animate the background gradient
-    const span = descRef.current?.querySelector("span");
-    let gradientTween: gsap.core.Tween | null = null;
-    if (span) {
-      gsap.set(span, {
-        backgroundSize: '200% 200%',
-        backgroundPosition: '0% 50%',
-      });
-      gradientTween = gsap.to(span, {
-        backgroundPosition: '100% 50%',
-        duration: 6,
-        ease: 'sine.inOut',
-        repeat: -1,
-        yoyo: true,
-      });
-    }
-
-    return () => {
-      tl.kill();
-      blob1Tween.kill();
-      blob2Tween.kill();
-      gradientTween?.kill();
-    };
-  }, [isSignup]);
+    tl.fromTo(titleRef.current, { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 1 });
+    tl.fromTo(subtitleRef.current, { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 1 }, '-=0.6');
+  }, []);
 
   return (
-    <div
-      className="relative h-screen overflow-hidden"
-      style={{
-        background: 'radial-gradient(circle at top left, #1f1f2e 0%, #0d0d12 100%)',
-      }}
-    >
-      {/* Background Blobs */}
-      <div
-        ref={blob1Ref}
-        className="absolute -top-24 -left-24 w-80 h-80 bg-purple-600/20 rounded-full blur-2xl pointer-events-none"
-      />
-      <div
-        ref={blob2Ref}
-        className="absolute -bottom-24 -right-24 w-96 h-96 bg-pink-600/20 rounded-full blur-3xl pointer-events-none"
-      />
+    <div className="bg-base-200 text-white">
+      {/* Hero Section */}
+      <section className="min-h-[90vh] flex flex-col items-center justify-center text-center px-6">
+        <h1
+          ref={titleRef}
+          className="text-5xl md:text-6xl font-bold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent"
+        >
+          Jarvis StockBot
+        </h1>
+        <p
+          ref={subtitleRef}
+          className="mt-6 text-xl md:text-2xl text-gray-300 max-w-xl"
+        >
+          <Typewriter
+            words={[
+              'Smarter trading decisions.',
+              'AI-powered financial insight.',
+              'Zero guesswork. Full control.',
+            ]}
+            loop
+            cursor
+            cursorStyle="_"
+            typeSpeed={40}
+            deleteSpeed={30}
+            delaySpeed={1500}
+          />
+        </p>
+        <a
+          href="/auth"
+          className="btn btn-primary mt-10 px-6 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white border-none hover:scale-105 transition-transform"
+        >
+          Get Started
+        </a>
+      </section>
 
-      {/* Layout */}
-      <div className="grid grid-cols-1 md:grid-cols-2 h-full">
-        {/* Left: Branding */}
-        <div className="flex items-center justify-center px-8">
-          <div className="text-center md:text-left">
-            <h1
-              ref={titleRef}
-              className="text-4xl md:text-5xl lg:text-6xl font-extrabold
-                         bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400
-                         bg-clip-text text-transparent"
-            >
-              Jarvis StockBot
-            </h1>
-
-            <p
-              ref={descRef}
-              className="mt-4 text-lg md:text-xl font-medium tracking-wide min-h-[2.5rem]"
-            >
-              <span
-                suppressHydrationWarning
-                className="bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400
-                           bg-clip-text text-transparent drop-shadow-lg"
-              >
-                <Typewriter
-                  words={[
-                    'Analyzing market trends…',
-                    'Learning user patterns…',
-                    'Ready to assist.',
-                  ]}
-                  loop
-                  cursor
-                  cursorStyle="|"
-                  typeSpeed={60}
-                  deleteSpeed={30}
-                  delaySpeed={2000}
-                />
-              </span>
-            </p>
+      {/* Features */}
+      <section className="py-20 px-6 max-w-6xl mx-auto">
+        <h2 className="text-3xl font-bold text-center mb-12">What You Get</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-8">
+          <div className="card bg-base-100 border border-base-300 shadow-xl hover:shadow-2xl transition-shadow">
+            <div className="card-body items-center text-center">
+              <FaChartLine className="text-4xl text-indigo-400 mb-4" />
+              <h3 className="card-title">Live Market Analytics</h3>
+              <p className="text-gray-400">Access live data and spot trends as they happen.</p>
+            </div>
           </div>
-        </div>
 
-        {/* Right: Form */}
-        <div className="flex items-center justify-center px-8">
-          <div
-            ref={formRef}
-            className="w-full max-w-md bg-gray-800 bg-opacity-70 backdrop-blur-md 
-                       rounded-xl shadow-xl p-8"
-          >
-            <h2 className="text-2xl font-semibold text-white text-center mb-6">
-              {isSignup ? 'Create Account' : 'Welcome Back'}
-            </h2>
+          <div className="card bg-base-100 border border-base-300 shadow-xl hover:shadow-2xl transition-shadow">
+            <div className="card-body items-center text-center">
+              <FaRobot className="text-4xl text-purple-400 mb-4" />
+              <h3 className="card-title">AI Trading Support</h3>
+              <p className="text-gray-400">Make informed trades with real-time LLM guidance.</p>
+            </div>
+          </div>
 
-            {isSignup
-              ? <SignupForm switchToLogin={() => setIsSignup(false)} />
-              : <LoginForm />
-            }
-
-            <div className="mt-4 text-center text-gray-400">
-              {isSignup ? 'Already have an account? ' : 'New here? '}
-              <button
-                onClick={() => setIsSignup(!isSignup)}
-                className="text-indigo-300 hover:text-indigo-100"
-              >
-                {isSignup ? 'Login' : 'Sign up'}
-              </button>
+          <div className="card bg-base-100 border border-base-300 shadow-xl hover:shadow-2xl transition-shadow">
+            <div className="card-body items-center text-center">
+              <FaShieldAlt className="text-4xl text-pink-400 mb-4" />
+              <h3 className="card-title">Data Security</h3>
+              <p className="text-gray-400">Your financial data is encrypted and stored securely.</p>
             </div>
           </div>
         </div>
-      </div>
+      </section>
+
+      {/* Optional CTA Section */}
+      <section className="py-16 bg-base-300 text-center">
+        <h2 className="text-2xl font-semibold mb-4">Start Automating Your Trades Today</h2>
+        <a
+          href="/auth"
+          className="btn btn-accent px-8 text-white hover:scale-105 transition-transform"
+        >
+          Launch Now
+        </a>
+      </section>
+
+      {/* Footer */}
+      <footer className="py-6 text-center text-sm text-gray-500">
+        &copy; {new Date().getFullYear()} Jarvis StockBot. All rights reserved.
+        <div className="mt-2 space-x-4">
+          <a href="/privacy" className="hover:text-white">Privacy</a>
+          <a href="/terms" className="hover:text-white">Terms</a>
+          <a href="/contact" className="hover:text-white">Contact</a>
+        </div>
+      </footer>
     </div>
   );
 }

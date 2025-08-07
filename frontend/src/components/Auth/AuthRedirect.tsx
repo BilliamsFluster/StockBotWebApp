@@ -12,7 +12,7 @@ export default function AuthRedirect() {
   useEffect(() => {
     if (!authChecked) return; 
 
-    if (!user && pathname !== '/') {
+    if (!user && pathname !== '/auth') {
       router.replace('/');
     }
 
