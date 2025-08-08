@@ -14,12 +14,17 @@ const TARGET_SAMPLE_RATE = 16000;
 
 type JarvisState = "idle" | "listening" | "speaking";
 
+interface ChatMsg {
+  role: "user" | "assistant" | "system";
+  text: string;
+}
+
 interface JarvisContextProps {
   enabled: boolean;
   state: JarvisState;
-  setEnabled: (v: boolean) => void;
+  setEnabled: (v: boolean) => void; // toggle
   setState: (s: JarvisState) => void;
-  messages: { role: "user" | "assistant" | "system"; text: string }[];
+  messages: ChatMsg[];
   streamBuf: string;
 }
 
@@ -28,10 +33,7 @@ const JarvisContext = createContext<JarvisContextProps | undefined>(undefined);
 export function JarvisProvider({ children }: { children: ReactNode }) {
   const [enabled, setEnabled] = useState(false);
   const [state, setState] = useState<JarvisState>("idle");
-
-  const [messages, setMessages] = useState<
-    { role: "user" | "assistant" | "system"; text: string }[]
-  >([]);
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [streamBuf, setStreamBuf] = useState("");
 
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -40,11 +42,16 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
   const micStreamRef = useRef<MediaStream | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
 
+  // TTS queue
+  const ttsQueueRef = useRef<string[]>([]);
+  const isPlayingRef = useRef(false);
+
   function getAudioContext() {
     let ctx = audioContextRef.current;
     if (!ctx) {
       ctx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
       audioContextRef.current = ctx;
+      console.log("🔓 Audio context created");
     }
     return ctx;
   }
@@ -52,10 +59,70 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
   function createAndUnlockAudioElement() {
     if (!audioElementRef.current) {
       const el = new Audio();
+      // warm-up to avoid first-play restrictions on some browsers
       el.src = "data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAAAAA";
       el.play().catch(() => {});
       audioElementRef.current = el;
     }
+  }
+
+  function clearTTSQueueAndStop() {
+    ttsQueueRef.current = [];
+    if (audioElementRef.current) {
+      try {
+        audioElementRef.current.pause();
+      } catch {}
+      audioElementRef.current.src = "";
+    }
+    isPlayingRef.current = false;
+  }
+
+  function playNext() {
+    const next = ttsQueueRef.current.shift();
+    if (!next) {
+      isPlayingRef.current = false;
+      setState("listening");
+      return;
+    }
+
+    if (!audioElementRef.current) audioElementRef.current = new Audio();
+    const el = audioElementRef.current;
+
+    const bytes = Uint8Array.from(atob(next), (c) => c.charCodeAt(0));
+    const blob = new Blob([bytes], { type: "audio/mpeg" });
+    const url = URL.createObjectURL(blob);
+
+    wsRef.current?.send(JSON.stringify({ event: "tts_start" }));
+    setState("speaking");
+    isPlayingRef.current = true;
+
+    el.onended = () => {
+      URL.revokeObjectURL(url);
+      if (ttsQueueRef.current.length === 0) {
+        wsRef.current?.send(JSON.stringify({ event: "tts_end" }));
+      }
+      playNext();
+    };
+
+    el.onerror = () => {
+      URL.revokeObjectURL(url);
+      if (ttsQueueRef.current.length === 0) {
+        wsRef.current?.send(JSON.stringify({ event: "tts_end" }));
+      }
+      playNext();
+    };
+
+    el.src = url;
+    el.play().catch((_err) => {
+      // skip this chunk and continue
+      URL.revokeObjectURL(url);
+      playNext();
+    });
+  }
+
+  function enqueueTTS(b64: string) {
+    ttsQueueRef.current.push(b64);
+    if (!isPlayingRef.current) playNext();
   }
 
   async function handleWebSocketMessage(evt: MessageEvent) {
@@ -81,10 +148,8 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     }
 
     switch (msg.event) {
-      case "ping": {
-        // optional heartbeat
+      case "ping":
         break;
-      }
 
       // ===== Speech / VAD lifecycle =====
       case "speech_start": {
@@ -95,16 +160,13 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
         // wait for response streaming to begin
         break;
       }
+
       case "interrupt": {
-        if (audioElementRef.current) {
-          try {
-            audioElementRef.current.pause();
-            audioElementRef.current.currentTime = 0;
-            audioElementRef.current.src = "";
-          } catch {}
-        }
-        setState("listening");
+        // Stop audio immediately and clear queue;
+        // server will stop sending further TTS once it receives our tts_end.
+        clearTTSQueueAndStop();
         wsRef.current?.send(JSON.stringify({ event: "tts_end" }));
+        setState("listening");
         break;
       }
 
@@ -142,37 +204,7 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
       // ===== TTS playback =====
       case "tts_audio": {
         const b64 = String(msg.data || "");
-        if (!b64) break;
-
-        const audioBytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-        const blob = new Blob([audioBytes], { type: "audio/mpeg" });
-        const url = URL.createObjectURL(blob);
-
-        if (!audioElementRef.current) {
-          const el = new Audio();
-          audioElementRef.current = el;
-        }
-        const el = audioElementRef.current;
-
-        el.onended = null;
-        el.onpause = null;
-        el.src = url;
-
-        wsRef.current?.send(JSON.stringify({ event: "tts_start" }));
-        setState("speaking");
-
-        el.onended = () => {
-          wsRef.current?.send(JSON.stringify({ event: "tts_end" }));
-          setState("listening");
-          URL.revokeObjectURL(url);
-        };
-
-        el.play().catch((err) => {
-          console.error("❌ play() error:", err);
-          wsRef.current?.send(JSON.stringify({ event: "tts_end" }));
-          setState("listening");
-          URL.revokeObjectURL(url);
-        });
+        if (b64) enqueueTTS(b64);
         break;
       }
 
@@ -260,6 +292,7 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
       // cleanup states on close
       setState("idle");
       setStreamBuf("");
+      clearTTSQueueAndStop();
     };
     ws.onerror = (e) => {
       console.error("WS error", e);
@@ -274,6 +307,7 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
       wsRef.current = null;
       setEnabled(false);
       setState("idle");
+      clearTTSQueueAndStop();
       return;
     }
 
