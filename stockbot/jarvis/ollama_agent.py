@@ -1,10 +1,13 @@
+import json
+import logging
+import httpx
 import requests
 import re
 from .agent import BaseAgent
 from ingestion.provider_manager import ProviderManager
-import logging
 
 logging.basicConfig(level=logging.DEBUG)
+
 
 class OllamaAgent(BaseAgent):
     API_URL = "http://localhost:11434/api/generate"
@@ -13,15 +16,99 @@ class OllamaAgent(BaseAgent):
         super().__init__(model=model_name)
         self.model = model_name
 
+    async def generate_stream(self, prompt: str, output_format: str = "text"):
+        """
+        Async token stream from Ollama (NDJSON). Yields small string deltas.
+        Also filters out <think>...</think> in a stream-safe way.
+        """
+        logging.debug("[Jarvis] Streaming generation started")
+
+        meta_prompt = {
+            "markdown": "Respond in markdown format.",
+            "json": "Respond using valid JSON.",
+            "text": "Respond in plain text format, no markdown or JSON.",
+        }
+        final_prompt = f"{prompt}\n\n{meta_prompt.get(output_format, '')}"
+
+        payload = {
+            "model": self.model,
+            "prompt": final_prompt,
+            "stream": True,
+            # encourage longer generations so streaming is noticeable
+            "options": {"num_predict": 512, "temperature": 0.7},
+        }
+
+        # state for streaming <think> removal
+        in_think = False
+
+        def strip_think_streaming(delta: str):
+            nonlocal in_think
+            out = []
+            i = 0
+            while i < len(delta):
+                if not in_think:
+                    start = delta.find("<think>", i)
+                    if start == -1:
+                        out.append(delta[i:])
+                        break
+                    # emit text before <think>
+                    if start > i:
+                        out.append(delta[i:start])
+                    i = start + len("<think>")
+                    in_think = True
+                else:
+                    end = delta.find("</think>", i)
+                    if end == -1:
+                        # still inside think; consume all and wait for close
+                        return "".join(out)
+                    i = end + len("</think>")
+                    in_think = False
+            return "".join(out)
+
+        buffer = ""
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream("POST", self.API_URL, json=payload) as r:
+                r.raise_for_status()
+                async for chunk in r.aiter_bytes():
+                    if not chunk:
+                        continue
+                    buffer += chunk.decode("utf-8", errors="ignore")
+
+                    # Drain complete NDJSON lines
+                    while True:
+                        nl = buffer.find("\n")
+                        if nl == -1:
+                            break
+                        line = buffer[:nl].strip()
+                        buffer = buffer[nl + 1:]
+
+                        if not line:
+                            continue
+                        try:
+                            obj = json.loads(line)
+                        except Exception:
+                            continue
+
+                        delta = obj.get("response", "")
+                        if delta:
+                            # strip streamed <think> chunks
+                            clean = strip_think_streaming(delta)
+                            if clean:
+                                logging.debug(f"[Jarvis] Δ{len(clean)}: {clean!r}")
+                                yield clean
+
+                        if obj.get("done"):
+                            logging.debug("[Jarvis] stream done")
+                            return
+
     def generate_with_provider(self, prompt: str, output_format: str = "text") -> str:
         logging.debug("========== JARVIS AGENT START ==========")
         logging.debug(f"[Jarvis] Prompt received: {prompt}")
         flags = self.detect_flags(prompt)
         logging.debug(f"[Jarvis] Flags detected: {flags}")
 
-        # Try to get existing provider without credentials
         try:
-            provider = ProviderManager.get_provider("schwab", {})  # broker hardcoded or set elsewhere
+            provider = ProviderManager.get_provider("schwab", {})
             logging.debug(f"[Jarvis] Got provider from cache: {provider}")
         except Exception as e:
             logging.warning(f"[Jarvis] No provider found in cache: {e}")
@@ -42,7 +129,7 @@ class OllamaAgent(BaseAgent):
             logging.error(f"[Jarvis] Error fetching account data: {e}")
 
         if account_data:
-            logging.debug(f"[Jarvis] Injecting account data into prompt.")
+            logging.debug("[Jarvis] Injecting account data into prompt.")
             prompt = f"Here is your latest account data:\n{account_data}\n\n{prompt}"
         else:
             logging.warning("[Jarvis] No account data fetched.")
@@ -58,16 +145,14 @@ class OllamaAgent(BaseAgent):
         logging.debug("[Jarvis] Sending raw prompt to Ollama (no account context)")
         meta_prompt = {
             "markdown": "Respond in markdown format.",
-            "json":     "Respond using valid JSON.",
-            "text":     "Respond in plain text format, no markdown or JSON."
+            "json": "Respond using valid JSON.",
+            "text": "Respond in plain text format, no markdown or JSON.",
         }
         final_prompt = f"{prompt}\n\n{meta_prompt.get(output_format, '')}"
 
         res = requests.post(
-            self.API_URL,
-            json={"model": self.model, "prompt": final_prompt, "stream": False}
+            self.API_URL, json={"model": self.model, "prompt": final_prompt, "stream": False}
         )
-
         if res.status_code != 200:
             raise RuntimeError(f"Ollama call failed: {res.status_code} {res.text}")
 
