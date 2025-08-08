@@ -10,14 +10,15 @@ from api.models.jarvis_models import PromptRequest, StartVoiceRequest, SchwabAut
 
 router = APIRouter()
 ollama_agent = OllamaAgent("qwen3:8b")
-hugging_face_agent = HuggingFaceAgent(
-    model="ceadar-ie/FinanceConnect-13B",
-    use_local=True,
-    local_cache_root=r"D:\huggingface\transformers",  # root that contains models--...
-    gen_timeout=15,                                   # watchdog seconds
-    default_max_new_tokens=96,                        # quick voice replies
-)
-jarvis_service = JarvisService(llm_agent=hugging_face_agent)
+# hugging_face_agent = HuggingFaceAgent(
+#     model="ceadar-ie/FinanceConnect-13B",
+#     use_local=True,
+#     local_cache_root=r"D:\huggingface\transformers",  # root that contains models--...
+#     gen_timeout=15,                                   # watchdog seconds
+#     default_max_new_tokens=96,                        # quick voice replies
+# )
+
+jarvis_service = JarvisService(llm_agent=ollama_agent)
 
 @router.post("/chat/ask")
 async def ask_jarvis(req: PromptRequest):

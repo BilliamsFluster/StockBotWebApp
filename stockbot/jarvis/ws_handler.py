@@ -2,8 +2,8 @@
 Improved WebSocket voice handler for Jarvis
 - Dynamic silence detection with local EOU transformer
 - Raw audio direct to Whisper (no file I/O)
+- True streaming of LLM output via partial_response events
 """
-
 import os
 import math
 import base64
@@ -56,16 +56,14 @@ try:
         downloaded_path = hf_hub_download(
             repo_id=EOU_MODEL_REPO,
             filename=EOU_MODEL_FILENAME,
-            cache_dir=str(EOU_MODEL_DIR)
+            cache_dir=str(EOU_MODEL_DIR),
         )
         Path(downloaded_path).rename(EOU_ONNX_PATH)
         print(f"✅ Model downloaded to {EOU_ONNX_PATH}")
 
     print("🔄 Loading tokenizer and EOU model...")
     tokenizer = AutoTokenizer.from_pretrained(EOU_MODEL_REPO)
-    eou_session = ort.InferenceSession(
-        str(EOU_ONNX_PATH), providers=["CPUExecutionProvider"]
-    )
+    eou_session = ort.InferenceSession(str(EOU_ONNX_PATH), providers=["CPUExecutionProvider"])
     eou_token_id = tokenizer.encode("<|im_end|>")[0]
     print("✅ EOU model ready")
 except Exception as e:
@@ -100,26 +98,24 @@ def compute_dynamic_silence_threshold(phrase_duration: float, eou_prob: float = 
 
 def predict_eou_prob(chat_history):
     """Predict probability that user turn is over."""
-    if tokenizer is None or eou_session is None:
+    try:
+        if tokenizer is None or eou_session is None:
+            return None
+        joined_text = "\n".join(f"{m['role']}: {m['content']}" for m in chat_history)
+        toks = tokenizer(joined_text, return_tensors="np", add_special_tokens=False)
+        logits = eou_session.run(["logits"], {"input_ids": toks["input_ids"]})[0]
+        last_logits = logits[0, -1]
+        probs = torch.nn.functional.softmax(torch.tensor(last_logits), dim=-1).numpy()
+        return float(probs[eou_token_id])
+    except Exception:
         return None
-    # Flatten to plain text (avoid apply_chat_template crash)
-    joined_text = "\n".join(f"{m['role']}: {m['content']}" for m in chat_history)
-    toks = tokenizer(joined_text, return_tensors="np", add_special_tokens=False)
-    logits = eou_session.run(["logits"], {"input_ids": toks["input_ids"]})[0]
-    last_logits = logits[0, -1]
-    probs = torch.nn.functional.softmax(torch.tensor(last_logits), dim=-1).numpy()
-    return float(probs[eou_token_id])
 
 
 # === Process results ===
 async def process_and_send_results(websocket: WebSocket, phrase_tensor: torch.Tensor, jarvis_service, conn_history):
-    """Direct STT from raw tensor → LLM → TTS"""
-    # Normalize
+    # --- STT ---
     max_amp = phrase_tensor.abs().max() + 1e-6
-    phrase_tensor = phrase_tensor / max_amp
-    phrase_tensor = torch.clamp(phrase_tensor * 2.5, -1.0, 1.0)
-
-    # Convert to numpy for Whisper
+    phrase_tensor = torch.clamp((phrase_tensor / max_amp) * 2.5, -1.0, 1.0)
     audio_np = phrase_tensor.squeeze(0).cpu().numpy()
 
     try:
@@ -128,30 +124,30 @@ async def process_and_send_results(websocket: WebSocket, phrase_tensor: torch.Te
         await websocket.send_text(json.dumps({"event": "error", "message": str(e)}))
         return
 
-    print(f"📝 Transcript: {transcript}")
-
     conn_history.append({"role": "user", "content": transcript})
+    await websocket.send_text(json.dumps({"event": "transcript", "data": transcript}))
 
-    # Predict EOU probability for next silence decision
-    eou_prob = predict_eou_prob(conn_history)
-
-    # Get LLM response
+    # --- LLM STREAMING ---
+    full_text = ""
+    await websocket.send_text(json.dumps({"event": "response_start"}))
     try:
-        response_text = jarvis_service.agent.generate(transcript, output_format="text")
-        print(f"🤖 LLM Response: {response_text}")
+        async for delta in jarvis_service.agent.generate_stream(transcript, output_format="text"):
+            full_text += delta
+            await websocket.send_text(json.dumps({"event": "partial_response", "data": delta}))
     except Exception as e:
         await websocket.send_text(json.dumps({"event": "error", "message": f"LLM error: {e}"}))
         return
 
-    conn_history.append({"role": "assistant", "content": response_text})
+    # finalize
+    await websocket.send_text(json.dumps({"event": "response_text", "data": full_text}))
+    await websocket.send_text(json.dumps({"event": "response_done"}))
+    conn_history.append({"role": "assistant", "content": full_text})
 
-    # Send transcript & response
-    await websocket.send_text(json.dumps({"event": "transcript", "data": transcript}))
-    await websocket.send_text(json.dumps({"event": "response_text", "data": response_text}))
-
-    # TTS
+    # --- TTS after we have the full text ---
+    import tempfile, uuid as _uuid
+    out_path = os.path.join(tempfile.gettempdir(), f"jarvis_reply_{uuid.uuid4().hex}.mp3")
     try:
-        out_path = await jarvis_service.tts.synthesize(response_text)
+        await jarvis_service.tts.synthesize(full_text, out_path)  # <-- OK now
         with open(out_path, "rb") as f:
             audio_bytes = f.read()
         b64_audio = base64.b64encode(audio_bytes).decode("ascii")
@@ -159,7 +155,8 @@ async def process_and_send_results(websocket: WebSocket, phrase_tensor: torch.Te
     except Exception as e:
         print(f"❌ Failed to send TTS audio: {e}")
 
-    return eou_prob
+    # optional: return eou prob for next-turn timeout
+    return predict_eou_prob(conn_history)
 
 
 # === WebSocket handler ===
@@ -196,16 +193,26 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                 chunk = decode_pcm_chunk_to_tensor(msg["data"])
                 volume = calculate_rms(chunk)
 
+                # append FIRST, so duration reflects current chunk
+                phrase_waveform = torch.cat((phrase_waveform, chunk), dim=1)
+                trigger_waveform = torch.cat((trigger_waveform, chunk), dim=1)
+
+                # clamp ring buffers
+                if phrase_waveform.shape[1] > int(TARGET_SAMPLE_RATE * MAX_HISTORY_SEC):
+                    phrase_waveform = phrase_waveform[:, -int(TARGET_SAMPLE_RATE * MAX_HISTORY_SEC):]
+                if trigger_waveform.shape[1] > int(TARGET_SAMPLE_RATE * TRIGGER_WINDOW_SEC):
+                    trigger_waveform = trigger_waveform[:, -int(TARGET_SAMPLE_RATE * TRIGGER_WINDOW_SEC):]
+
+                phrase_duration = phrase_waveform.shape[1] / TARGET_SAMPLE_RATE
+
                 if volume < MIN_RMS_FOR_SPEECH:
                     silence_time += chunk.shape[1] / TARGET_SAMPLE_RATE
                 else:
                     silence_time = 0.0
 
-                phrase_duration = phrase_waveform.shape[1] / TARGET_SAMPLE_RATE
-                dyn_timeout = compute_dynamic_silence_threshold(
-                    phrase_duration, last_eou_prob
-                )
+                dyn_timeout = compute_dynamic_silence_threshold(phrase_duration, last_eou_prob)
 
+                # speech end due to silence
                 if speaking and silence_time >= dyn_timeout:
                     speaking = False
                     await websocket.send_text(json.dumps({"event": "speech_end"}))
@@ -218,15 +225,17 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                         )
                     continue
 
+                # ignore ultra-quiet chunks for triggering
                 if volume < MIN_RMS_FOR_SPEECH:
                     continue
 
                 phrase_rms_values.append(volume)
                 phrase_peak = max(phrase_peak, volume)
 
+                # user interrupt over TTS
                 if tts_playing:
                     if volume < INTERRUPT_THRESHOLD:
-                        continue
+                        pass
                     elif not suppression_active:
                         suppression_active = True
                         suppression_release_ts = asyncio.get_event_loop().time()
@@ -235,14 +244,7 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                         suppression_active = False
                         await websocket.send_text(json.dumps({"event": "interrupt"}))
 
-                phrase_waveform = torch.cat((phrase_waveform, chunk), dim=1)
-                trigger_waveform = torch.cat((trigger_waveform, chunk), dim=1)
-
-                if phrase_waveform.shape[1] > int(TARGET_SAMPLE_RATE * MAX_HISTORY_SEC):
-                    phrase_waveform = phrase_waveform[:, -int(TARGET_SAMPLE_RATE * MAX_HISTORY_SEC):]
-                if trigger_waveform.shape[1] > int(TARGET_SAMPLE_RATE * TRIGGER_WINDOW_SEC):
-                    trigger_waveform = trigger_waveform[:, -int(TARGET_SAMPLE_RATE * TRIGGER_WINDOW_SEC):]
-
+                # VAD polling
                 now = time.time()
                 if now - last_vad_check > 0.05:
                     last_vad_check = now
@@ -250,7 +252,7 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                         segments = get_speech_timestamps(
                             trigger_waveform.squeeze(),
                             jarvis_service.vad_model,
-                            **VAD_OPTS
+                            **VAD_OPTS,
                         )
                     except Exception as e:
                         print(f"[{conn_id}] ❌ VAD error: {e}")
@@ -266,6 +268,7 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                         print(f"[{conn_id}] 🟢 Speech start")
                         await websocket.send_text(json.dumps({"event": "speech_start"}))
 
+                    # hard cap turn length
                     if speaking and (now - speech_start_time) > MAX_SPEECH_DURATION_SEC:
                         speaking = False
                         await websocket.send_text(json.dumps({"event": "speech_end"}))
@@ -284,6 +287,14 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
             elif msg.get("event") == "tts_end":
                 tts_playing = False
                 suppression_active = False
+
+            elif msg.get("event") == "start_audio":
+                # no-op (placeholder if you want to ack)
+                pass
+
+            elif msg.get("event") == "end_audio":
+                # client stopped recording; you might want to flush here
+                pass
 
             elif msg.get("event") == "ping":
                 await websocket.send_text(json.dumps({"event": "pong"}))

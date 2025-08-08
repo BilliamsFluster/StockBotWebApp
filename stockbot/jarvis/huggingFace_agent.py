@@ -341,3 +341,8 @@ class HuggingFaceAgent(BaseAgent):
 
         log.debug(f"[HF] Raw hosted output: {raw[:200]!r}")
         return raw or "[No content generated]"
+
+    async def generate_stream(self, prompt: str, output_format: str = "text"):
+        log.debug("[Jarvis] Streaming generation started")
+        for partial_response in self._stream_raw(prompt, output_format):
+            yield partial_response

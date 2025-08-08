@@ -19,6 +19,8 @@ interface JarvisContextProps {
   state: JarvisState;
   setEnabled: (v: boolean) => void;
   setState: (s: JarvisState) => void;
+  messages: { role: "user" | "assistant" | "system"; text: string }[];
+  streamBuf: string;
 }
 
 const JarvisContext = createContext<JarvisContextProps | undefined>(undefined);
@@ -26,6 +28,11 @@ const JarvisContext = createContext<JarvisContextProps | undefined>(undefined);
 export function JarvisProvider({ children }: { children: ReactNode }) {
   const [enabled, setEnabled] = useState(false);
   const [state, setState] = useState<JarvisState>("idle");
+
+  const [messages, setMessages] = useState<
+    { role: "user" | "assistant" | "system"; text: string }[]
+  >([]);
+  const [streamBuf, setStreamBuf] = useState("");
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -52,6 +59,7 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
   }
 
   async function handleWebSocketMessage(evt: MessageEvent) {
+    // parse message (string or Blob)
     let jsonString: string;
     if (typeof evt.data === "string") {
       jsonString = evt.data;
@@ -61,7 +69,9 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
       } catch {
         return;
       }
-    } else return;
+    } else {
+      return;
+    }
 
     let msg: any;
     try {
@@ -71,37 +81,111 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     }
 
     switch (msg.event) {
-      case "speech_start":
+      case "ping": {
+        // optional heartbeat
+        break;
+      }
+
+      // ===== Speech / VAD lifecycle =====
+      case "speech_start": {
         setState("listening");
         break;
-      case "speech_end":
-        setState("idle");
+      }
+      case "speech_end": {
+        // wait for response streaming to begin
         break;
-      case "interrupt":
+      }
+      case "interrupt": {
         if (audioElementRef.current) {
-          try { audioElementRef.current.pause(); } catch {}
+          try {
+            audioElementRef.current.pause();
+            audioElementRef.current.currentTime = 0;
+            audioElementRef.current.src = "";
+          } catch {}
         }
         setState("listening");
+        wsRef.current?.send(JSON.stringify({ event: "tts_end" }));
         break;
-      case "response_text":
-        console.log("🤖 Response:", msg.data);
+      }
+
+      // ===== Transcription =====
+      case "transcript": {
+        const text = String(msg.data || "");
+        if (text) {
+          setMessages((prev) => [...prev, { role: "user", text }]);
+        }
         break;
-      case "tts_audio":
-        if (state === "listening") return; // prevent speaking over listening
-        const audioBytes = Uint8Array.from(atob(msg.data), c => c.charCodeAt(0));
+      }
+
+      // ===== LLM streaming =====
+      case "response_start": {
+        setStreamBuf("");
+        break;
+      }
+      case "partial_response": {
+        const delta = String(msg.data || "");
+        if (delta) setStreamBuf((prev) => prev + delta);
+        break;
+      }
+      case "response_text": {
+        const full = String(msg.data || "");
+        if (full) {
+          setMessages((prev) => [...prev, { role: "assistant", text: full }]);
+        }
+        break;
+      }
+      case "response_done": {
+        setStreamBuf("");
+        break;
+      }
+
+      // ===== TTS playback =====
+      case "tts_audio": {
+        const b64 = String(msg.data || "");
+        if (!b64) break;
+
+        const audioBytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
         const blob = new Blob([audioBytes], { type: "audio/mpeg" });
         const url = URL.createObjectURL(blob);
-        if (audioElementRef.current) {
-          wsRef.current?.send(JSON.stringify({ event: "tts_start" }));
-          audioElementRef.current.src = url;
-          audioElementRef.current.onplay = () => setState("speaking");
-          audioElementRef.current.onended = () => {
-            wsRef.current?.send(JSON.stringify({ event: "tts_end" }));
-            setState("idle");
-          };
-          audioElementRef.current.play().catch(err => console.error("❌ play() error:", err));
+
+        if (!audioElementRef.current) {
+          const el = new Audio();
+          audioElementRef.current = el;
         }
+        const el = audioElementRef.current;
+
+        el.onended = null;
+        el.onpause = null;
+        el.src = url;
+
+        wsRef.current?.send(JSON.stringify({ event: "tts_start" }));
+        setState("speaking");
+
+        el.onended = () => {
+          wsRef.current?.send(JSON.stringify({ event: "tts_end" }));
+          setState("listening");
+          URL.revokeObjectURL(url);
+        };
+
+        el.play().catch((err) => {
+          console.error("❌ play() error:", err);
+          wsRef.current?.send(JSON.stringify({ event: "tts_end" }));
+          setState("listening");
+          URL.revokeObjectURL(url);
+        });
         break;
+      }
+
+      // ===== Errors =====
+      case "error": {
+        console.error("❌ Error:", msg.data || msg.message);
+        break;
+      }
+
+      default: {
+        console.debug("WS:", msg);
+        break;
+      }
     }
   }
 
@@ -114,7 +198,7 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
 
     if (audioCtx.audioWorklet) {
       const recorder = new AudioWorkletNode(audioCtx, "recorder-processor");
-      recorder.port.onmessage = e => {
+      recorder.port.onmessage = (e) => {
         const bytes = new Uint8Array(e.data);
         const b64 = btoa(String.fromCharCode(...bytes));
         if (wsRef.current?.readyState === WebSocket.OPEN && state !== "speaking") {
@@ -138,7 +222,7 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
       class RecorderProcessor extends AudioWorkletProcessor {
         process(inputs) {
           const inCh = inputs[0];
-          if (inCh && inCh[0].length) {
+          if (inCh && inCh[0] && inCh[0].length) {
             const f32 = inCh[0];
             const i16 = new Int16Array(f32.length);
             for (let i = 0; i < f32.length; i++) {
@@ -159,7 +243,6 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
 
   function startWebSocketAndRecording() {
     if (wsRef.current) return;
-
     const ws = connectJarvisWebSocket();
     ws.onmessage = handleWebSocketMessage;
     ws.onopen = async () => {
@@ -172,6 +255,14 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
       setState("listening");
       ws.send(JSON.stringify({ event: "start_audio" }));
       startRecording(stream);
+    };
+    ws.onclose = () => {
+      // cleanup states on close
+      setState("idle");
+      setStreamBuf("");
+    };
+    ws.onerror = (e) => {
+      console.error("WS error", e);
     };
     wsRef.current = ws;
   }
@@ -204,15 +295,15 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
       await preloadWorklet();
       setEnabled(true);
     } catch (err) {
+      console.error(err);
       setEnabled(false);
       setState("idle");
     }
   }
 
   useEffect(() => {
-    if (enabled) {
-      startWebSocketAndRecording();
-    }
+    if (enabled) startWebSocketAndRecording();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
 
   return (
@@ -222,6 +313,8 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
         state,
         setEnabled: toggleJarvis,
         setState,
+        messages,
+        streamBuf,
       }}
     >
       {children}
