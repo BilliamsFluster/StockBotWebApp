@@ -5,23 +5,31 @@ from jarvis.ws_handler import handle_voice_ws
 from jarvis.jarvis_service import JarvisService
 from jarvis.ollama_agent import OllamaAgent
 from jarvis.huggingFace_agent import HuggingFaceAgent
+from jarvis.memory_manager import MemoryManager
 
 from api.models.jarvis_models import PromptRequest, StartVoiceRequest, SchwabAuthRequest
 
+# This setup is now duplicated in the controller. In a real app, use FastAPI's
+# dependency injection to manage these singletons.
+mm = MemoryManager()
+
 router = APIRouter()
-ollama_agent = OllamaAgent("qwen3:8b")
-# hugging_face_agent = HuggingFaceAgent(
-#     model="ceadar-ie/FinanceConnect-13B",
-#     use_local=True,
-#     local_cache_root=r"D:\huggingface\transformers",  # root that contains models--...
-#     gen_timeout=15,                                   # watchdog seconds
-#     default_max_new_tokens=96,                        # quick voice replies
-# )
+
+ollama_agent = OllamaAgent("qwen3:8b", mm)
+#hugging_face_agent = HuggingFaceAgent(
+#    model="ceadar-ie/FinanceConnect-13B",
+#    use_local=True,
+#    memory_manager=mm,
+#    local_cache_root=r"D:\huggingface\transformers",  # root that contains models--...
+#    gen_timeout=15,                                   # watchdog seconds
+#    default_max_new_tokens=96,                        # quick voice replies
+#)
 
 jarvis_service = JarvisService(llm_agent=ollama_agent)
 
 @router.post("/chat/ask")
 async def ask_jarvis(req: PromptRequest):
+    # The controller now handles the logic
     return await jarvis_controller.ask_jarvis(req)
 
 @router.post("/voice/start")
@@ -60,5 +68,7 @@ def play_jarvis_audio():
 
 @router.websocket("/voice/ws")
 async def jarvis_voice_ws(websocket: WebSocket):
+    # The handle_voice_ws function will also need to be updated
+    # to extract a user_id and pass it to the service.
     await handle_voice_ws(websocket, jarvis_service)
 

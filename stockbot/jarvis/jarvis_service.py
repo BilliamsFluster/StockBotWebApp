@@ -68,3 +68,20 @@ class JarvisService:
         )
         await self.tts.synthesize(text, out_path)
         return out_path
+
+    def ask(self, user_id: str, prompt: str) -> str:
+        """
+        Handles a text-based request.
+        """
+        return self.agent.generate(user_id, prompt)
+
+    async def ask_stream(self, user_id: str, prompt: str):
+        """
+        Handles a streaming request.
+        (Implementation would depend on agent's streaming capabilities)
+        """
+        # This assumes your agent has a streaming method like generate_stream
+        # that needs to be adapted to handle user_id and memory.
+        # For now, this is a placeholder.
+        async for chunk in self.agent.generate_stream(prompt):
+             yield chunk
