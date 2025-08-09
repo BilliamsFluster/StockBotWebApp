@@ -1,7 +1,7 @@
 from __future__ import annotations
 import json, os, time, threading, math, re
 from dataclasses import dataclass, asdict
-from typing import List, Tuple, Dict, Union, Optional
+from typing import List, Tuple, Dict, Union, Optional, Callable
 from enum import Enum
 from collections import Counter
 from pathlib import Path
@@ -35,18 +35,19 @@ def _find_stockbot_root(start: Path) -> Path:
 
 class MemoryManager:
     """
-    Short-term: capped rolling turns (in-memory + persisted)
-    Long-term: LTItem list with priority; JSON per-user under <project-root>/stockbot/data/memory
-    Retrieval: simple TF/cosine over (key + value + tags), boosted by priority
+    Short-term: capped rolling token count (in-memory + persisted)
+    Long-term: LTItem list with priority and time-decay; JSON per-user under <project-root>/stockbot/data/memory
+    Retrieval: simple TF/cosine over (key + value + tags), boosted by priority, decayed by age.
     """
-    def __init__(self, storage_dir: Optional[str] = None, max_turns: int = 6):
+    def __init__(self, storage_dir: Optional[str] = None, max_st_tokens: int = 1500, lt_decay_halflife_days: float = 90.0):
         stockbot_root = _find_stockbot_root(Path(__file__).resolve())
         if storage_dir is None:
             resolved = stockbot_root / "data" / "memory"
         else:
             resolved = (stockbot_root / storage_dir) if not os.path.isabs(storage_dir) else Path(storage_dir)
         self.storage_dir = str(resolved.resolve())
-        self.max_turns = max_turns
+        self.max_st_tokens = max_st_tokens
+        self.lt_decay_halflife_days = lt_decay_halflife_days
         os.makedirs(self.storage_dir, exist_ok=True)
         self._lock = threading.Lock()
         self._mem: Dict[str, Dict[str, Union[List[Tuple[str, str]], List[LTItem]]]] = {}
@@ -89,6 +90,12 @@ class MemoryManager:
         os.replace(tmp, path)
         log.debug(f"[Memory] save -> {path}")
 
+    # ---------- token counting ----------
+    @staticmethod
+    def _count_tokens(text: str) -> int:
+        """A simple proxy for token counting."""
+        return len(text.split())
+
     # ---------- short-term ----------
     def add_turn(self, user_id: str, user_msg: str, jarvis_reply: str):
         log.debug(f"[Memory] add_turn user_id={user_id}")
@@ -96,9 +103,15 @@ class MemoryManager:
             self._load_user(user_id)
             st: List[Tuple[Role, str]] = self._mem[user_id]["short_term"]  # type: ignore
             st.extend([(Role.USER, user_msg), (Role.JARVIS, jarvis_reply)])
-            limit = self.max_turns * 2
-            if len(st) > limit:
-                del st[: len(st) - limit]
+
+            # Prune based on token count
+            total_tokens = sum(self._count_tokens(msg) for _, msg in st)
+            while total_tokens > self.max_st_tokens and len(st) > 2:
+                # Remove the oldest turn (user + assistant)
+                removed_user = st.pop(0)
+                removed_jarvis = st.pop(0)
+                total_tokens -= self._count_tokens(removed_user[1]) + self._count_tokens(removed_jarvis[1])
+
             self._save_user(user_id)
 
     def get_short_term(self, user_id: str) -> List[Tuple[Role, str]]:
@@ -112,6 +125,19 @@ class MemoryManager:
         with self._lock:
             self._load_user(user_id)
             lt: List[LTItem] = self._mem[user_id]["long_term"]  # type: ignore
+
+            # Check for existing item with the same key to update it
+            for item in lt:
+                if item.key == key:
+                    log.debug(f"Updating existing long-term memory item with key '{key}'")
+                    item.value = value
+                    item.ts = time.time() # Refresh timestamp
+                    item.priority = max(item.priority, priority) # Refresh priority
+                    item.tags = sorted(list(set((item.tags or []) + (tags or []))))
+                    self._save_user(user_id)
+                    return
+
+            # If no existing item, add a new one
             lt.append(LTItem(key=key, value=value, ts=time.time(), priority=priority, tags=tags or []))
             self._save_user(user_id)
 
@@ -166,10 +192,22 @@ class MemoryManager:
         q = self._bow(query)
         items = self.get_long_term(user_id)
         scored = []
+        now = time.time()
+        # Calculate decay lambda from half-life: lambda = ln(2) / half_life
+        decay_lambda = math.log(2) / (self.lt_decay_halflife_days * 86400) if self.lt_decay_halflife_days > 0 else 0
+
         for it in items:
             bow = self._bow(f"{it.key} {it.value} {' '.join(it.tags or [])}")
-            s = self._cosine(q, bow) + 0.15 * it.priority
-            scored.append((s, it))
+            relevance = self._cosine(q, bow)
+
+            # Apply time decay
+            age_seconds = now - it.ts
+            decay_factor = math.exp(-decay_lambda * age_seconds) if decay_lambda > 0 else 1.0
+
+            # Combine relevance, priority, and time decay
+            score = (relevance + 0.15 * it.priority) * decay_factor
+            scored.append((score, it))
+
         scored.sort(key=lambda x: x[0], reverse=True)
         return [it for s, it in scored[:k] if s > 0.0]
 
@@ -187,11 +225,13 @@ class MemoryManager:
         return f"Relevant long-term memory:\n{lt_str or '(none)'}\n\nRecent conversation:\n{st_str or '(none)'}"
 
     # ---------- summarization ----------
-    def should_summarize(self, user_id: str, max_pairs: int = 6) -> bool:
+    def should_summarize(self, user_id: str) -> bool:
         st = self.get_short_term(user_id)
-        return len(st) // 2 >= max_pairs
+        # Trigger summarization if short-term memory is near its token limit
+        current_tokens = sum(self._count_tokens(msg) for _, msg in st)
+        return current_tokens > self.max_st_tokens * 0.9
 
-    def summarize_short_term(self, user_id: str, llm_summarize_fn) -> Optional[str]:
+    def summarize_short_term(self, user_id: str, llm_summarize_fn: Callable[[str], str]) -> Optional[str]:
         log.debug(f"[Memory] summarize_short_term user_id={user_id}")
         st = self.get_short_term(user_id)
         if not st:
@@ -205,6 +245,12 @@ class MemoryManager:
         summary = llm_summarize_fn(prompt)
         if summary:
             self.add_to_long_term(user_id, key="conversation_summary", value=summary, priority=0.6, tags=["summary"])
+            # After summarizing, clear the short-term memory to free up token space
+            with self._lock:
+                self._load_user(user_id)
+                self._mem[user_id]["short_term"] = []
+                self._save_user(user_id)
+                log.debug(f"[Memory] Short-term memory cleared for user {user_id} after summarization.")
         return summary
 
     # ---------- maintenance ----------

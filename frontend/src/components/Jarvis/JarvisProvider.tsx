@@ -278,12 +278,25 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     const ws = connectJarvisWebSocket();
     ws.onmessage = handleWebSocketMessage;
     ws.onopen = async () => {
-      await getAudioContext().resume();
+      const audioCtx = getAudioContext();
+      await audioCtx.resume();
+
       const stream = micStreamRef.current;
       if (!stream) {
         setEnabled(false);
         return;
       }
+
+      // **THIS IS THE FIX**
+      // Send the *actual* sample rate of the audio context to the backend.
+      // This must be done before sending any audio chunks.
+      ws.send(JSON.stringify({
+        event: "config",
+        sample_rate: audioCtx.sampleRate
+      }));
+      console.log(`🎤 Sent config with sample rate: ${audioCtx.sampleRate}`);
+
+
       setState("listening");
       ws.send(JSON.stringify({ event: "start_audio" }));
       startRecording(stream);

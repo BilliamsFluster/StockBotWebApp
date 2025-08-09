@@ -2,23 +2,95 @@
   "short_term": [
     [
       "USER",
-      "Stocks."
+      "You did it, I ain't Step back"
     ],
     [
       "JARVIS",
-      "I can help you with stock market data! Could you please specify which stocks, indices, or sectors you're interested in (e.g., \"Apple,\" \"S&P 500,\" or \"technology sector\")? Also, note that real-time pricing and advanced data typically require a financial API or platform. Let me know how I can assist!"
+      "Great job! I'm glad we got there. How can I assist you next?"
     ],
     [
       "USER",
-      "Look at the NASDAQ, please."
+      "Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh. Ahh."
     ],
     [
       "JARVIS",
-      "I currently don’t have real-time access to market data or APIs like Bloomberg or Yahoo Finance to fetch live NASDAQ prices. However, I can provide general information about the NASDAQ or guide you on how to find its data. For example:  \n\n- The **NASDAQ Composite Index** tracks over 3,000 stocks, including many tech giants like Apple, Microsoft, and Amazon.  \n- It is known for its focus on innovation and technology-driven companies.  \n- To get real-time data, you can check platforms like Yahoo Finance, Bloomberg, or a brokerage platform.  \n\nWould you like me to explain how to find NASDAQ data or share historical trends?"
+      "It seems like you're trying to say something... Are you okay? I'm here if you need help with anything."
     ],
     [
       "USER",
-      "Hey Jarvis, what was my first request? Jarvis, what was my first request?"
+      "How many did I..."
+    ],
+    [
+      "JARVIS",
+      "You said \"Ahh.\" twenty-five times. Is there something specific you'd like to count or clarify? I'm here to help!"
+    ],
+    [
+      "USER",
+      "YEAH!"
+    ],
+    [
+      "JARVIS",
+      "YEAH! 🎉 Glad I could help! Let me know if you need anything else!"
+    ],
+    [
+      "USER",
+      "How are you?"
+    ],
+    [
+      "JARVIS",
+      "I'm just a virtual assistant, but I'm here and ready to help! How can I assist you today? 😊"
+    ],
+    [
+      "USER",
+      "I'm the new lawyer"
+    ],
+    [
+      "JARVIS",
+      "Hey there! Welcome to the legal field—sounds exciting! 😊 As your finance assistant, I’m here to help with anything related to money, budgets, investments, or financial planning. Just let me know how I can support you!"
+    ],
+    [
+      "USER",
+      "Come, me, oh, yeah"
+    ],
+    [
+      "JARVIS",
+      "Hey there! It sounds like you're excited or maybe trying to get my attention. 😊 As your finance assistant, I'm here to help with anything related to your legal work—whether it's budgeting for cases, managing expenses, or planning for the future. Just let me know how I can assist!"
+    ],
+    [
+      "USER",
+      "ARRIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII"
+    ],
+    [
+      "JARVIS",
+      "Hey there! It looks like you're sending a lot of \"A\"s—maybe you're trying to say something or test how I respond? 😊 Are you okay, or is there something specific you need help with? I'm here to assist with anything related to your legal work or finances. Just let me know how I can support you!"
+    ],
+    [
+      "USER",
+      "I'm sorry."
+    ],
+    [
+      "JARVIS",
+      "No worries at all! It's completely normal to have moments like that—especially when juggling the demands of being a new lawyer. 😊 If you ever need help with budgets, case expenses, or anything financial, I'm here to assist. Just take your time, and let me know how I can support you!"
+    ],
+    [
+      "USER",
+      ""
+    ],
+    [
+      "JARVIS",
+      "Hey there! It looks like you've sent an empty message—no worries at all! 😊 As a new lawyer, it's totally normal to have moments where you're processing or need a break. If you ever need help with budgets, case expenses, or anything financial, I'm here to assist. Just take your time, and let me know how I can support you!"
+    ],
+    [
+      "USER",
+      "Ssssssssssss"
+    ],
+    [
+      "JARVIS",
+      "Hey there! It looks like you're sending a lot of \"S\"s—maybe you're trying to say something or just testing how I respond? 😊 Are you okay, or is there something specific you need help with? I'm here to assist with anything related to your legal work or finances. Just take your time, and let me know how I can support you!"
+    ],
+    [
+      "USER",
+      "S R R I N G S R I N G"
     ],
     [
       "JARVIS",
@@ -26,74 +98,44 @@
     ],
     [
       "USER",
-      "Hi. Hello."
+      "SUBSCRIBE"
     ],
     [
       "JARVIS",
-      "Your first request was asking about market data. You started by inquiring, \"Well, what is the market data?\" and then narrowed it down to stocks, specifically the NASDAQ. Let me know if you'd like to revisit that or need further clarification!"
+      "Sure! Could you clarify what you'd like to subscribe to? Whether it's a financial newsletter, a legal expense tracker, or something else, I'm here to help! 😊"
     ],
     [
       "USER",
-      "Have a great day!"
+      "INTRO"
     ],
     [
       "JARVIS",
-      "You're welcome! If you have any more questions or need further assistance in the future, feel free to ask. Have a great day! 😊"
+      "Hey there! Welcome back! 😊 As your finance assistant, I’m here to help you navigate the financial side of your legal career—whether it’s budgeting for cases, tracking expenses, managing client funds, or planning for the future. Let me know if you’d like a quick overview of my services or need help setting up a financial system tailored to your practice! Just take your time—I’m here to support you."
     ],
     [
       "USER",
-      "What did I say before?"
+      "Eeee Eeee Eeee Eeee"
     ],
     [
       "JARVIS",
-      "Your previous messages were:  \n1. \"Well, what is the market data?\" (Your initial request about market data).  \n2. \"Stocks.\" (Narrowing it down to stocks).  \n3. \"Look at the NASDAQ, please.\" (Specific request for NASDAQ data).  \n4. \"Hey Jarvis, what was my first request?\" (Asking to revisit your original query).  \n5. \"Hi. Hello.\" (A friendly greeting).  \n6. \"Have a great day!\" (Closing the conversation).  \n\nLet me know if you'd like to revisit any part of this! 😊"
+      "Hey there! It sounds like you're trying to get my attention or maybe just expressing something through these \"Eeee\" sounds. 😊 Are you okay, or is there something specific you need help with? Whether it's budgeting, case management, or anything else related to your legal work, I'm here to assist. Just take your time—I'm ready when you are!"
+    ],
+    [
+      "USER",
+      ""
+    ],
+    [
+      "JARVIS",
+      "Hey there! It looks like you've sent another empty message—no worries at all! 😊 As a new lawyer, it's totally normal to have moments where you're processing or need a break. If you ever need help with budgets, case expenses, or anything financial, I'm here to assist. Just take your time, and let me know how I can support you!"
+    ],
+    [
+      "USER",
+      "How are you doing today?"
+    ],
+    [
+      "JARVIS",
+      "I'm just a virtual assistant, but I'm here and ready to help! How can I assist you today? 😊"
     ]
   ],
-  "long_term": [
-    {
-      "key": "conversation_summary",
-      "value": "- **User preferences & constraints**: User requested NASDAQ data but lacks real-time access; prefers general info or guidance on platforms like Yahoo Finance/Bloomberg.  \n- **Persistent facts**: User’s name/timezone not specified; Jarvis has general NASDAQ knowledge (e.g., Composite Index, tech focus) but no real-time API access.  \n- **Open tasks/promises**: Jarvis offered to explain NASDAQ data sources or share historical trends; user may need further guidance on accessing real-time data.  \n- **Recap**: User asked for NASDAQ data, but Jarvis cannot provide real-time prices. Instead, Jarvis provided general info about the NASDAQ and offered to explain data sources or historical trends. The user’s request highlights a need for real-time financial data access, which requires external platforms.",
-      "ts": 1754747345.7514153,
-      "priority": 0.6,
-      "tags": [
-        "summary"
-      ]
-    },
-    {
-      "key": "conversation_summary",
-      "value": "- **User preferences & constraints**: Interested in stock market data, specifically NASDAQ; seeks real-time data but lacks access to financial APIs like Bloomberg or Yahoo Finance.  \n- **Persistent facts**: No name, timezone, or specific tools provided beyond financial APIs.  \n- **Open tasks/promises**: Clarify user’s first request (market data), provide NASDAQ data guidance, and address real-time data access limitations.  \n- **Recap**: The user initially asked for market data, narrowed it to stocks, then requested NASDAQ details. Jarvis explained real-time data limitations and offered general info but hasn’t yet confirmed the user’s first request. The user is now seeking a recap of their initial query.",
-      "ts": 1754747367.7619724,
-      "priority": 0.6,
-      "tags": [
-        "summary"
-      ]
-    },
-    {
-      "key": "conversation_summary",
-      "value": "- **User preferences & constraints**: Interested in real-time NASDAQ data; lacks access to financial APIs (Bloomberg, Yahoo Finance, etc.) for live updates.  \n- **Persistent facts**: User’s first request was about market data, narrowed to stocks and NASDAQ. Tools required for real-time data: financial APIs/platforms.  \n- **Open tasks/promises**: Jarvis offered to explain how to find NASDAQ data or share historical trends.  \n- **Recap**: The user asked for NASDAQ market data but lacks real-time access tools. Jarvis provided general info about NASDAQ and offered guidance on retrieving data via external platforms. The user sought clarification on their initial request, which was about market data.",
-      "ts": 1754747382.5829206,
-      "priority": 0.6,
-      "tags": [
-        "summary"
-      ]
-    },
-    {
-      "key": "conversation_summary",
-      "value": "- **User preferences & constraints**: Interested in stock market data, specifically NASDAQ; no real-time access without financial APIs (e.g., Bloomberg, Yahoo Finance).  \n- **Persistent facts**: No named user or timezone specified; tools mentioned include Bloomberg, Yahoo Finance, and trading terminals.  \n- **Open tasks/promises**: Jarvis offered to explain NASDAQ data retrieval methods or share historical trends.  \n- **3–5 sentence recap**: The user initially asked about market data, narrowed it to stocks, and requested NASDAQ info. Jarvis clarified real-time data limitations and provided general NASDAQ details. The user then asked about their first request, which Jarvis reiterated. The conversation ended with a friendly sign-off.",
-      "ts": 1754747408.4010425,
-      "priority": 0.6,
-      "tags": [
-        "summary"
-      ]
-    },
-    {
-      "key": "conversation_summary",
-      "value": "- **User preferences & constraints**: Interested in stock market data, specifically NASDAQ; lacks real-time access tools (e.g., Bloomberg, Yahoo Finance).  \n- **Persistent facts**: User’s initial request was about market data, narrowed to stocks, then NASDAQ. Tools mentioned: Yahoo Finance, Bloomberg, brokerage platforms.  \n- **Open tasks/promises**: Jarvis offered to explain NASDAQ data sources or share historical trends but no further action taken.  \n- **Recap**: The user initially asked about market data, then focused on NASDAQ. Jarvis clarified real-time data limitations and provided general info. The user later asked to revisit their first request, leading to a conversation summary. The interaction ended with a friendly sign-off.",
-      "ts": 1754747432.349031,
-      "priority": 0.6,
-      "tags": [
-        "summary"
-      ]
-    }
-  ]
+  "long_term": []
 }

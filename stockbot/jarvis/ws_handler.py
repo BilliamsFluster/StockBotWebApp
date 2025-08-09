@@ -21,7 +21,9 @@ import time
 import re
 import torch
 import numpy as np
+import tempfile
 from pathlib import Path
+import torchaudio.transforms as T # Add this import
 from starlette.websockets import WebSocket, WebSocketDisconnect
 from silero_vad import get_speech_timestamps
 import onnxruntime as ort
@@ -136,11 +138,23 @@ async def process_and_send_results(
 ):
     # --- STT ---
     max_amp = phrase_tensor.abs().max() + 1e-6
-    phrase_tensor = torch.clamp((phrase_tensor / max_amp) * 2.5, -1.0, 1.0)
+    # The previous normalization was too aggressive (* 2.5), causing clipping and distortion.
+    # This simpler peak normalization scales the audio to the [-1, 1] range without over-amplifying.
+    phrase_tensor = phrase_tensor / max_amp
     audio_np = phrase_tensor.squeeze(0).cpu().numpy()
 
     try:
-        transcript = jarvis_service.stt.transcribe_from_array(audio_np)
+        # --- DEBUGGING: Save the audio sent to STT ---
+        # Get project root (d:\Websites\StockBot) and create a debug_audio directory
+        project_root = Path(__file__).resolve().parents[2]
+        debug_dir = project_root / "debug_audio"
+        debug_dir.mkdir(exist_ok=True)
+        debug_audio_path = debug_dir / f"stt_input_{uuid.uuid4().hex}.wav"
+
+        transcript = jarvis_service.stt.transcribe_from_array(
+            audio_np,
+            debug_save_path=str(debug_audio_path)
+        )
     except Exception as e:
         await websocket.send_text(json.dumps({"event": "error", "message": str(e)}))
         return
@@ -204,6 +218,10 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
     conn_id = str(uuid.uuid4())[:8]
     print(f"[{conn_id}] 🎤 WS client connected")
 
+    # Resampling state
+    client_sample_rate = None
+    resampler = None
+
     phrase_waveform = torch.empty((1, 0))
     trigger_waveform = torch.empty((1, 0))
     conn_history = []
@@ -235,8 +253,25 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
 
             event = msg.get("event")
 
+            if event == "config":
+                client_sample_rate = int(msg.get("sample_rate", TARGET_SAMPLE_RATE))
+                print(f"[{conn_id}] 🎤 Client sample rate: {client_sample_rate} Hz")
+                if client_sample_rate != TARGET_SAMPLE_RATE:
+                    print(f"[{conn_id}] 🎧 Creating resampler from {client_sample_rate} -> {TARGET_SAMPLE_RATE}")
+                    resampler = T.Resample(orig_freq=client_sample_rate, new_freq=TARGET_SAMPLE_RATE)
+                continue
+
             if event == "pcm_chunk":
+                if client_sample_rate is None:
+                    print(f"[{conn_id}] ⚠️ Received audio before config. Assuming {TARGET_SAMPLE_RATE}Hz. This may cause distortion.")
+                    client_sample_rate = TARGET_SAMPLE_RATE
+
                 chunk = decode_pcm_chunk_to_tensor(msg["data"])
+
+                # RESAMPLE if necessary
+                if resampler:
+                    chunk = resampler(chunk)
+
                 volume = calculate_rms(chunk)
 
                 # append FIRST

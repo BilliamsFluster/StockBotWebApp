@@ -9,9 +9,7 @@ from jarvis.memory_manager import MemoryManager
 
 from api.models.jarvis_models import PromptRequest, StartVoiceRequest, SchwabAuthRequest
 
-# This setup is now duplicated in the controller. In a real app, use FastAPI's
-# dependency injection to manage these singletons.
-mm = MemoryManager()
+mm = MemoryManager(storage_dir="data/memory")
 
 router = APIRouter()
 
@@ -29,7 +27,6 @@ jarvis_service = JarvisService(llm_agent=ollama_agent)
 
 @router.post("/chat/ask")
 async def ask_jarvis(req: PromptRequest):
-    # The controller now handles the logic
     return await jarvis_controller.ask_jarvis(req)
 
 @router.post("/voice/start")
@@ -68,7 +65,5 @@ def play_jarvis_audio():
 
 @router.websocket("/voice/ws")
 async def jarvis_voice_ws(websocket: WebSocket):
-    # The handle_voice_ws function will also need to be updated
-    # to extract a user_id and pass it to the service.
     await handle_voice_ws(websocket, jarvis_service)
 
