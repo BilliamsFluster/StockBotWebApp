@@ -24,7 +24,7 @@ class SpeechToText:
         vad_filter: bool = True,  # Enabled by default
     ):
         # Default to 'small.en' for a good balance of speed and accuracy
-        self.model_size = model_size or os.getenv("WHISPER_MODEL_SIZE", "small.en")
+        self.model_size = model_size or os.getenv("WHISPER_MODEL_SIZE", "tiny.en")
         self.device = device or os.getenv("WHISPER_DEVICE", "cpu")
         self.compute_type = compute_type or os.getenv("WHISPER_COMPUTE_TYPE", "float32")
 

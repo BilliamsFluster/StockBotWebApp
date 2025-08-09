@@ -1,16 +1,11 @@
 """
 WebSocket voice handler with:
-- VAD-based turn taking
-- Dynamic silence timeout + optional EOU model
-- LLM token streaming
-- TTS micro-batching (speak while thinking)
-- Barge-in (interrupt) support
-
-Requires:
-  - JarvisService (with .stt, .tts, .agent, .vad_model)
-  - TextToSpeech.synthesize_to_bytes(str) -> bytes
-  - OllamaAgent.generate_stream(...) async generator yielding text deltas
+- Robust mono PCM intake (no channel drift)
+- Input sample-rate telemetry + safe fallback
+- Single resample to TARGET_SAMPLE_RATE (torchaudio)
+- VAD-based turn taking, TTS micro-batching, barge-in
 """
+
 import os
 import math
 import base64
@@ -19,22 +14,19 @@ import uuid
 import asyncio
 import time
 import re
+from pathlib import Path
+
 import torch
 import numpy as np
-import tempfile
-from pathlib import Path
-import torchaudio.transforms as T # Add this import
+import torchaudio.transforms as T
 from starlette.websockets import WebSocket, WebSocketDisconnect
 from silero_vad import get_speech_timestamps
-import onnxruntime as ort
-from transformers import AutoTokenizer
-from huggingface_hub import hf_hub_download
 
 # ========================= Settings =========================
 TARGET_SAMPLE_RATE = 16000
-MIN_RMS_FOR_SPEECH = 0.02
+MIN_RMS_FOR_SPEECH = 0.008  # ~ -42 dBFS
 
-MAX_SPEECH_DURATION_SEC = 6.0   # hard cap for a single user turn
+MAX_SPEECH_DURATION_SEC = 6.0
 MIN_PHRASE_SEC = 0.3
 TRIGGER_WINDOW_SEC = 2
 MAX_HISTORY_SEC = 5
@@ -42,14 +34,20 @@ MAX_HISTORY_SEC = 5
 INTERRUPT_THRESHOLD = float(os.getenv("JARVIS_INTERRUPT_THRESHOLD", 0.015))
 SUPPRESSION_RELEASE_SEC = float(os.getenv("JARVIS_RELEASE_SEC", 0.2))
 
-# Dynamic silence range
 MIN_SILENCE_SEC = 0.3
 MAX_SILENCE_SEC = 1.2
 
-# Sentence boundary for TTS micro-batching
 BOUNDARY_RE = re.compile(r'([\.!\?…]["\')\]]?\s)$')
 
-# Silero-VAD config
+SR_MIN, SR_MAX = 8000, 192000
+LOG_SR_DELTA = 250
+LOG_SR_MIN_INTERVAL = 1.0
+
+RESAMPLE_LOG_EVERY = 100
+
+PENDING_MAX_CHUNKS = 200
+METRICS_FALLBACK_SEC = 0.8
+
 VAD_OPTS = dict(
     sampling_rate=TARGET_SAMPLE_RATE,
     threshold=0.5,
@@ -58,94 +56,57 @@ VAD_OPTS = dict(
     window_size_samples=int(0.25 * TARGET_SAMPLE_RATE),
 )
 
-# ========================= Optional EOU model =========================
-EOU_MODEL_DIR = Path("./models/turn_detector")
-EOU_MODEL_DIR.mkdir(parents=True, exist_ok=True)
-EOU_ONNX_PATH = EOU_MODEL_DIR / "model_quantized.onnx"
-EOU_MODEL_REPO = "livekit/turn-detector"
-EOU_MODEL_FILENAME = "model_quantized.onnx"
-
-try:
-    if not EOU_ONNX_PATH.exists():
-        print("⬇️  Downloading EOU turn-detector ONNX model...")
-        downloaded_path = hf_hub_download(
-            repo_id=EOU_MODEL_REPO,
-            filename=EOU_MODEL_FILENAME,
-            cache_dir=str(EOU_MODEL_DIR),
-        )
-        Path(downloaded_path).rename(EOU_ONNX_PATH)
-        print(f"✅ Model downloaded to {EOU_ONNX_PATH}")
-
-    print("🔄 Loading tokenizer and EOU model...")
-    tokenizer = AutoTokenizer.from_pretrained(EOU_MODEL_REPO)
-    eou_session = ort.InferenceSession(str(EOU_ONNX_PATH), providers=["CPUExecutionProvider"])
-    eou_token_id = tokenizer.encode("<|im_end|>")[0]
-    print("✅ EOU model ready")
-except Exception as e:
-    print(f"⚠️ Could not load EOU model: {e}")
-    tokenizer = None
-    eou_session = None
-    eou_token_id = None
-
 # ========================= Helpers =========================
 def calculate_rms(tensor: torch.Tensor) -> float:
     return math.sqrt(float(torch.mean(tensor ** 2)))
 
+
 def decode_pcm_chunk_to_tensor(b64_data: str) -> torch.Tensor:
-    """Decode PCM16 → 1×N float32 in [-1, 1]"""
     pcm_bytes = base64.b64decode(b64_data)
     raw = torch.frombuffer(bytearray(pcm_bytes), dtype=torch.int16)
     tensor = raw.to(torch.float32) / 32768.0
     return tensor.unsqueeze(0)
 
-def compute_dynamic_silence_threshold(phrase_duration: float, eou_prob: float = None):
+
+def compute_dynamic_silence_threshold(phrase_duration: float):
     base = MIN_SILENCE_SEC
     factor = min(1.0, phrase_duration / 3.0)
     timeout = base * (1.0 + factor)
-    if eou_prob is not None and eou_prob > 0.5:
-        timeout *= 0.6  # shorten if model confident user is done
     return max(MIN_SILENCE_SEC, min(timeout, MAX_SILENCE_SEC))
 
-def predict_eou_prob(chat_history):
-    """Predict probability that user turn is over based on chat history."""
-    try:
-        if tokenizer is None or eou_session is None:
-            return None
-        joined_text = "\n".join(f"{m['role']}: {m['content']}" for m in chat_history)
-        toks = tokenizer(joined_text, return_tensors="np", add_special_tokens=False)
-        logits = eou_session.run(["logits"], {"input_ids": toks["input_ids"]})[0]
-        last_logits = logits[0, -1]
-        probs = torch.nn.functional.softmax(torch.tensor(last_logits), dim=-1).numpy()
-        return float(probs[eou_token_id])
-    except Exception:
-        return None
 
 def should_flush(buf: str) -> bool:
-    # Flush at clear sentence boundary, or if buffer got long and contains punctuation
     if BOUNDARY_RE.search(buf):
         return True
     if len(buf) > 180 and any(p in buf for p in ".!?;:"):
         return True
     return False
 
-# ========================= Core pipeline =========================
+
 async def process_and_send_results(
     websocket: WebSocket,
     phrase_tensor: torch.Tensor,
     jarvis_service,
     conn_history,
-    tts_ctx: dict,  # {"allow": bool, "lock": asyncio.Lock()}
+    tts_ctx: dict,
 ):
-    # --- STT ---
-    max_amp = phrase_tensor.abs().max() + 1e-6
-    # The previous normalization was too aggressive (* 2.5), causing clipping and distortion.
-    # This simpler peak normalization scales the audio to the [-1, 1] range without over-amplifying.
-    phrase_tensor = phrase_tensor / max_amp
+    peak = float(phrase_tensor.abs().max()) + 1e-9
+    rms = float(torch.sqrt(torch.mean(phrase_tensor ** 2)))
+    dbfs = 20 * math.log10(max(rms, 1e-9))
+    gain = 1.0
+    if peak > 0.05:
+        gain = min(1.0 / peak, 3.0)
+    phrase_tensor = phrase_tensor * gain
+
+    frames = phrase_tensor.shape[1]
+    print(
+        f"📝 Sending to STT: frames={frames} @ {TARGET_SAMPLE_RATE} Hz (~{frames/TARGET_SAMPLE_RATE:.2f}s), "
+        f"peak={peak:.4f}, rms={rms:.4f} ({dbfs:.1f} dBFS), gain={gain:.2f}"
+    )
+
     audio_np = phrase_tensor.squeeze(0).cpu().numpy()
 
     try:
-        # --- DEBUGGING: Save the audio sent to STT ---
-        # Get project root (d:\Websites\StockBot) and create a debug_audio directory
         project_root = Path(__file__).resolve().parents[2]
         debug_dir = project_root / "debug_audio"
         debug_dir.mkdir(exist_ok=True)
@@ -153,7 +114,7 @@ async def process_and_send_results(
 
         transcript = jarvis_service.stt.transcribe_from_array(
             audio_np,
-            debug_save_path=str(debug_audio_path)
+            debug_save_path=str(debug_audio_path),
         )
     except Exception as e:
         await websocket.send_text(json.dumps({"event": "error", "message": str(e)}))
@@ -162,55 +123,44 @@ async def process_and_send_results(
     conn_history.append({"role": "user", "content": transcript})
     await websocket.send_text(json.dumps({"event": "transcript", "data": transcript}))
 
-    # --- LLM STREAM + TTS micro-batching ---
-    async def flush_tts_phrase(phrase: str):
-        text = phrase.strip()
-        if not text or not tts_ctx["allow"]:
+    async def flush_tts_phrase(text: str):
+        t = text.strip()
+        if not t or not tts_ctx["allow"]:
             return
         async with tts_ctx["lock"]:
             if not tts_ctx["allow"]:
                 return
             try:
-                audio_bytes = await jarvis_service.tts.synthesize_to_bytes(text)
+                audio_bytes = await jarvis_service.tts.synthesize_to_bytes(t)
                 b64_audio = base64.b64encode(audio_bytes).decode("ascii")
                 await websocket.send_text(json.dumps({"event": "tts_audio", "data": b64_audio}))
             except Exception as e:
                 await websocket.send_text(json.dumps({"event": "error", "message": f"TTS error: {e}"}))
 
     full_text = ""
-    phrase_buf = ""
+    buf = ""
     await websocket.send_text(json.dumps({"event": "response_start"}))
     try:
         async for delta in jarvis_service.agent.generate_stream(transcript, output_format="text"):
             if not delta:
                 continue
             full_text += delta
-            phrase_buf += delta
-
-            # UI: live text
+            buf += delta
             await websocket.send_text(json.dumps({"event": "partial_response", "data": delta}))
-
-            # Audio: speak by sentence
-            if should_flush(phrase_buf):
-                to_speak, phrase_buf = phrase_buf, ""
-                # fire & forget; lock keeps chunks serialized
+            if should_flush(buf):
+                to_speak, buf = buf, ""
                 asyncio.create_task(flush_tts_phrase(to_speak))
-
     except Exception as e:
         await websocket.send_text(json.dumps({"event": "error", "message": f"LLM error: {e}"}))
         return
 
-    # finalize UI text
     await websocket.send_text(json.dumps({"event": "response_text", "data": full_text}))
     await websocket.send_text(json.dumps({"event": "response_done"}))
     conn_history.append({"role": "assistant", "content": full_text})
 
-    # speak any trailing fragment (no punctuation)
-    if phrase_buf.strip():
-        await flush_tts_phrase(phrase_buf)
+    if buf.strip():
+        await flush_tts_phrase(buf)
 
-    # optional: return eou prob for next-turn timeout
-    return predict_eou_prob(conn_history)
 
 # ========================= WebSocket handler =========================
 async def handle_voice_ws(websocket: WebSocket, jarvis_service):
@@ -218,9 +168,15 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
     conn_id = str(uuid.uuid4())[:8]
     print(f"[{conn_id}] 🎤 WS client connected")
 
-    # Resampling state
     client_sample_rate = None
+    resolved_input_sr = None
     resampler = None
+    pending_chunks = []
+
+    last_metric = {"frame": None, "time": None, "ctx_sr": None}
+    last_est_sr_logged = None
+    last_sr_log_ts = 0.0
+    sr_fallback_deadline = time.monotonic() + METRICS_FALLBACK_SEC
 
     phrase_waveform = torch.empty((1, 0))
     trigger_waveform = torch.empty((1, 0))
@@ -228,23 +184,33 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
 
     speaking = False
     silence_time = 0.0
+    last_vad_check = time.time()
 
-    # For barge-in: gate interrupts while TTS is playing
     tts_playing = False
     suppression_active = False
     suppression_release_ts = 0.0
 
-    last_vad_check = time.time()
-    phrase_rms_values = []
-    phrase_peak = 0.0
-    speech_start_time = None
-    last_eou_prob = None
-
-    # TTS control shared with process_and_send_results
     tts_ctx = {"allow": True, "lock": asyncio.Lock()}
+
+    resample_log_ctr = 0
 
     try:
         while True:
+            if resolved_input_sr is None and client_sample_rate and time.monotonic() > sr_fallback_deadline:
+                resolved_input_sr = int(client_sample_rate)
+                if not (SR_MIN <= resolved_input_sr <= SR_MAX):
+                    resolved_input_sr = 48000
+                if resolved_input_sr != TARGET_SAMPLE_RATE:
+                    resampler = T.Resample(orig_freq=resolved_input_sr, new_freq=TARGET_SAMPLE_RATE)
+                    print(f"[{conn_id}] ⚠️ Metrics missing; fallback SR {resolved_input_sr}→{TARGET_SAMPLE_RATE}")
+                if pending_chunks:
+                    print(f"[{conn_id}] 📦 Flushing {len(pending_chunks)} queued chunks after fallback SR resolve")
+                    for c in pending_chunks:
+                        cc = resampler(c) if resampler else c
+                        phrase_waveform = torch.cat((phrase_waveform, cc), dim=1)
+                        trigger_waveform = torch.cat((trigger_waveform, cc), dim=1)
+                    pending_chunks.clear()
+
             raw = await websocket.receive_text()
             try:
                 msg = json.loads(raw)
@@ -255,30 +221,77 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
 
             if event == "config":
                 client_sample_rate = int(msg.get("sample_rate", TARGET_SAMPLE_RATE))
-                print(f"[{conn_id}] 🎤 Client sample rate: {client_sample_rate} Hz")
-                if client_sample_rate != TARGET_SAMPLE_RATE:
-                    print(f"[{conn_id}] 🎧 Creating resampler from {client_sample_rate} -> {TARGET_SAMPLE_RATE}")
-                    resampler = T.Resample(orig_freq=client_sample_rate, new_freq=TARGET_SAMPLE_RATE)
+                print(f"[{conn_id}] 🎤 Reported AudioContext rate: {client_sample_rate} Hz")
+                continue
+
+            if event == "metrics":
+                fr = int(msg.get("frame", 0))
+                t_client = float(msg.get("client_time", 0.0))
+                ctx_sr = int(msg.get("ctx_sample_rate", 0))
+
+                prev_frame = last_metric["frame"]
+                prev_time = last_metric["time"]
+
+                if prev_frame is not None and prev_time is not None:
+                    dframes = fr - prev_frame
+                    dtime = t_client - prev_time
+                    if dframes > 0 and 0.005 <= dtime <= 5.0:
+                        est_sr = dframes / dtime
+                        if SR_MIN <= est_sr <= SR_MAX:
+                            now = time.monotonic()
+                            if (
+                                last_est_sr_logged is None
+                                or abs(est_sr - last_est_sr_logged) > LOG_SR_DELTA
+                            ) and (now - last_sr_log_ts) >= LOG_SR_MIN_INTERVAL:
+                                print(f"[{conn_id}] 🎯 Worklet clock rate ≈ {est_sr:.1f} Hz (ctx={ctx_sr} Hz)")
+                                last_est_sr_logged = est_sr
+                                last_sr_log_ts = now
+
+                            if resolved_input_sr is None:
+                                resolved_input_sr = ctx_sr or int(round(est_sr))
+                                if not (SR_MIN <= resolved_input_sr <= SR_MAX):
+                                    resolved_input_sr = None
+                                else:
+                                    if resolved_input_sr != TARGET_SAMPLE_RATE:
+                                        resampler = T.Resample(orig_freq=resolved_input_sr, new_freq=TARGET_SAMPLE_RATE)
+                                        print(f"[{conn_id}] 🎧 Resampler set {resolved_input_sr}→{TARGET_SAMPLE_RATE}")
+                                    if pending_chunks:
+                                        print(f"[{conn_id}] 📦 Flushing {len(pending_chunks)} queued chunks after SR resolve")
+                                        for c in pending_chunks:
+                                            cc = resampler(c) if resampler else c
+                                            phrase_waveform = torch.cat((phrase_waveform, cc), dim=1)
+                                            trigger_waveform = torch.cat((trigger_waveform, cc), dim=1)
+                                        pending_chunks.clear()
+                last_metric.update({"frame": fr, "time": t_client, "ctx_sr": ctx_sr})
                 continue
 
             if event == "pcm_chunk":
-                if client_sample_rate is None:
-                    print(f"[{conn_id}] ⚠️ Received audio before config. Assuming {TARGET_SAMPLE_RATE}Hz. This may cause distortion.")
-                    client_sample_rate = TARGET_SAMPLE_RATE
-
                 chunk = decode_pcm_chunk_to_tensor(msg["data"])
 
-                # RESAMPLE if necessary
+                if resolved_input_sr is None:
+                    if len(pending_chunks) >= PENDING_MAX_CHUNKS:
+                        pending_chunks.pop(0)
+                    pending_chunks.append(chunk)
+                    print(f"[{conn_id}] ⏸ Queued PCM ({chunk.shape[1]} frames); awaiting input SR from metrics… {len(pending_chunks)} queued")
+                    continue
+
                 if resampler:
+                    before_len = chunk.shape[1]
                     chunk = resampler(chunk)
+                    after_len = chunk.shape[1]
+                    resample_log_ctr += 1
+                    if resample_log_ctr % RESAMPLE_LOG_EVERY == 0:
+                        print(f"[{conn_id}] 🎚 Resampled {resolved_input_sr}→{TARGET_SAMPLE_RATE} (frames: {before_len}→{after_len})")
+                else:
+                    resample_log_ctr += 1
+                    if resample_log_ctr % RESAMPLE_LOG_EVERY == 0:
+                        print(f"[{conn_id}] ⏺ Using native {TARGET_SAMPLE_RATE} Hz, frames={chunk.shape[1]}")
 
                 volume = calculate_rms(chunk)
 
-                # append FIRST
                 phrase_waveform = torch.cat((phrase_waveform, chunk), dim=1)
                 trigger_waveform = torch.cat((trigger_waveform, chunk), dim=1)
 
-                # clamp ring buffers
                 if phrase_waveform.shape[1] > int(TARGET_SAMPLE_RATE * MAX_HISTORY_SEC):
                     phrase_waveform = phrase_waveform[:, -int(TARGET_SAMPLE_RATE * MAX_HISTORY_SEC):]
                 if trigger_waveform.shape[1] > int(TARGET_SAMPLE_RATE * TRIGGER_WINDOW_SEC):
@@ -291,9 +304,8 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                 else:
                     silence_time = 0.0
 
-                dyn_timeout = compute_dynamic_silence_threshold(phrase_duration, last_eou_prob)
+                dyn_timeout = compute_dynamic_silence_threshold(phrase_duration)
 
-                # speech end due to silence
                 if speaking and silence_time >= dyn_timeout:
                     speaking = False
                     await websocket.send_text(json.dumps({"event": "speech_end"}))
@@ -301,39 +313,16 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                         phrase_to_process = phrase_waveform.clone()
                         phrase_waveform = torch.empty((1, 0))
                         trigger_waveform = torch.empty((1, 0))
-
-                        # enable TTS for this response
                         tts_ctx["allow"] = True
-                        last_eou_prob = await process_and_send_results(
-                            websocket, phrase_to_process, jarvis_service, conn_history, tts_ctx
-                        )
+                        await process_and_send_results(websocket, phrase_to_process, jarvis_service, conn_history, tts_ctx)
                     continue
 
-                # ignore ultra-quiet chunks for triggering
                 if volume < MIN_RMS_FOR_SPEECH:
                     continue
 
-                phrase_rms_values.append(volume)
-                phrase_peak = max(phrase_peak, volume)
-
-                # user interrupt over TTS
-                if tts_playing:
-                    if volume < INTERRUPT_THRESHOLD:
-                        pass
-                    elif not suppression_active:
-                        suppression_active = True
-                        suppression_release_ts = asyncio.get_event_loop().time()
-                    elif (asyncio.get_event_loop().time() - suppression_release_ts) >= SUPPRESSION_RELEASE_SEC:
-                        tts_playing = False
-                        suppression_active = False
-                        # Stop future queued TTS on server side
-                        tts_ctx["allow"] = False
-                        await websocket.send_text(json.dumps({"event": "interrupt"}))
-
-                # VAD polling
-                now = time.time()
-                if now - last_vad_check > 0.05:
-                    last_vad_check = now
+                now_vad = time.time()
+                if now_vad - last_vad_check > 0.05:
+                    last_vad_check = now_vad
                     try:
                         segments = get_speech_timestamps(
                             trigger_waveform.squeeze(),
@@ -347,48 +336,40 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                     if segments and not speaking:
                         speaking = True
                         silence_time = 0.0
-                        phrase_rms_values.clear()
-                        phrase_peak = 0.0
-                        speech_start_time = now
                         print(f"[{conn_id}] 🟢 Speech start")
                         await websocket.send_text(json.dumps({"event": "speech_start"}))
 
-                    # hard cap turn length
-                    if speaking and (now - speech_start_time) > MAX_SPEECH_DURATION_SEC:
+                    if speaking and (now_vad - last_vad_check) > MAX_SPEECH_DURATION_SEC:
                         speaking = False
                         await websocket.send_text(json.dumps({"event": "speech_end"}))
                         if phrase_duration >= MIN_PHRASE_SEC:
                             phrase_to_process = phrase_waveform.clone()
                             phrase_waveform = torch.empty((1, 0))
                             trigger_waveform = torch.empty((1, 0))
-
-                            # enable TTS for this response
                             tts_ctx["allow"] = True
-                            last_eou_prob = await process_and_send_results(
-                                websocket, phrase_to_process, jarvis_service, conn_history, tts_ctx
-                            )
+                            await process_and_send_results(websocket, phrase_to_process, jarvis_service, conn_history, tts_ctx)
+                continue
 
-            elif event == "tts_start":
+            if event == "tts_start":
                 tts_playing = True
                 suppression_active = False
+                continue
 
-            elif event == "tts_end":
-                # Client signaled queue drained OR user interrupted.
+            if event == "tts_end":
                 tts_playing = False
                 suppression_active = False
-                # Prevent any further queued TTS from being sent for this turn
                 tts_ctx["allow"] = False
+                continue
 
-            elif event == "start_audio":
-                # no-op placeholder
-                pass
+            if event == "start_audio":
+                continue
 
-            elif event == "end_audio":
-                # client stopped recording; optional flush point
-                pass
+            if event == "end_audio":
+                continue
 
-            elif event == "ping":
+            if event == "ping":
                 await websocket.send_text(json.dumps({"event": "pong"}))
+                continue
 
     except WebSocketDisconnect:
         print(f"[{conn_id}] ❌ Client disconnected")
