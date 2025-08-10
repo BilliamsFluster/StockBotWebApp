@@ -15,6 +15,7 @@ type JarvisState = "idle" | "listening" | "speaking";
 interface ChatMsg {
   role: "user" | "assistant" | "system";
   text: string;
+  speaker?: string; // <-- ADDED: Optional speaker field
 }
 
 interface JarvisContextProps {
@@ -52,8 +53,6 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
   const micStreamRef = useRef<MediaStream | null>(null);
   const audioProcessorNodeRef = useRef<AudioWorkletNode | null>(null);
   const micSourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  // --- FIX 1: Add a ref to track if the worklet is loaded ---
-  const workletLoadedRef = useRef(false);
 
   const ttsQueueRef = useRef<string[]>([]);
   const ttsGainRef = useRef<GainNode | null>(null);
@@ -176,8 +175,13 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
 
     switch (msg.event) {
       case "transcript": {
+        // --- MODIFIED: Handle the new speaker field ---
         const text = String(msg.data || "");
-        if (text) setMessages((p) => [...p, { role: "user", text }]);
+        const speaker = String(msg.speaker || ""); // Get the speaker ID
+        if (text) {
+          // Add the speaker to the message object
+          setMessages((p) => [...p, { role: "user", text, speaker }]);
+        }
         break;
       }
       case "response_start": {
@@ -226,13 +230,9 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     recorder.port.onmessage = (e) => {
       const msg = e.data;
       if (msg?.type === "audio_chunk") {
-        // --- LOG 1: Confirm worklet is sending data back ---
-        console.log("Worklet -> Main: Received audio_chunk from worklet");
         const bytes = new Uint8Array(msg.payload);
         const b64 = encodeBase64(bytes);
         if (wsRef.current?.readyState === WebSocket.OPEN) {
-          // --- LOG 2: Confirm data is being sent over WebSocket ---
-          console.log("Main -> WebSocket: Sending audio_chunk to server");
           wsRef.current.send(JSON.stringify({ event: "audio_chunk", data: b64 }));
         }
       }
@@ -315,9 +315,7 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     const blob = new Blob([workletCode], { type: "application/javascript" });
     const url = URL.createObjectURL(blob);
     await audioCtx.audioWorklet.addModule(url);
-    // --- FIX 2: Set the flag to true after successful loading ---
-    workletLoadedRef.current = true;
-    console.log("🧩 AudioWorklet loaded and registered successfully.");
+    console.log("🧩 AudioWorklet loaded");
   }
 
   function startWebSocketAndRecording() {
@@ -372,12 +370,7 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
         },
       });
       micStreamRef.current = stream;
-      
-      // --- FIX 3: Only load the worklet if it hasn't been loaded before ---
-      if (!workletLoadedRef.current) {
-        await preloadWorklet();
-      }
-      
+      await preloadWorklet();
       setEnabled(true);
     } catch (err) {
       console.error(err);

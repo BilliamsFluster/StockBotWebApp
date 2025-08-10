@@ -5,6 +5,7 @@ Improved to allow direct NumPy audio array input for lower latency.
 
 import os
 import numpy as np
+import torch
 from faster_whisper import WhisperModel
 from typing import Optional
 # Add scipy for debugging
@@ -87,6 +88,28 @@ class SpeechToText:
 
         segments, _ = self.model.transcribe(
             audio_array,
+            beam_size=self.beam_size,
+            temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0], # Multi-pass temperature
+            patience=1.0,
+            compression_ratio_threshold=2.4,
+            log_prob_threshold=-1.2, # Relaxed from -1.0
+            no_speech_threshold=0.7, # Relaxed from 0.6
+            vad_filter=self.vad_filter,
+        )
+
+        text = " ".join(segment.text.strip() for segment in segments if segment.text)
+        return text.strip()
+
+    @torch.inference_mode()
+    async def transcribe(self, audio_tensor: torch.Tensor, sampling_rate: int) -> str:
+        """Transcription from audio tensor, designed for async usage."""
+        if audio_tensor.ndim != 1:
+            raise ValueError("audio_tensor must be 1-D mono audio")
+        if audio_tensor.dtype != torch.float32:
+            audio_tensor = audio_tensor.to(torch.float32)
+
+        segments, _ = self.model.transcribe(
+            audio_tensor.numpy(),
             beam_size=self.beam_size,
             temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0], # Multi-pass temperature
             patience=1.0,

@@ -22,6 +22,9 @@ import numpy as np
 import torchaudio.transforms as T
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+# --- NEW: Import the diarization module ---
+from .diarization import SpeakerRegistry, SpeakerEmbedder
+
 # Correctly load VAD model and utilities from torch.hub
 VAD_MODEL, VAD_UTILS = torch.hub.load(
     repo_or_dir='snakers4/silero-vad', model='silero_vad', force_reload=False, onnx=False
@@ -58,17 +61,18 @@ def compute_dynamic_silence_threshold(phrase_duration: float):
 
 def should_flush(buf: str) -> bool:
     if BOUNDARY_RE.search(buf): return True
-    if len(buf) > 180 and any(p in buf for p in ".!?;:"): return True
+    if len(buf) > 180 and any(p in ".!?;:" for p in buf): return True
     return False
 
 
-# This function is restored from your working file
+# --- MODIFIED: This function now accepts a speaker_id ---
 async def process_and_send_results(
     websocket: WebSocket,
     phrase_tensor: torch.Tensor,
     jarvis_service,
     conn_history,
     tts_ctx: dict,
+    speaker_id: int, # <-- MODIFIED: Accept speaker_id
 ):
     peak = float(phrase_tensor.abs().max()) + 1e-9
     rms = float(torch.sqrt(torch.mean(phrase_tensor ** 2)))
@@ -100,8 +104,10 @@ async def process_and_send_results(
         await websocket.send_text(json.dumps({"event": "error", "message": str(e)}))
         return
 
-    conn_history.append({"role": "user", "content": transcript})
-    await websocket.send_text(json.dumps({"event": "transcript", "data": transcript}))
+    # --- MODIFIED: Prepend speaker ID for LLM context and UI ---
+    contextual_transcript = f"[Speaker {speaker_id}]: {transcript}"
+    conn_history.append({"role": "user", "content": contextual_transcript})
+    await websocket.send_text(json.dumps({"event": "transcript", "data": transcript, "speaker": f"Speaker {speaker_id}"}))
 
     async def flush_tts_phrase(text: str):
         t = (text or "").strip()
@@ -122,7 +128,8 @@ async def process_and_send_results(
     buf = ""
     await websocket.send_text(json.dumps({"event": "response_start"}))
     try:
-        async for delta in jarvis_service.agent.generate_stream(transcript, output_format="text"):
+        # --- MODIFIED: Use the contextual transcript for the LLM ---
+        async for delta in jarvis_service.agent.generate_stream(contextual_transcript, output_format="text"):
             if tts_ctx["cancel"].is_set(): raise asyncio.CancelledError()
             if not delta: continue
             full_text += delta
@@ -153,6 +160,17 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
     conn_id = str(uuid.uuid4())[:8]
     print(f"[{conn_id}] 🎤 WS client connected")
 
+    # --- NEW: Instantiate Diarization Services ---
+    # This might take a few seconds on first run to download the model
+    try:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        embedder = SpeakerEmbedder(device=device)
+        registry = SpeakerRegistry()
+    except Exception as e:
+        print(f"[{conn_id}] ❌ FATAL: Could not initialize diarization models: {e}")
+        await websocket.close(code=1011, reason="Diarization model failure")
+        return
+
     # --- State variables from your working file ---
     phrase_waveform = torch.empty((1, 0))
     trigger_waveform = torch.empty((1, 0))
@@ -161,7 +179,7 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
     speech_started_at = 0.0
     silence_time = 0.0
     last_vad_check = 0.0
-    # --- REMOVED: processing_chunk state ---
+    # --- REMOVED: current_speaker_id is no longer a long-lived state variable ---
     gen_task: asyncio.Task | None = None
     def new_tts_ctx():
         return {"allow": True, "lock": asyncio.Lock(), "cancel": asyncio.Event()}
@@ -219,8 +237,19 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                         phrase_waveform = torch.empty((1, 0))
                         trigger_waveform = torch.empty((1, 0))
                         tts_ctx["allow"] = True
+
+                        # --- NEW: Perform diarization on the complete utterance ---
+                        try:
+                            embedding = embedder.embed(phrase_to_process.squeeze(0))
+                            now = time.time()
+                            speaker_id = registry.identify_or_enroll(embedding, now)
+                            print(f"[{conn_id}] 🗣️  Utterance assigned to Speaker {speaker_id}")
+                        except Exception as e:
+                            print(f"[{conn_id}] ❌ Diarization error on final phrase: {e}")
+                            speaker_id = registry.last_assigned_sid or 0 # Fallback
+
                         gen_task = asyncio.create_task(
-                            process_and_send_results(websocket, phrase_to_process, jarvis_service, conn_history, tts_ctx)
+                            process_and_send_results(websocket, phrase_to_process, jarvis_service, conn_history, tts_ctx, speaker_id)
                         )
                     continue
 
@@ -236,6 +265,7 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                         print(f"[{conn_id}] ❌ VAD error: {e}")
                         continue
 
+                    # --- MODIFIED: Simplified speech start, diarization happens at the end ---
                     if segments and not speaking:
                         speaking = True
                         silence_time = 0.0
@@ -251,8 +281,19 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                             phrase_waveform = torch.empty((1, 0))
                             trigger_waveform = torch.empty((1, 0))
                             tts_ctx["allow"] = True
+                            
+                            # --- NEW: Perform diarization on the complete utterance (for max duration case) ---
+                            try:
+                                embedding = embedder.embed(phrase_to_process.squeeze(0))
+                                now = time.time()
+                                speaker_id = registry.identify_or_enroll(embedding, now)
+                                print(f"[{conn_id}] 🗣️  Utterance assigned to Speaker {speaker_id}")
+                            except Exception as e:
+                                print(f"[{conn_id}] ❌ Diarization error on final phrase: {e}")
+                                speaker_id = registry.last_assigned_sid or 0 # Fallback
+
                             gen_task = asyncio.create_task(
-                                process_and_send_results(websocket, phrase_to_process, jarvis_service, conn_history, tts_ctx)
+                                process_and_send_results(websocket, phrase_to_process, jarvis_service, conn_history, tts_ctx, speaker_id)
                             )
                 continue
 
