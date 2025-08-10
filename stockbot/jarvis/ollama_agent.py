@@ -3,6 +3,7 @@ import logging
 import httpx
 import requests
 import re
+import asyncio
 from typing import Any, Dict, Optional, AsyncGenerator
 
 from .agent import BaseAgent
@@ -47,13 +48,11 @@ class OllamaAgent(BaseAgent):
     def _resolve_flag_context(self, flags: Dict[str, bool]) -> Dict[str, Any]:
         ctx: Dict[str, Any] = {}
         try:
+            # --- FIX: Wrap provider loading in a try/except block ---
             provider = ProviderManager.get_provider(self.provider_name, self.provider_kwargs)
             log.debug(f"[Jarvis] Got provider from cache: {provider}")
-        except Exception as e:
-            logging.warning(f"[Jarvis] No provider found in cache: {e}")
-            return ctx
 
-        try:
+            # This part only runs if the provider was loaded successfully
             if flags.get("needs_summary"):
                 ctx["summary"] = provider.get_account_summary()
             if flags.get("needs_positions"):
@@ -62,8 +61,12 @@ class OllamaAgent(BaseAgent):
                 ctx["transactions"] = provider.get_transactions()
             if flags.get("needs_orders"):
                 ctx["orders"] = provider.get_orders()
+
         except Exception as e:
-            logging.error(f"[Jarvis] Error fetching account data: {e}")
+            # This will now fail gracefully if the access token is missing
+            logging.debug(f"[Jarvis] Could not get provider '{self.provider_name}': {e}. Proceeding without tool context.")
+            return ctx
+
         return ctx
 
     # ---- memory+tools prompt wrapper ----
@@ -138,10 +141,18 @@ class OllamaAgent(BaseAgent):
             full.append(delta)
             yield delta
 
+        await asyncio.sleep(0)
+
         reply = "".join(full).strip()
         self.memory_manager.add_turn(uid, user_msg, reply)
+        
+        # --- FIX: Run summarization as a non-blocking background task ---
         if self.memory_manager.should_summarize(uid):
-            self.memory_manager.summarize_short_term(uid, llm_summarize_fn=lambda p: self._generate_raw(p, "text"))
+            print("[Jarvis] Triggering non-blocking background summarization.")
+            # Create a task that runs in the background and doesn't block the main flow
+            asyncio.create_task(self.memory_manager.summarize_short_term(uid, self))
+        
+        log.debug("[Jarvis] generate_stream() finished.")
 
     # =========================
     # Low-level raw calls (unchanged)
@@ -156,56 +167,48 @@ class OllamaAgent(BaseAgent):
         log.debug(f"[Jarvis] Cleaned Ollama response: {cleaned[:200]!r}")
         return cleaned
 
-    async def _generate_stream_raw(self, prompt: str, output_format: str = "text"):
+    async def _generate_stream_raw(
+        self, prompt: str, output_format: str
+    ) -> AsyncGenerator[str, None]:
+        """
+        Wraps the raw httpx call to Ollama.
+        --- REVERTED TO THE UNIVERSALLY COMPATIBLE VERSION ---
+        """
         log.debug("[Jarvis] Streaming generation started")
-        payload = {"model": self.model, "prompt": prompt, "stream": True, "options": {"num_predict": 512, "temperature": 0.7}}
-
-        in_think = False
-        def strip_think_streaming(delta: str):
-            nonlocal in_think
-            out = []
-            i = 0
-            while i < len(delta):
-                if not in_think:
-                    start = delta.find("<think>", i)
-                    if start == -1:
-                        out.append(delta[i:]); break
-                    if start > i:
-                        out.append(delta[i:start])
-                    i = start + len("<think>")
-                    in_think = True
-                else:
-                    end = delta.find("</think>", i)
-                    if end == -1:
-                        return "".join(out)
-                    i = end + len("</think>")
-                    in_think = False
-            return "".join(out)
+        # Use the simple, robust payload that works for all models
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": True,
+            "options": {"temperature": 0.7} # num_predict is often not needed
+        }
 
         buffer = ""
-        async with httpx.AsyncClient(timeout=None) as client:
-            async with client.stream("POST", self.API_URL, json=payload) as r:
-                r.raise_for_status()
-                async for chunk in r.aiter_bytes():
-                    if not chunk:
-                        continue
-                    buffer += chunk.decode("utf-8", errors="ignore")
-                    while True:
-                        nl = buffer.find("\n")
-                        if nl == -1:
-                            break
-                        line = buffer[:nl].strip()
-                        buffer = buffer[nl + 1:]
-                        if not line:
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                async with client.stream("POST", self.API_URL, json=payload) as r:
+                    r.raise_for_status()
+                    async for chunk in r.aiter_bytes():
+                        if not chunk:
                             continue
-                        try:
-                            obj = json.loads(line)
-                        except Exception:
-                            continue
-                        delta = obj.get("response", "")
-                        if delta:
-                            clean = strip_think_streaming(delta)
-                            if clean:
-                                yield clean
-                        if obj.get("done"):
-                            return
+                        buffer += chunk.decode("utf-8", errors="ignore")
+                        while True:
+                            nl = buffer.find("\n")
+                            if nl == -1:
+                                break
+                            line = buffer[:nl].strip()
+                            buffer = buffer[nl + 1:]
+                            if not line:
+                                continue
+                            try:
+                                obj = json.loads(line)
+                            except Exception:
+                                continue
+                            delta = obj.get("response", "")
+                            if delta:
+                                yield delta
+                            if obj.get("done"):
+                                return
+        except Exception as e:
+            log.error(f"[Jarvis] Error in streaming generation: {e}")
+            raise

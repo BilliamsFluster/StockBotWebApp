@@ -161,17 +161,16 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
     speech_started_at = 0.0
     silence_time = 0.0
     last_vad_check = 0.0
+    # --- REMOVED: processing_chunk state ---
     gen_task: asyncio.Task | None = None
     def new_tts_ctx():
         return {"allow": True, "lock": asyncio.Lock(), "cancel": asyncio.Event()}
     tts_ctx = new_tts_ctx()
 
     try:
-        # --- FIX: Removed the incorrect check for a "start" event ---
-        # The original code was designed to handle events as they arrive,
-        # starting with "config" or "audio_chunk".
-
         print(f"[{conn_id}] Ready to process audio.")
+
+        # --- REMOVED: reset_chunk_flag_after_delay helper ---
 
         while True:
             raw = await websocket.receive_text()
@@ -201,6 +200,8 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                 # --- VAD and speech segmentation logic from your working file ---
                 phrase_duration = phrase_waveform.shape[1] / TARGET_SAMPLE_RATE
 
+                # --- REMOVED: Faulty mid-speech chunking logic ---
+
                 if volume < MIN_RMS_FOR_SPEECH:
                     silence_time += chunk.shape[1] / TARGET_SAMPLE_RATE
                 else:
@@ -212,6 +213,7 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                 if speaking and silence_time >= dyn_timeout:
                     speaking = False
                     print(f"[{conn_id}] 🔴 Speech end (silence)")
+                    # --- Process the final, complete phrase ---
                     if phrase_duration >= MIN_PHRASE_SEC:
                         phrase_to_process = phrase_waveform.clone()
                         phrase_waveform = torch.empty((1, 0))
@@ -243,6 +245,7 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                     if speaking and speech_started_at and (time.monotonic() - speech_started_at) > MAX_SPEECH_DURATION_SEC:
                         speaking = False
                         print(f"[{conn_id}] 🔴 Speech end (max duration)")
+                        # --- Process the final, complete phrase ---
                         if phrase_duration >= MIN_PHRASE_SEC:
                             phrase_to_process = phrase_waveform.clone()
                             phrase_waveform = torch.empty((1, 0))
@@ -262,6 +265,7 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                 phrase_waveform = torch.empty((1, 0))
                 trigger_waveform = torch.empty((1, 0))
                 speaking = False
+                # --- REMOVED: processing_chunk state ---
                 tts_ctx = new_tts_ctx()
                 continue
 

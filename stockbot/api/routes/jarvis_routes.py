@@ -13,7 +13,7 @@ mm = MemoryManager(storage_dir="data/memory")
 
 router = APIRouter()
 
-ollama_agent = OllamaAgent("qwen3:8b", mm)
+ollama_agent = OllamaAgent("llama3:8b", mm)
 #hugging_face_agent = HuggingFaceAgent(
 #    model="ceadar-ie/FinanceConnect-13B",
 #    use_local=True,
