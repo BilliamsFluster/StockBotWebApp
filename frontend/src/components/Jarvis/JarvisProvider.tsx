@@ -10,25 +10,36 @@ import React, {
 } from "react";
 import { connectJarvisWebSocket } from "@/api/jarvisApi";
 
-const TARGET_SAMPLE_RATE = 16000;
-
 type JarvisState = "idle" | "listening" | "speaking";
 
 interface ChatMsg {
   role: "user" | "assistant" | "system";
   text: string;
+  speaker?: string; // <-- ADDED: Optional speaker field
 }
 
 interface JarvisContextProps {
   enabled: boolean;
   state: JarvisState;
-  setEnabled: (v: boolean) => void; // toggle
+  setEnabled: (v: boolean) => void;
   setState: (s: JarvisState) => void;
   messages: ChatMsg[];
   streamBuf: string;
 }
 
 const JarvisContext = createContext<JarvisContextProps | undefined>(undefined);
+
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(
+      null,
+      bytes.subarray(i, i + chunkSize) as unknown as number[]
+    );
+  }
+  return btoa(binary);
+}
 
 export function JarvisProvider({ children }: { children: ReactNode }) {
   const [enabled, setEnabled] = useState(false);
@@ -40,184 +51,162 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
   const wsRef = useRef<WebSocket | null>(null);
   const isRecordingRef = useRef(false);
   const micStreamRef = useRef<MediaStream | null>(null);
-  const audioElementRef = useRef<HTMLAudioElement | null>(null);
+  const audioProcessorNodeRef = useRef<AudioWorkletNode | null>(null);
+  const micSourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
 
-  // TTS queue
   const ttsQueueRef = useRef<string[]>([]);
+  const ttsGainRef = useRef<GainNode | null>(null);
+  const ttsSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const isPlayingRef = useRef(false);
+  const ttsTokenRef = useRef(0);
+  const dropUntilResponseStartRef = useRef(false);
+
+  const inputGainRef = useRef<GainNode | null>(null);
 
   function getAudioContext() {
     let ctx = audioContextRef.current;
     if (!ctx) {
-      ctx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+      ctx = new (window.AudioContext ||
+        (window as any).webkitAudioContext)({ latencyHint: "interactive" });
       audioContextRef.current = ctx;
-      console.log("🔓 Audio context created");
+      console.log("🔓 AudioContext @", ctx.sampleRate, "Hz");
     }
     return ctx;
   }
 
-  function createAndUnlockAudioElement() {
-    if (!audioElementRef.current) {
-      const el = new Audio();
-      // warm-up to avoid first-play restrictions on some browsers
-      el.src = "data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAAAAA";
-      el.play().catch(() => {});
-      audioElementRef.current = el;
+  function ensureTtsGraph() {
+    const ctx = getAudioContext();
+    if (!ttsGainRef.current) {
+      ttsGainRef.current = ctx.createGain();
+      ttsGainRef.current.gain.value = 1.0;
+      ttsGainRef.current.connect(ctx.destination);
     }
   }
 
-  function clearTTSQueueAndStop() {
+  function setInputDuck(duck: boolean) {
+    const ctx = getAudioContext();
+    if (!inputGainRef.current) return;
+    const g = inputGainRef.current.gain;
+    const target = duck ? 0.12 : 1.0;
+    const t = ctx.currentTime;
+    g.cancelScheduledValues(t);
+    g.setTargetAtTime(target, t, 0.05);
+  }
+
+  function clearTTSQueueAndStop({ sendEnd = false }: { sendEnd?: boolean } = {}) {
     ttsQueueRef.current = [];
-    if (audioElementRef.current) {
-      try {
-        audioElementRef.current.pause();
-      } catch {}
-      audioElementRef.current.src = "";
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+    if (ttsGainRef.current) {
+      const g = ttsGainRef.current.gain;
+      g.cancelScheduledValues(now);
+      g.setTargetAtTime(0, now, 0.015);
     }
+    for (const src of ttsSourcesRef.current) {
+      try { src.stop(now + 0.1); } catch {}
+      try { src.disconnect(); } catch {}
+    }
+    ttsSourcesRef.current.clear();
     isPlayingRef.current = false;
+    ttsTokenRef.current++;
+    if (sendEnd) wsRef.current?.send(JSON.stringify({ event: "tts_end" }));
   }
 
-  function playNext() {
+  async function playNext() {
     const next = ttsQueueRef.current.shift();
     if (!next) {
       isPlayingRef.current = false;
       setState("listening");
+      setTimeout(() => setInputDuck(false), 120);
+      wsRef.current?.send(JSON.stringify({ event: "tts_end" }));
       return;
     }
 
-    if (!audioElementRef.current) audioElementRef.current = new Audio();
-    const el = audioElementRef.current;
+    ensureTtsGraph();
+    const ctx = getAudioContext();
+    const myToken = ++ttsTokenRef.current;
 
     const bytes = Uint8Array.from(atob(next), (c) => c.charCodeAt(0));
-    const blob = new Blob([bytes], { type: "audio/mpeg" });
-    const url = URL.createObjectURL(blob);
+    const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 
-    wsRef.current?.send(JSON.stringify({ event: "tts_start" }));
-    setState("speaking");
-    isPlayingRef.current = true;
+    try {
+      const audioBuffer = await ctx.decodeAudioData(ab.slice(0));
+      if (myToken !== ttsTokenRef.current) return;
 
-    el.onended = () => {
-      URL.revokeObjectURL(url);
-      if (ttsQueueRef.current.length === 0) {
-        wsRef.current?.send(JSON.stringify({ event: "tts_end" }));
+      const src = ctx.createBufferSource();
+      src.buffer = audioBuffer;
+      src.connect(ttsGainRef.current!);
+
+      if (!isPlayingRef.current) {
+        isPlayingRef.current = true;
+        setState("speaking");
+        setInputDuck(true);
+        wsRef.current?.send(JSON.stringify({ event: "tts_start" }));
+        const t = ctx.currentTime;
+        ttsGainRef.current!.gain.setValueAtTime(0, t);
+        ttsGainRef.current!.gain.linearRampToValueAtTime(1, t + 0.02);
       }
-      playNext();
-    };
 
-    el.onerror = () => {
-      URL.revokeObjectURL(url);
-      if (ttsQueueRef.current.length === 0) {
-        wsRef.current?.send(JSON.stringify({ event: "tts_end" }));
-      }
-      playNext();
-    };
-
-    el.src = url;
-    el.play().catch((_err) => {
-      // skip this chunk and continue
-      URL.revokeObjectURL(url);
-      playNext();
-    });
+      ttsSourcesRef.current.add(src);
+      src.onended = () => {
+        ttsSourcesRef.current.delete(src);
+        if (ttsSourcesRef.current.size === 0) void playNext();
+      };
+      src.start();
+    } catch (e) {
+      console.warn("decode/play failed", e);
+      void playNext();
+    }
   }
 
   function enqueueTTS(b64: string) {
     ttsQueueRef.current.push(b64);
-    if (!isPlayingRef.current) playNext();
+    if (!isPlayingRef.current && ttsSourcesRef.current.size === 0) void playNext();
   }
 
   async function handleWebSocketMessage(evt: MessageEvent) {
-    // parse message (string or Blob)
     let jsonString: string;
-    if (typeof evt.data === "string") {
-      jsonString = evt.data;
-    } else if (evt.data instanceof Blob) {
-      try {
-        jsonString = await evt.data.text();
-      } catch {
-        return;
-      }
-    } else {
-      return;
-    }
+    if (typeof evt.data === "string") jsonString = evt.data;
+    else if (evt.data instanceof Blob) jsonString = await evt.data.text();
+    else return;
 
     let msg: any;
-    try {
-      msg = JSON.parse(jsonString);
-    } catch {
-      return;
-    }
+    try { msg = JSON.parse(jsonString); } catch { return; }
 
     switch (msg.event) {
-      case "ping":
-        break;
-
-      // ===== Speech / VAD lifecycle =====
-      case "speech_start": {
-        setState("listening");
-        break;
-      }
-      case "speech_end": {
-        // wait for response streaming to begin
-        break;
-      }
-
-      case "interrupt": {
-        // Stop audio immediately and clear queue;
-        // server will stop sending further TTS once it receives our tts_end.
-        clearTTSQueueAndStop();
-        wsRef.current?.send(JSON.stringify({ event: "tts_end" }));
-        setState("listening");
-        break;
-      }
-
-      // ===== Transcription =====
       case "transcript": {
+        // --- MODIFIED: Handle the new speaker field ---
         const text = String(msg.data || "");
+        const speaker = String(msg.speaker || ""); // Get the speaker ID
         if (text) {
-          setMessages((prev) => [...prev, { role: "user", text }]);
+          // Add the speaker to the message object
+          setMessages((p) => [...p, { role: "user", text, speaker }]);
         }
         break;
       }
-
-      // ===== LLM streaming =====
       case "response_start": {
+        dropUntilResponseStartRef.current = false;
         setStreamBuf("");
-        break;
-      }
-      case "partial_response": {
-        const delta = String(msg.data || "");
-        if (delta) setStreamBuf((prev) => prev + delta);
+        clearTTSQueueAndStop({ sendEnd: false });
         break;
       }
       case "response_text": {
         const full = String(msg.data || "");
-        if (full) {
-          setMessages((prev) => [...prev, { role: "assistant", text: full }]);
-        }
+        if (full) setMessages((p) => [...p, { role: "assistant", text: full }]);
         break;
       }
-      case "response_done": {
+      case "response_done":
         setStreamBuf("");
         break;
-      }
-
-      // ===== TTS playback =====
       case "tts_audio": {
+        if (dropUntilResponseStartRef.current) break;
         const b64 = String(msg.data || "");
         if (b64) enqueueTTS(b64);
         break;
       }
-
-      // ===== Errors =====
-      case "error": {
+      case "error":
         console.error("❌ Error:", msg.data || msg.message);
         break;
-      }
-
-      default: {
-        console.debug("WS:", msg);
-        break;
-      }
     }
   }
 
@@ -227,41 +216,96 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
 
     const audioCtx = getAudioContext();
     const source = audioCtx.createMediaStreamSource(stream);
+    micSourceNodeRef.current = source;
 
-    if (audioCtx.audioWorklet) {
-      const recorder = new AudioWorkletNode(audioCtx, "recorder-processor");
-      recorder.port.onmessage = (e) => {
-        const bytes = new Uint8Array(e.data);
-        const b64 = btoa(String.fromCharCode(...bytes));
-        if (wsRef.current?.readyState === WebSocket.OPEN && state !== "speaking") {
-          wsRef.current.send(JSON.stringify({ event: "pcm_chunk", data: b64 }));
+    if (!inputGainRef.current) inputGainRef.current = audioCtx.createGain();
+
+    const recorder = new AudioWorkletNode(audioCtx, "recorder-processor", {
+      processorOptions: {
+        sampleRate: audioCtx.sampleRate,
+      },
+    });
+    audioProcessorNodeRef.current = recorder;
+
+    recorder.port.onmessage = (e) => {
+      const msg = e.data;
+      if (msg?.type === "audio_chunk") {
+        const bytes = new Uint8Array(msg.payload);
+        const b64 = encodeBase64(bytes);
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ event: "audio_chunk", data: b64 }));
         }
-      };
-      source.connect(recorder);
-    }
+      }
+    };
+
+    // Correct Audio Graph: mic -> gain -> worklet (NO connection to speakers)
+    source.connect(inputGainRef.current);
+    inputGainRef.current.connect(recorder);
+
+    // To keep the AudioContext clock running, we must connect the source to the destination,
+    // but we can do it through a silent GainNode.
+    const silentGain = audioCtx.createGain();
+    silentGain.gain.value = 0;
+    source.connect(silentGain);
+    silentGain.connect(audioCtx.destination);
   }
 
   function stopRecording() {
     if (!isRecordingRef.current) return;
-    wsRef.current?.send(JSON.stringify({ event: "end_audio" }));
     isRecordingRef.current = false;
+    // Disconnect the audio graph to stop processing
+    if (micSourceNodeRef.current && inputGainRef.current) {
+        micSourceNodeRef.current.disconnect(inputGainRef.current);
+    }
+    if (inputGainRef.current && audioProcessorNodeRef.current) {
+        inputGainRef.current.disconnect(audioProcessorNodeRef.current);
+    }
   }
 
   async function preloadWorklet() {
     const audioCtx = getAudioContext();
-    if (!audioCtx.audioWorklet) return;
     const workletCode = `
+      function resample(input, inputRate, outputRate) {
+        if (inputRate === outputRate) return input;
+        const ratio = inputRate / outputRate;
+        const outputLength = Math.ceil(input.length / ratio);
+        const output = new Float32Array(outputLength);
+        for (let i = 0; i < outputLength; i++) {
+          const before = Math.floor(i * ratio);
+          const after = Math.min(before + 1, input.length - 1);
+          const atPoint = i * ratio - before;
+          output[i] = input[before] + (input[after] - input[before]) * atPoint;
+        }
+        return output;
+      }
+
       class RecorderProcessor extends AudioWorkletProcessor {
+        constructor(options) {
+          super();
+          this.inputSampleRate = options.processorOptions.sampleRate;
+          this.outputSampleRate = 16000;
+          this.buffer = new Float32Array(0);
+          this.batchSize = Math.ceil(this.outputSampleRate * 0.048);
+        }
+
         process(inputs) {
-          const inCh = inputs[0];
-          if (inCh && inCh[0] && inCh[0].length) {
-            const f32 = inCh[0];
-            const i16 = new Int16Array(f32.length);
-            for (let i = 0; i < f32.length; i++) {
-              const s = Math.max(-1, Math.min(1, f32[i]));
-              i16[i] = s * 0x7FFF;
+          const input = inputs[0]?.[0];
+          if (!input) return true;
+
+          const resampled = resample(input, this.inputSampleRate, this.outputSampleRate);
+          const newBuffer = new Float32Array(this.buffer.length + resampled.length);
+          newBuffer.set(this.buffer, 0);
+          newBuffer.set(resampled, this.buffer.length);
+          this.buffer = newBuffer;
+
+          while (this.buffer.length >= this.batchSize) {
+            const chunk = this.buffer.subarray(0, this.batchSize);
+            this.buffer = this.buffer.subarray(this.batchSize);
+            const i16 = new Int16Array(chunk.length);
+            for (let i = 0; i < chunk.length; i++) {
+              i16[i] = Math.max(-1, Math.min(1, chunk[i])) * 0x7fff;
             }
-            this.port.postMessage(i16.buffer, [i16.buffer]);
+            this.port.postMessage({ type: 'audio_chunk', payload: i16.buffer }, [i16.buffer]);
           }
           return true;
         }
@@ -271,6 +315,7 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     const blob = new Blob([workletCode], { type: "application/javascript" });
     const url = URL.createObjectURL(blob);
     await audioCtx.audioWorklet.addModule(url);
+    console.log("🧩 AudioWorklet loaded");
   }
 
   function startWebSocketAndRecording() {
@@ -278,25 +323,26 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     const ws = connectJarvisWebSocket();
     ws.onmessage = handleWebSocketMessage;
     ws.onopen = async () => {
-      await getAudioContext().resume();
+      const audioCtx = getAudioContext();
+      await audioCtx.resume();
       const stream = micStreamRef.current;
       if (!stream) {
         setEnabled(false);
         return;
       }
+      ws.send(JSON.stringify({ event: "start" }));
+      console.log(`🎤 Recording started. Client resampling from ${audioCtx.sampleRate} Hz to 16000 Hz.`);
       setState("listening");
-      ws.send(JSON.stringify({ event: "start_audio" }));
       startRecording(stream);
     };
     ws.onclose = () => {
-      // cleanup states on close
       setState("idle");
       setStreamBuf("");
       clearTTSQueueAndStop();
+      setInputDuck(false);
+      wsRef.current = null;
     };
-    ws.onerror = (e) => {
-      console.error("WS error", e);
-    };
+    ws.onerror = (e) => console.error("WS error", e);
     wsRef.current = ws;
   }
 
@@ -308,24 +354,22 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
       setEnabled(false);
       setState("idle");
       clearTTSQueueAndStop();
+      setInputDuck(false);
       return;
     }
 
     try {
       const ctx = getAudioContext();
       await ctx.resume();
-      createAndUnlockAudioElement();
-
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
+          autoGainControl: false,
           channelCount: 1,
-          sampleRate: TARGET_SAMPLE_RATE,
         },
       });
       micStreamRef.current = stream;
-
       await preloadWorklet();
       setEnabled(true);
     } catch (err) {
@@ -336,20 +380,14 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    if (enabled) startWebSocketAndRecording();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (enabled) {
+      startWebSocketAndRecording();
+    }
   }, [enabled]);
 
   return (
     <JarvisContext.Provider
-      value={{
-        enabled,
-        state,
-        setEnabled: toggleJarvis,
-        setState,
-        messages,
-        streamBuf,
-      }}
+      value={{ enabled, state, setEnabled: toggleJarvis, setState, messages, streamBuf }}
     >
       {children}
     </JarvisContext.Provider>

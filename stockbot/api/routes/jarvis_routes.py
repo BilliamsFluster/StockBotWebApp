@@ -5,18 +5,23 @@ from jarvis.ws_handler import handle_voice_ws
 from jarvis.jarvis_service import JarvisService
 from jarvis.ollama_agent import OllamaAgent
 from jarvis.huggingFace_agent import HuggingFaceAgent
+from jarvis.memory_manager import MemoryManager
 
 from api.models.jarvis_models import PromptRequest, StartVoiceRequest, SchwabAuthRequest
 
+mm = MemoryManager(storage_dir="data/memory")
+
 router = APIRouter()
-ollama_agent = OllamaAgent("qwen3:8b")
-# hugging_face_agent = HuggingFaceAgent(
-#     model="ceadar-ie/FinanceConnect-13B",
-#     use_local=True,
-#     local_cache_root=r"D:\huggingface\transformers",  # root that contains models--...
-#     gen_timeout=15,                                   # watchdog seconds
-#     default_max_new_tokens=96,                        # quick voice replies
-# )
+
+ollama_agent = OllamaAgent("llama3:8b", mm)
+#hugging_face_agent = HuggingFaceAgent(
+#    model="ceadar-ie/FinanceConnect-13B",
+#    use_local=True,
+#    memory_manager=mm,
+#    local_cache_root=r"D:\huggingface\transformers",  # root that contains models--...
+#    gen_timeout=15,                                   # watchdog seconds
+#    default_max_new_tokens=96,                        # quick voice replies
+#)
 
 jarvis_service = JarvisService(llm_agent=ollama_agent)
 
