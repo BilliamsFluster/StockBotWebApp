@@ -50,16 +50,18 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
   const wsRef = useRef<WebSocket | null>(null);
   const isRecordingRef = useRef(false);
   const micStreamRef = useRef<MediaStream | null>(null);
+  const audioProcessorNodeRef = useRef<AudioWorkletNode | null>(null);
+  const micSourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  // --- FIX 1: Add a ref to track if the worklet is loaded ---
+  const workletLoadedRef = useRef(false);
 
-  // --- TTS via WebAudio (hard-stop capable) ---
   const ttsQueueRef = useRef<string[]>([]);
   const ttsGainRef = useRef<GainNode | null>(null);
   const ttsSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const isPlayingRef = useRef(false);
-  const ttsTokenRef = useRef(0); // invalidate in-flight decodes on interrupt
-  const dropUntilResponseStartRef = useRef(false); // gate stale tts_audio
+  const ttsTokenRef = useRef(0);
+  const dropUntilResponseStartRef = useRef(false);
 
-  // Mic ducking
   const inputGainRef = useRef<GainNode | null>(null);
 
   function getAudioContext() {
@@ -84,9 +86,9 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
 
   function setInputDuck(duck: boolean) {
     const ctx = getAudioContext();
-    if (!inputGainRef.current) inputGainRef.current = ctx.createGain();
+    if (!inputGainRef.current) return;
     const g = inputGainRef.current.gain;
-    const target = duck ? 0.12 : 1.0; // keep some input for VAD/barge‑in
+    const target = duck ? 0.12 : 1.0;
     const t = ctx.currentTime;
     g.cancelScheduledValues(t);
     g.setTargetAtTime(target, t, 0.05);
@@ -99,11 +101,10 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     if (ttsGainRef.current) {
       const g = ttsGainRef.current.gain;
       g.cancelScheduledValues(now);
-      // Fast fade out instead of immediate stop
       g.setTargetAtTime(0, now, 0.015);
     }
     for (const src of ttsSourcesRef.current) {
-      try { src.stop(now + 0.1); } catch {} // Schedule stop slightly in future
+      try { src.stop(now + 0.1); } catch {}
       try { src.disconnect(); } catch {}
     }
     ttsSourcesRef.current.clear();
@@ -131,7 +132,7 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
 
     try {
       const audioBuffer = await ctx.decodeAudioData(ab.slice(0));
-      if (myToken !== ttsTokenRef.current) return; // interrupted while decoding
+      if (myToken !== ttsTokenRef.current) return;
 
       const src = ctx.createBufferSource();
       src.buffer = audioBuffer;
@@ -152,7 +153,6 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
         ttsSourcesRef.current.delete(src);
         if (ttsSourcesRef.current.size === 0) void playNext();
       };
-
       src.start();
     } catch (e) {
       console.warn("decode/play failed", e);
@@ -175,65 +175,34 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     try { msg = JSON.parse(jsonString); } catch { return; }
 
     switch (msg.event) {
-      case "ping":
-        break;
-
-      case "speech_start":
-        setState("listening");
-        break;
-
-      case "interrupt": {
-        // Hard-stop and ignore any late TTS until the next response_start
-        dropUntilResponseStartRef.current = true;
-        clearTTSQueueAndStop({ sendEnd: false });
-        setInputDuck(false);
-        setState("listening");
-        break;
-      }
-
       case "transcript": {
         const text = String(msg.data || "");
         if (text) setMessages((p) => [...p, { role: "user", text }]);
         break;
       }
-
       case "response_start": {
-        // Accept new TTS for this turn and clear leftovers
         dropUntilResponseStartRef.current = false;
         setStreamBuf("");
         clearTTSQueueAndStop({ sendEnd: false });
         break;
       }
-
-      case "partial_response": {
-        const delta = String(msg.data || "");
-        if (delta) setStreamBuf((prev) => prev + delta);
-        break;
-      }
-
       case "response_text": {
         const full = String(msg.data || "");
         if (full) setMessages((p) => [...p, { role: "assistant", text: full }]);
         break;
       }
-
       case "response_done":
         setStreamBuf("");
         break;
-
       case "tts_audio": {
-        if (dropUntilResponseStartRef.current) break; // drop stale audio
+        if (dropUntilResponseStartRef.current) break;
         const b64 = String(msg.data || "");
         if (b64) enqueueTTS(b64);
         break;
       }
-
       case "error":
         console.error("❌ Error:", msg.data || msg.message);
         break;
-
-      default:
-        console.debug("WS:", msg);
     }
   }
 
@@ -243,117 +212,112 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
 
     const audioCtx = getAudioContext();
     const source = audioCtx.createMediaStreamSource(stream);
+    micSourceNodeRef.current = source;
 
     if (!inputGainRef.current) inputGainRef.current = audioCtx.createGain();
 
     const recorder = new AudioWorkletNode(audioCtx, "recorder-processor", {
-      numberOfInputs: 1,
-      numberOfOutputs: 1,
-      outputChannelCount: [1],
-      channelCount: 1,
-      channelCountMode: "explicit",
-      channelInterpretation: "speakers",
-      processorOptions: { targetMs: 48 },
+      processorOptions: {
+        sampleRate: audioCtx.sampleRate,
+      },
     });
+    audioProcessorNodeRef.current = recorder;
 
     recorder.port.onmessage = (e) => {
       const msg = e.data;
-      if (msg?.type === "pcm") {
+      if (msg?.type === "audio_chunk") {
+        // --- LOG 1: Confirm worklet is sending data back ---
+        console.log("Worklet -> Main: Received audio_chunk from worklet");
         const bytes = new Uint8Array(msg.payload);
         const b64 = encodeBase64(bytes);
         if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({ event: "pcm_chunk", data: b64 }));
+          // --- LOG 2: Confirm data is being sent over WebSocket ---
+          console.log("Main -> WebSocket: Sending audio_chunk to server");
+          wsRef.current.send(JSON.stringify({ event: "audio_chunk", data: b64 }));
         }
-      } else if (msg?.type === "metrics") {
-        wsRef.current?.send(
-          JSON.stringify({
-            event: "metrics",
-            frame: msg.frame,
-            ctx_sample_rate: msg.ctxSampleRate,
-            client_time: msg.clientTime,
-          })
-        );
       }
     };
 
-    // mic -> inputGain (duck) -> worklet -> destination(clock)
-    source.connect(inputGainRef.current!);
-    inputGainRef.current!.connect(recorder);
-    recorder.connect(audioCtx.destination);
+    // Correct Audio Graph: mic -> gain -> worklet (NO connection to speakers)
+    source.connect(inputGainRef.current);
+    inputGainRef.current.connect(recorder);
+
+    // To keep the AudioContext clock running, we must connect the source to the destination,
+    // but we can do it through a silent GainNode.
+    const silentGain = audioCtx.createGain();
+    silentGain.gain.value = 0;
+    source.connect(silentGain);
+    silentGain.connect(audioCtx.destination);
   }
 
   function stopRecording() {
     if (!isRecordingRef.current) return;
-    wsRef.current?.send(JSON.stringify({ event: "end_audio" }));
     isRecordingRef.current = false;
+    // Disconnect the audio graph to stop processing
+    if (micSourceNodeRef.current && inputGainRef.current) {
+        micSourceNodeRef.current.disconnect(inputGainRef.current);
+    }
+    if (inputGainRef.current && audioProcessorNodeRef.current) {
+        inputGainRef.current.disconnect(audioProcessorNodeRef.current);
+    }
   }
 
   async function preloadWorklet() {
     const audioCtx = getAudioContext();
-
     const workletCode = `
-class RecorderProcessor extends AudioWorkletProcessor {
-  constructor(options) {
-    super();
-    this.buffer = new Float32Array(0);
-    this.framesSinceMetric = 0;
-    this.targetMs = (options?.processorOptions?.targetMs) || 48;
-    this.batchFrames = Math.max(128, Math.ceil(sampleRate * (this.targetMs / 1000)));
-  }
-  process(inputs) {
-    const in0 = inputs[0];
-    if (!in0 || in0.length === 0) return true;
-
-    const chs = in0.filter(Boolean);
-    const mono = (chs.length === 1) ? chs[0] : (() => {
-      const len = chs[0].length;
-      const out = new Float32Array(len);
-      const gain = 0.70710678; // ~-3 dB per doubling
-      for (let i = 0; i < len; i++) {
-        let s = 0; for (let c = 0; c < chs.length; c++) s += chs[c][i];
-        out[i] = (s * gain) / chs.length;
+      function resample(input, inputRate, outputRate) {
+        if (inputRate === outputRate) return input;
+        const ratio = inputRate / outputRate;
+        const outputLength = Math.ceil(input.length / ratio);
+        const output = new Float32Array(outputLength);
+        for (let i = 0; i < outputLength; i++) {
+          const before = Math.floor(i * ratio);
+          const after = Math.min(before + 1, input.length - 1);
+          const atPoint = i * ratio - before;
+          output[i] = input[before] + (input[after] - input[before]) * atPoint;
+        }
+        return output;
       }
-      return out;
-    })();
 
-    if (mono.length) {
-      const tmp = new Float32Array(this.buffer.length + mono.length);
-      tmp.set(this.buffer, 0);
-      tmp.set(mono, this.buffer.length);
-      this.buffer = tmp;
-    }
+      class RecorderProcessor extends AudioWorkletProcessor {
+        constructor(options) {
+          super();
+          this.inputSampleRate = options.processorOptions.sampleRate;
+          this.outputSampleRate = 16000;
+          this.buffer = new Float32Array(0);
+          this.batchSize = Math.ceil(this.outputSampleRate * 0.048);
+        }
 
-    if (this.buffer.length >= this.batchFrames) {
-      const i16 = new Int16Array(this.buffer.length);
-      for (let i = 0; i < this.buffer.length; i++) {
-        const s = Math.max(-1, Math.min(1, this.buffer[i]));
-        i16[i] = s * 0x7fff;
+        process(inputs) {
+          const input = inputs[0]?.[0];
+          if (!input) return true;
+
+          const resampled = resample(input, this.inputSampleRate, this.outputSampleRate);
+          const newBuffer = new Float32Array(this.buffer.length + resampled.length);
+          newBuffer.set(this.buffer, 0);
+          newBuffer.set(resampled, this.buffer.length);
+          this.buffer = newBuffer;
+
+          while (this.buffer.length >= this.batchSize) {
+            const chunk = this.buffer.subarray(0, this.batchSize);
+            this.buffer = this.buffer.subarray(this.batchSize);
+            const i16 = new Int16Array(chunk.length);
+            for (let i = 0; i < chunk.length; i++) {
+              i16[i] = Math.max(-1, Math.min(1, chunk[i])) * 0x7fff;
+            }
+            this.port.postMessage({ type: 'audio_chunk', payload: i16.buffer }, [i16.buffer]);
+          }
+          return true;
+        }
       }
-      this.port.postMessage({ type: 'pcm', payload: i16.buffer }, [i16.buffer]);
-      this.buffer = new Float32Array(0);
-    }
-
-    this.framesSinceMetric += mono.length || 0;
-    const metricEveryFrames = Math.max(sampleRate / 2, 128 * 20);
-    if (this.framesSinceMetric >= metricEveryFrames) {
-      this.port.postMessage({
-        type: 'metrics',
-        frame: currentFrame,
-        ctxSampleRate: sampleRate,
-        clientTime: currentTime,
-      });
-      this.framesSinceMetric = 0;
-    }
-
-    return true;
-  }
-}
-registerProcessor('recorder-processor', RecorderProcessor);
-`;
+      registerProcessor('recorder-processor', RecorderProcessor);
+    `;
     const blob = new Blob([workletCode], { type: "application/javascript" });
     const url = URL.createObjectURL(blob);
     await audioCtx.audioWorklet.addModule(url);
-    console.log("🧩 AudioWorklet loaded");
+    // --- FIX 2: Set the flag to true after successful loading ---
+    workletLoadedRef.current = true;
+    console.log("🧩 AudioWorklet loaded and registered successfully.");
   }
 
   function startWebSocketAndRecording() {
@@ -363,18 +327,14 @@ registerProcessor('recorder-processor', RecorderProcessor);
     ws.onopen = async () => {
       const audioCtx = getAudioContext();
       await audioCtx.resume();
-
       const stream = micStreamRef.current;
       if (!stream) {
         setEnabled(false);
         return;
       }
-
-      ws.send(JSON.stringify({ event: "config", sample_rate: audioCtx.sampleRate }));
-      console.log(`🎤 Sent config SR: ${audioCtx.sampleRate} Hz`);
-
+      ws.send(JSON.stringify({ event: "start" }));
+      console.log(`🎤 Recording started. Client resampling from ${audioCtx.sampleRate} Hz to 16000 Hz.`);
       setState("listening");
-      ws.send(JSON.stringify({ event: "start_audio" }));
       startRecording(stream);
     };
     ws.onclose = () => {
@@ -403,18 +363,21 @@ registerProcessor('recorder-processor', RecorderProcessor);
     try {
       const ctx = getAudioContext();
       await ctx.resume();
-
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: false,
-          channelCount: { ideal: 1, max: 1 },
+          channelCount: 1,
         },
       });
       micStreamRef.current = stream;
-
-      await preloadWorklet();
+      
+      // --- FIX 3: Only load the worklet if it hasn't been loaded before ---
+      if (!workletLoadedRef.current) {
+        await preloadWorklet();
+      }
+      
       setEnabled(true);
     } catch (err) {
       console.error(err);
@@ -424,7 +387,9 @@ registerProcessor('recorder-processor', RecorderProcessor);
   }
 
   useEffect(() => {
-    if (enabled) startWebSocketAndRecording();
+    if (enabled) {
+      startWebSocketAndRecording();
+    }
   }, [enabled]);
 
   return (
