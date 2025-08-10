@@ -114,14 +114,14 @@ async def process_and_send_results(
 
     # --- STT (with optional debug audio dump) ---
     try:
-        project_root = Path(__file__).resolve().parents[2]
-        debug_dir = project_root / "debug_audio"
-        debug_dir.mkdir(exist_ok=True)
-        debug_audio_path = debug_dir / f"stt_input_{uuid.uuid4().hex}.wav"
+        #project_root = Path(__file__).resolve().parents[2] --------- outputs to audio dir if you need to debug audio quality
+        #debug_dir = project_root / "debug_audio"
+        #debug_dir.mkdir(exist_ok=True)
+       # debug_audio_path = debug_dir / f"stt_input_{uuid.uuid4().hex}.wav"
 
         transcript = jarvis_service.stt.transcribe_from_array(
             audio_np,
-            debug_save_path=str(debug_audio_path),
+            #debug_save_path=str(debug_audio_path),
         )
     except Exception as e:
         await websocket.send_text(json.dumps({"event": "error", "message": str(e)}))
