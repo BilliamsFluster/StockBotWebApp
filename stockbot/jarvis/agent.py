@@ -34,4 +34,16 @@ class BaseAgent(ABC):
 
     @abstractmethod
     def generate(self, prompt: str, output_format: str = "text") -> str:
+        """
+        Generates a response from the language model as an asynchronous stream.
+
+        Args:
+            user_input (str): The text input from the user to be processed by the model.
+            output_format (str): The desired format for the output stream (e.g., "text").
+
+        Yields:
+            str: Chunks of the generated text as they become available.
+        """
+        # This is an abstract method, so it must be implemented by subclasses.
+        # The 'yield' keyword here is a placeholder to indicate it's a generator.
         raise NotImplementedError
