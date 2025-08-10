@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Dict, List, Any
-from .memory_manager import MemoryManager
+from jarvis.memory_manager import MemoryManager
 
 class BaseAgent(ABC):
     FLAG_MAP: Dict[str, Dict[str, List[str]]] = {

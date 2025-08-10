@@ -1,11 +1,11 @@
 """
-WebSocket voice handler with:
-- Robust mono PCM intake (no channel drift)
-- Input sample-rate telemetry + safe fallback
-- Single resample to TARGET_SAMPLE_RATE (torchaudio)
-- VAD-based turn taking, TTS micro-batching, barge-in
+WebSocket voice handler — interrupt-safe streaming TTS with barge‑in.
+Key fixes:
+- Duck mic input on client during TTS to prevent self-echo.
+- Barge‑in grace period after TTS start; higher threshold early on.
+- Correct speech max-duration tracking.
+- Run LLM+TTS in background Task and make it cancel-aware.
 """
-
 import os
 import math
 import base64
@@ -31,8 +31,9 @@ MIN_PHRASE_SEC = 0.3
 TRIGGER_WINDOW_SEC = 2
 MAX_HISTORY_SEC = 5
 
-INTERRUPT_THRESHOLD = float(os.getenv("JARVIS_INTERRUPT_THRESHOLD", 0.015))
-SUPPRESSION_RELEASE_SEC = float(os.getenv("JARVIS_RELEASE_SEC", 0.2))
+INTERRUPT_THRESHOLD = float(os.getenv("JARVIS_INTERRUPT_THRESHOLD", 0.018))
+EARLY_TTS_MULTIPLIER = 2.0  # stricter right after TTS start
+SUPPRESSION_RELEASE_SEC = float(os.getenv("JARVIS_RELEASE_SEC", 0.25))
 
 MIN_SILENCE_SEC = 0.3
 MAX_SILENCE_SEC = 1.2
@@ -124,16 +125,22 @@ async def process_and_send_results(
     await websocket.send_text(json.dumps({"event": "transcript", "data": transcript}))
 
     async def flush_tts_phrase(text: str):
-        t = text.strip()
-        if not t or not tts_ctx["allow"]:
+        t = (text or "").strip()
+        if not t:
+            return
+        if tts_ctx["cancel"].is_set() or not tts_ctx["allow"]:
             return
         async with tts_ctx["lock"]:
-            if not tts_ctx["allow"]:
+            if tts_ctx["cancel"].is_set() or not tts_ctx["allow"]:
                 return
             try:
-                audio_bytes = await jarvis_service.tts.synthesize_to_bytes(t)
+                audio_bytes = await jarvis_service.tts.synthesize_to_bytes(t, cancel=tts_ctx["cancel"])
+                if tts_ctx["cancel"].is_set() or not tts_ctx["allow"]:
+                    return
                 b64_audio = base64.b64encode(audio_bytes).decode("ascii")
                 await websocket.send_text(json.dumps({"event": "tts_audio", "data": b64_audio}))
+            except asyncio.CancelledError:
+                return
             except Exception as e:
                 await websocket.send_text(json.dumps({"event": "error", "message": f"TTS error: {e}"}))
 
@@ -142,6 +149,8 @@ async def process_and_send_results(
     await websocket.send_text(json.dumps({"event": "response_start"}))
     try:
         async for delta in jarvis_service.agent.generate_stream(transcript, output_format="text"):
+            if tts_ctx["cancel"].is_set():
+                raise asyncio.CancelledError()
             if not delta:
                 continue
             full_text += delta
@@ -150,6 +159,9 @@ async def process_and_send_results(
             if should_flush(buf):
                 to_speak, buf = buf, ""
                 asyncio.create_task(flush_tts_phrase(to_speak))
+    except asyncio.CancelledError:
+        await websocket.send_text(json.dumps({"event": "response_done"}))
+        return
     except Exception as e:
         await websocket.send_text(json.dumps({"event": "error", "message": f"LLM error: {e}"}))
         return
@@ -183,19 +195,27 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
     conn_history = []
 
     speaking = False
+    speech_started_at = 0.0
     silence_time = 0.0
     last_vad_check = time.time()
 
     tts_playing = False
-    suppression_active = False
+    tts_started_ts = 0.0
     suppression_release_ts = 0.0
 
-    tts_ctx = {"allow": True, "lock": asyncio.Lock()}
+    # cancellation-aware TTS/LLM context
+    def new_tts_ctx():
+        return {"allow": True, "lock": asyncio.Lock(), "cancel": asyncio.Event()}
 
+    tts_ctx = new_tts_ctx()
     resample_log_ctr = 0
+
+    # current generation task (LLM+TTS streaming)
+    gen_task: asyncio.Task | None = None
 
     try:
         while True:
+            # SR resolve fallback
             if resolved_input_sr is None and client_sample_rate and time.monotonic() > sr_fallback_deadline:
                 resolved_input_sr = int(client_sample_rate)
                 if not (SR_MIN <= resolved_input_sr <= SR_MAX):
@@ -272,16 +292,13 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                     if len(pending_chunks) >= PENDING_MAX_CHUNKS:
                         pending_chunks.pop(0)
                     pending_chunks.append(chunk)
-                    print(f"[{conn_id}] ⏸ Queued PCM ({chunk.shape[1]} frames); awaiting input SR from metrics… {len(pending_chunks)} queued")
                     continue
 
                 if resampler:
-                    before_len = chunk.shape[1]
                     chunk = resampler(chunk)
-                    after_len = chunk.shape[1]
                     resample_log_ctr += 1
                     if resample_log_ctr % RESAMPLE_LOG_EVERY == 0:
-                        print(f"[{conn_id}] 🎚 Resampled {resolved_input_sr}→{TARGET_SAMPLE_RATE} (frames: {before_len}→{after_len})")
+                        print(f"[{conn_id}] 🎚 Resampled {resolved_input_sr}→{TARGET_SAMPLE_RATE} (frames: {chunk.shape[1]})")
                 else:
                     resample_log_ctr += 1
                     if resample_log_ctr % RESAMPLE_LOG_EVERY == 0:
@@ -289,6 +306,7 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
 
                 volume = calculate_rms(chunk)
 
+                # Maintain rolling buffers
                 phrase_waveform = torch.cat((phrase_waveform, chunk), dim=1)
                 trigger_waveform = torch.cat((trigger_waveform, chunk), dim=1)
 
@@ -297,6 +315,37 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                 if trigger_waveform.shape[1] > int(TARGET_SAMPLE_RATE * TRIGGER_WINDOW_SEC):
                     trigger_waveform = trigger_waveform[:, -int(TARGET_SAMPLE_RATE * TRIGGER_WINDOW_SEC):]
 
+                # -------- Barge‑in detection while TTS is playing --------
+                if tts_playing:
+                    multiplier = EARLY_TTS_MULTIPLIER if time.monotonic() < suppression_release_ts else 1.0
+                    eff_threshold = INTERRUPT_THRESHOLD * multiplier
+                    if volume >= eff_threshold:
+                        print(f"[{conn_id}] ⛔️ Barge‑in (RMS={volume:.4f} ≥ {eff_threshold:.4f})")
+                        await websocket.send_text(json.dumps({"event": "interrupt"}))
+
+                        # cancel any ongoing generation/TTS
+                        tts_ctx["allow"] = False
+                        tts_ctx["cancel"].set()
+                        if gen_task and not gen_task.done():
+                            gen_task.cancel()
+                            try:
+                                await gen_task
+                            except asyncio.CancelledError:
+                                pass
+                        gen_task = None
+
+                        # clear buffers; start fresh
+                        phrase_waveform = torch.empty((1, 0))
+                        trigger_waveform = torch.empty((1, 0))
+                        speaking = False
+                        silence_time = 0.0
+                        speech_started_at = 0.0
+
+                        # New TTS context for the next turn
+                        tts_ctx = new_tts_ctx()
+                        continue
+
+                # -------- Speech segmentation / VAD --------
                 phrase_duration = phrase_waveform.shape[1] / TARGET_SAMPLE_RATE
 
                 if volume < MIN_RMS_FOR_SPEECH:
@@ -306,6 +355,7 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
 
                 dyn_timeout = compute_dynamic_silence_threshold(phrase_duration)
 
+                now_vad = time.time()
                 if speaking and silence_time >= dyn_timeout:
                     speaking = False
                     await websocket.send_text(json.dumps({"event": "speech_end"}))
@@ -313,14 +363,16 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                         phrase_to_process = phrase_waveform.clone()
                         phrase_waveform = torch.empty((1, 0))
                         trigger_waveform = torch.empty((1, 0))
+                        # allow TTS for this turn
                         tts_ctx["allow"] = True
-                        await process_and_send_results(websocket, phrase_to_process, jarvis_service, conn_history, tts_ctx)
+                        gen_task = asyncio.create_task(
+                            process_and_send_results(websocket, phrase_to_process, jarvis_service, conn_history, tts_ctx)
+                        )
                     continue
 
                 if volume < MIN_RMS_FOR_SPEECH:
                     continue
 
-                now_vad = time.time()
                 if now_vad - last_vad_check > 0.05:
                     last_vad_check = now_vad
                     try:
@@ -336,10 +388,11 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                     if segments and not speaking:
                         speaking = True
                         silence_time = 0.0
+                        speech_started_at = time.monotonic()
                         print(f"[{conn_id}] 🟢 Speech start")
                         await websocket.send_text(json.dumps({"event": "speech_start"}))
 
-                    if speaking and (now_vad - last_vad_check) > MAX_SPEECH_DURATION_SEC:
+                    if speaking and speech_started_at and (time.monotonic() - speech_started_at) > MAX_SPEECH_DURATION_SEC:
                         speaking = False
                         await websocket.send_text(json.dumps({"event": "speech_end"}))
                         if phrase_duration >= MIN_PHRASE_SEC:
@@ -347,18 +400,19 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                             phrase_waveform = torch.empty((1, 0))
                             trigger_waveform = torch.empty((1, 0))
                             tts_ctx["allow"] = True
-                            await process_and_send_results(websocket, phrase_to_process, jarvis_service, conn_history, tts_ctx)
+                            gen_task = asyncio.create_task(
+                                process_and_send_results(websocket, phrase_to_process, jarvis_service, conn_history, tts_ctx)
+                            )
                 continue
 
             if event == "tts_start":
                 tts_playing = True
-                suppression_active = False
+                tts_started_ts = time.monotonic()
+                suppression_release_ts = tts_started_ts + SUPPRESSION_RELEASE_SEC
                 continue
 
             if event == "tts_end":
                 tts_playing = False
-                suppression_active = False
-                tts_ctx["allow"] = False
                 continue
 
             if event == "start_audio":
@@ -373,3 +427,10 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
 
     except WebSocketDisconnect:
         print(f"[{conn_id}] ❌ Client disconnected")
+    finally:
+        if gen_task and not gen_task.done():
+            gen_task.cancel()
+            try:
+                await gen_task
+            except asyncio.CancelledError:
+                pass

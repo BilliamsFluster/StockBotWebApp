@@ -4,28 +4,30 @@ pip install edge-tts
 """
 import os
 import edge_tts
+import asyncio
+from typing import Optional
 
 class TextToSpeech:
+    """Thin wrapper around edge-tts that supports cancellation.
+
+    Parameters roughly mirror edge-tts options. MP3 is produced by default
+    when streaming; the client expects `audio/mpeg`.
+    """
+
     def __init__(
         self,
         voice: str = "en-US-JennyNeural",
         rate: str = "+0%",
         pitch: str = "+0Hz",
         volume: str = "+0%",
-        # NOTE: edge-tts chooses the right format based on file extension in .save()
-        # MP3 is fine for your frontend, so we save to .mp3.
-    ):
+    ) -> None:
         self.voice = voice
         self.rate = rate
         self.pitch = pitch
         self.volume = volume
 
     async def synthesize(self, text: str, out_path: str) -> str:
-        """
-        Generate speech and write to `out_path` (e.g., .../reply.mp3).
-        Returns the same `out_path` when done.
-        """
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        """Generate speech and write to `out_path` (e.g., .../reply.mp3)."""
         communicate = edge_tts.Communicate(
             text,
             voice=self.voice,
@@ -33,13 +35,22 @@ class TextToSpeech:
             pitch=self.pitch,
             volume=self.volume,
         )
-        # Easiest/cleanest: just save to file (non-blocking, async)
         await communicate.save(out_path)
         return out_path
 
-    async def synthesize_to_bytes(self, text: str) -> bytes:
+    async def synthesize_to_bytes(
+        self,
+        text: str,
+        cancel: Optional[asyncio.Event] = None,
+        max_bytes: Optional[int] = None,
+    ) -> bytes:
         """
-        If you ever want raw bytes instead of saving to disk.
+        Stream TTS into memory and return MP3 bytes.
+
+        Args:
+            text: Text/SSML to synthesize.
+            cancel: If set during streaming, stop early and return what we have.
+            max_bytes: Optional hard cap to avoid runaway memory usage.
         """
         communicate = edge_tts.Communicate(
             text,
@@ -49,7 +60,19 @@ class TextToSpeech:
             volume=self.volume,
         )
         buf = bytearray()
-        async for chunk in communicate.stream():  # <-- no args
-            if chunk["type"] == "audio":
-                buf.extend(chunk["data"])
+        try:
+            async for chunk in communicate.stream():  # yields dicts {type, data}
+                if cancel is not None and cancel.is_set():
+                    break  # stop streaming promptly on barge‑in
+                if chunk["type"] == "audio":
+                    data = chunk["data"]
+                    buf.extend(data)
+                    if max_bytes is not None and len(buf) >= max_bytes:
+                        break
+        except asyncio.CancelledError:
+            # propagate if the caller truly cancels the task
+            raise
+        except Exception:
+            # Return what we have on partial failure to keep pipeline resilient
+            pass
         return bytes(buf)
