@@ -87,7 +87,8 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     const ctx = getAudioContext();
     if (!inputGainRef.current) return;
     const g = inputGainRef.current.gain;
-    const target = duck ? 0.12 : 1.0;
+    // --- MODIFIED: Gentler ducking as per your plan ---
+    const target = duck ? 0.4 : 1.0;
     const t = ctx.currentTime;
     g.cancelScheduledValues(t);
     g.setTargetAtTime(target, t, 0.05);
@@ -96,20 +97,32 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
   function clearTTSQueueAndStop({ sendEnd = false }: { sendEnd?: boolean } = {}) {
     ttsQueueRef.current = [];
     const ctx = getAudioContext();
+    if (!ctx) return;
     const now = ctx.currentTime;
+
+    // --- THIS IS THE FIX, mimicking your old project's logic ---
     if (ttsGainRef.current) {
       const g = ttsGainRef.current.gain;
       g.cancelScheduledValues(now);
-      g.setTargetAtTime(0, now, 0.015);
+      // 1. Instantly set volume to 0 (like .pause())
+      g.setValueAtTime(0, now);
     }
+    // 2. Stop all playing sources and disconnect them (like .src = "")
     for (const src of ttsSourcesRef.current) {
-      try { src.stop(now + 0.1); } catch {}
+      try {
+        src.stop(now); 
+      } catch {}
       try { src.disconnect(); } catch {}
     }
     ttsSourcesRef.current.clear();
+    // --- End of fix ---
+
     isPlayingRef.current = false;
     ttsTokenRef.current++;
-    if (sendEnd) wsRef.current?.send(JSON.stringify({ event: "tts_end" }));
+    // --- MODIFIED: Only send tts_end if requested, to avoid race conditions ---
+    if (sendEnd) {
+        wsRef.current?.send(JSON.stringify({ event: "tts_end" }));
+    }
   }
 
   async function playNext() {
@@ -141,6 +154,7 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
         isPlayingRef.current = true;
         setState("speaking");
         setInputDuck(true);
+        // --- MODIFIED: Send tts_start as per your plan ---
         wsRef.current?.send(JSON.stringify({ event: "tts_start" }));
         const t = ctx.currentTime;
         ttsGainRef.current!.gain.setValueAtTime(0, t);
@@ -204,6 +218,13 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
         if (b64) enqueueTTS(b64);
         break;
       }
+      // --- THIS IS THE FIX ---
+      // Add this case to handle the interrupt event from the server
+      case "interrupt": {
+        console.log("🛑 Interrupt received (from server), stopping TTS.");
+        clearTTSQueueAndStop();
+        break;
+      }
       case "error":
         console.error("❌ Error:", msg.data || msg.message);
         break;
@@ -223,9 +244,17 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     const recorder = new AudioWorkletNode(audioCtx, "recorder-processor", {
       processorOptions: {
         sampleRate: audioCtx.sampleRate,
+        // --- NEW: Pass RMS calculation options to worklet ---
+        rmsWindowSize: 20, // ms
+        rmsCallbackInterval: 60, // ms
       },
     });
     audioProcessorNodeRef.current = recorder;
+
+    // --- NEW: Local Barge-in Logic ---
+    let bargeInCounter = 0;
+    const BARGE_IN_THRESHOLD = 0.08; // RMS threshold for barge-in
+    const BARGE_IN_MIN_COUNT = 1; // How many consecutive RMS samples must be over threshold
 
     recorder.port.onmessage = (e) => {
       const msg = e.data;
@@ -234,6 +263,29 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
         const b64 = encodeBase64(bytes);
         if (wsRef.current?.readyState === WebSocket.OPEN) {
           wsRef.current.send(JSON.stringify({ event: "audio_chunk", data: b64 }));
+        }
+      } else if (msg?.type === "rms") {
+        // --- This is our local VAD ---
+        if (isPlayingRef.current) {
+          if (msg.payload > BARGE_IN_THRESHOLD) {
+            bargeInCounter++;
+          } else {
+            bargeInCounter = 0;
+          }
+
+          if (bargeInCounter >= BARGE_IN_MIN_COUNT) {
+            console.log("⚡ Local Barge-in triggered!");
+            // Instantly mute and flush TTS
+            clearTTSQueueAndStop({ sendEnd: false }); 
+            // Tell server to stop generating
+            wsRef.current?.send(JSON.stringify({ event: "interrupt" }));
+            // Ignore any in-flight TTS packets
+            dropUntilResponseStartRef.current = true;
+            // Un-duck the mic immediately
+            setInputDuck(false);
+            // Reset counter
+            bargeInCounter = 0;
+          }
         }
       }
     };
@@ -265,6 +317,8 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
   async function preloadWorklet() {
     const audioCtx = getAudioContext();
     const workletCode = `
+      // --- THIS IS THE FIX ---
+      // The resample function must be defined outside the class.
       function resample(input, inputRate, outputRate) {
         if (inputRate === outputRate) return input;
         const ratio = inputRate / outputRate;
@@ -284,6 +338,10 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
           super();
           this.inputSampleRate = options.processorOptions.sampleRate;
           this.outputSampleRate = 16000;
+          this.rmsWindowSize = (this.inputSampleRate * options.processorOptions.rmsWindowSize) / 1000;
+          this.rmsCallbackInterval = (this.inputSampleRate * options.processorOptions.rmsCallbackInterval) / 1000;
+          this.rmsBuffer = new Float32Array(0);
+          this.samplesSinceLastRmsCallback = 0;
           this.buffer = new Float32Array(0);
           this.batchSize = Math.ceil(this.outputSampleRate * 0.048);
         }
@@ -292,6 +350,17 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
           const input = inputs[0]?.[0];
           if (!input) return true;
 
+          // --- RMS Calculation ---
+          this.rmsBuffer = Float32Array.of(...this.rmsBuffer.slice(-this.rmsWindowSize), ...input);
+          this.samplesSinceLastRmsCallback += input.length;
+          if (this.samplesSinceLastRmsCallback >= this.rmsCallbackInterval) {
+            this.samplesSinceLastRmsCallback = 0;
+            const rms = Math.sqrt(this.rmsBuffer.reduce((s, v) => s + v*v, 0) / this.rmsBuffer.length);
+            this.port.postMessage({ type: 'rms', payload: rms });
+          }
+
+          // --- Resampling and sending audio chunks (existing logic) ---
+          // --- MODIFIED: Call resample directly, not as this.resample ---
           const resampled = resample(input, this.inputSampleRate, this.outputSampleRate);
           const newBuffer = new Float32Array(this.buffer.length + resampled.length);
           newBuffer.set(this.buffer, 0);

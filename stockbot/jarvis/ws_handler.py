@@ -42,7 +42,7 @@ MIN_SILENCE_SEC = 0.3
 MAX_SILENCE_SEC = 1.2
 BOUNDARY_RE = re.compile(r'([\.!\?…]["\')\]]?\s)$')
 VAD_OPTS = dict(
-    threshold=0.5,
+    threshold=0.3,
     min_speech_duration_ms=150,
     min_silence_duration_ms=120,
 )
@@ -60,8 +60,12 @@ def compute_dynamic_silence_threshold(phrase_duration: float):
 
 
 def should_flush(buf: str) -> bool:
+    # --- MODIFIED: More aggressive flushing for lower latency ---
+    if not buf.strip(): return False
+    # Flush on sentence-ending punctuation
     if BOUNDARY_RE.search(buf): return True
-    if len(buf) > 180 and any(p in ".!?;:" for p in buf): return True
+    # Flush on commas or if the buffer is getting moderately long
+    if ',' in buf or ':' in buf or ';' in buf or len(buf) > 45: return True
     return False
 
 
@@ -179,7 +183,8 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
     speech_started_at = 0.0
     silence_time = 0.0
     last_vad_check = 0.0
-    # --- REMOVED: current_speaker_id is no longer a long-lived state variable ---
+    # --- NEW: Add tts_active state tracking as per your plan ---
+    tts_active = False
     gen_task: asyncio.Task | None = None
     def new_tts_ctx():
         return {"allow": True, "lock": asyncio.Lock(), "cancel": asyncio.Event()}
@@ -187,8 +192,6 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
 
     try:
         print(f"[{conn_id}] Ready to process audio.")
-
-        # --- REMOVED: reset_chunk_flag_after_delay helper ---
 
         while True:
             raw = await websocket.receive_text()
@@ -199,12 +202,37 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
 
             event = msg.get("event")
 
+            # --- NEW: Handle TTS state from client as per your plan ---
+            if event == "tts_start":
+                tts_active = True
+                continue
+            if event == "tts_end":
+                tts_active = False
+                continue
+
             if event == "audio_chunk":
                 # Audio is already 16kHz, so we just decode and process
                 pcm_bytes = base64.b64decode(msg["data"])
                 chunk = (torch.frombuffer(bytearray(pcm_bytes), dtype=torch.int16).to(torch.float32) / 32768.0).unsqueeze(0)
 
                 volume = calculate_rms(chunk)
+
+                # --- NEW: Server-side barge-in logic as a fallback ---
+                if tts_active and volume > MIN_RMS_FOR_SPEECH:
+                    print(f"[{conn_id}] 🛑 Server-side barge-in detected!")
+                    tts_active = False
+                    tts_ctx["allow"] = False
+                    tts_ctx["cancel"].set()
+                    if gen_task and not gen_task.done():
+                        gen_task.cancel()
+                    await websocket.send_text(json.dumps({"event": "interrupt"}))
+                    # Don't reset phrase_waveform, let the user's speech continue
+                    if not speaking:
+                        speaking = True # Assume speech has started
+                        silence_time = 0.0
+                        speech_started_at = time.monotonic()
+                        print(f"[{conn_id}] 🟢 Speech start (from server barge-in)")
+                    continue
 
                 # Maintain rolling buffers
                 phrase_waveform = torch.cat((phrase_waveform, chunk), dim=1)
@@ -236,7 +264,8 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                         phrase_to_process = phrase_waveform.clone()
                         phrase_waveform = torch.empty((1, 0))
                         trigger_waveform = torch.empty((1, 0))
-                        tts_ctx["allow"] = True
+                        # --- MODIFIED: Create fresh tts_ctx for new generation ---
+                        tts_ctx = new_tts_ctx()
 
                         # --- NEW: Perform diarization on the complete utterance ---
                         try:
@@ -280,7 +309,8 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                             phrase_to_process = phrase_waveform.clone()
                             phrase_waveform = torch.empty((1, 0))
                             trigger_waveform = torch.empty((1, 0))
-                            tts_ctx["allow"] = True
+                            # --- MODIFIED: Create fresh tts_ctx for new generation ---
+                            tts_ctx = new_tts_ctx()
                             
                             # --- NEW: Perform diarization on the complete utterance (for max duration case) ---
                             try:
@@ -298,7 +328,8 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                 continue
 
             elif event == "interrupt":
-                print(f"[{conn_id}] ⛔️ Barge-in received.")
+                print(f"[{conn_id}] ⛔️ Client-side barge-in confirmed.")
+                tts_active = False
                 tts_ctx["allow"] = False
                 tts_ctx["cancel"].set()
                 if gen_task and not gen_task.done():
@@ -306,7 +337,7 @@ async def handle_voice_ws(websocket: WebSocket, jarvis_service):
                 phrase_waveform = torch.empty((1, 0))
                 trigger_waveform = torch.empty((1, 0))
                 speaking = False
-                # --- REMOVED: processing_chunk state ---
+                # --- MODIFIED: Create fresh tts_ctx after interrupt ---
                 tts_ctx = new_tts_ctx()
                 continue
 
