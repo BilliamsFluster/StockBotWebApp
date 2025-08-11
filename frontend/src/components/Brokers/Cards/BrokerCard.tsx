@@ -1,7 +1,6 @@
 'use client';
 
 import { BrokerId } from '@/types/Broker';
-import {useWarmPortfolioData} from '@/hooks/useWarmPortfolioData'
 
 
 interface BrokerCardProps {
@@ -55,7 +54,15 @@ export default function BrokerCard({
       <p className="text-sm text-neutral-400 mb-4">{description}</p>
 
       {/* Action Buttons */}
-      {connected ? (
+      {connected === null ? (
+        // ✅ Loading state
+        <button
+          disabled
+          className="px-4 py-2 rounded-md text-sm font-medium bg-gray-600 text-gray-400 cursor-not-allowed"
+        >
+          Checking...
+        </button>
+      ) : connected ? (
         <div className="flex gap-2">
           <button
             onClick={() => onSetActive(id)}

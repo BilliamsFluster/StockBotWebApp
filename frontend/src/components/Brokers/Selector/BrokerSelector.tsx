@@ -11,7 +11,6 @@ import BrokerCard from '@/components/Brokers/Cards/BrokerCard';
 import { brokersList } from '@/config/brokersConfig';
 import SchwabAuth from '@/components/Auth/SchwabAuth';
 import AlpacaAuth from '@/components/Auth/AlpacaAuth';
-import {useWarmPortfolioData} from '@/hooks/useWarmPortfolioData'
 
 type Preferences = {
   activeBroker: string;
@@ -22,7 +21,6 @@ type Preferences = {
 
 
 export default function BrokerSelector() {
-  useWarmPortfolioData();
   const [preferences, setPreferences] = useState<Preferences | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -42,9 +40,26 @@ export default function BrokerSelector() {
       const res = await getUserPreferences();
       setPreferences(res);
 
-      // ✅ Check backend connection status
-      const schwabStatus = await checkSchwabCredentials().catch(() => ({ exists: false }));
-      const alpacaStatus = await checkAlpacaCredentials().catch(() => ({ exists: false }));
+      // ✅ Check backend connection status with better error handling
+      const checkConnections = async () => {
+        const schwabStatus = await checkSchwabCredentials()
+          .then(data => ({ exists: data.exists }))
+          .catch(err => {
+            console.error('Error checking Schwab credentials:', err);
+            return { exists: false };
+          });
+          
+        const alpacaStatus = await checkAlpacaCredentials()
+          .then(data => ({ exists: data.exists }))
+          .catch(err => {
+            console.error('Error checking Alpaca credentials:', err);
+            return { exists: false };
+          });
+
+        return { schwabStatus, alpacaStatus };
+      };
+
+      const { schwabStatus, alpacaStatus } = await checkConnections();
 
       setConnectedStates({
         schwab: schwabStatus.exists,
@@ -63,16 +78,32 @@ export default function BrokerSelector() {
 
   // Set active broker
   const handleSetActive = async (broker: string) => {
-    await setActiveBroker(broker);
-    setPreferences((prev) => (prev ? { ...prev, activeBroker: broker } : null));
-    useWarmPortfolioData();
-
+    try {
+      await setActiveBroker(broker);
+      setPreferences((prev) => (prev ? { ...prev, activeBroker: broker } : null));
+      
+      // ✅ Just set the active broker, don't fetch portfolio here
+      // Portfolio data will be fetched automatically when user visits portfolio page
+      console.log(`✅ Successfully set ${broker} as active broker`);
+    } catch (error) {
+      console.error('Error setting active broker:', error);
+    }
   };
 
   // Disconnect broker
   const handleDisconnect = async (broker: string) => {
-    await disconnectBroker(broker);
-    setConnectedStates((prev) => ({ ...prev, [broker]: false })); // ✅ instant UI update
+    try {
+      await disconnectBroker(broker);
+      setConnectedStates((prev) => ({ ...prev, [broker]: false })); // ✅ instant UI update
+      
+      // If disconnecting the active broker, clear active broker
+      if (preferences?.activeBroker === broker) {
+        await setActiveBroker('');
+        setPreferences((prev) => (prev ? { ...prev, activeBroker: '' } : null));
+      }
+    } catch (error) {
+      console.error('Error disconnecting broker:', error);
+    }
   };
 
   // Connect broker
@@ -84,7 +115,11 @@ export default function BrokerSelector() {
   // Called when auth modal finishes connecting
   const handleConnected = (broker: string) => {
     setConnectedStates((prev) => ({ ...prev, [broker]: true })); // ✅ instant UI update
-    fetchPreferences(); // ✅ re-sync backend state
+    
+    // ✅ Re-fetch preferences and connection status to sync with backend
+    setTimeout(() => {
+      fetchPreferences();
+    }, 500); // Small delay to ensure backend has processed the connection
   };
 
   if (loading) return <p>Loading brokers...</p>;
