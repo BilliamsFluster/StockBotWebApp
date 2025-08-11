@@ -11,6 +11,7 @@ router.post('/refresh', protectRoute, refreshSchwabAccessToken);
 // POST /api/schwab/authorize
 router.post('/authorize', protectRoute, exchangeCodeForTokens);
 router.get('/account', protectRoute, getSchwabAccountStatus);
+router.get('/status', protectRoute, getSchwabAccountStatus);
 
 router.post('/set-credentials', protectRoute, setSchwabCredentials)
 router.post('/disconnect', protectRoute, disconnectSchwabAPI)

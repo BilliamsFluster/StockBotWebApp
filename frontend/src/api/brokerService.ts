@@ -31,3 +31,38 @@ export async function getActiveApiPortfolioData() {
    
   return res.data;
 }
+
+// Add this function to check actual broker connection status
+export async function checkBrokerConnectionStatus(brokerId: string) {
+  try {
+    const response = await axios.get(
+      `${API_BASE}/api/${brokerId}/status`,
+      { 
+        withCredentials: true,
+        headers: { 'Content-Type': 'application/json' }
+       }
+    );
+    
+    // Return the status from the API response
+    return response.data.status || 'disconnected';
+  } catch (error) {
+    console.error(`Failed to check connection status for ${brokerId}:`, error);
+    // If we can't check status, assume disconnected
+    return 'disconnected';
+  }
+}
+
+export async function pollBrokerConnectionStatus(
+  brokerId: string,
+  opts: { retries?: number; intervalMs?: number } = {}
+) {
+  const { retries = 10, intervalMs = 500 } = opts;
+  let last = 'disconnected';
+
+  for (let i = 0; i < retries; i++) {
+    last = await checkBrokerConnectionStatus(brokerId); // <-- already returns 'disconnected' on error
+    if (last === 'connected') return 'connected';
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return last; // 'disconnected' if never flipped
+}
