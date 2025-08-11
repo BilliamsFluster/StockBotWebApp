@@ -29,7 +29,7 @@ export async function getActiveApiPortfolioData() {
             timeout: 10000, // ✅ 10 second timeout to prevent hanging requests
         }
     );
-    console.log(process.env.NEXT_PUBLIC_BACKEND_URL)
+    
    
     return res.data;
   } catch (error: any) {
