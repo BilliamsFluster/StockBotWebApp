@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   FaWallet,
   FaDollarSign,
@@ -16,6 +16,7 @@ import TransactionsTable from './TransactionsTable';
 import TradingHistoryTable from './TradingHistoryTable';
 import AccountBalanceGraph from './AccountBalanceGraph';
 import { usePortfolioData } from '@/hooks/usePortfolioData';
+import { getUserPreferences } from '@/api/client';
 
 const statWidgets = [
   { icon: <FaWallet className="w-4 h-4 text-purple-400" />, label: 'Liquidation', field: 'liquidationValue' },
@@ -39,10 +40,86 @@ const defaultSummary = {
 };
 
 const PortfolioPage: React.FC = () => {
-  const { data, isLoading, error } = usePortfolioData();
+  const { data, isLoading, error, refetch } = usePortfolioData();
+  const [activeBroker, setActiveBroker] = useState<string | null>(null);
+  const [checkingBroker, setCheckingBroker] = useState(true);
+  
   const summary = data?.portfolio?.summary ?? defaultSummary;
   const positions = data?.portfolio?.positions ?? [];
   const transactions = data?.portfolio?.transactions ?? [];
+
+  // Check if user has an active broker set
+  useEffect(() => {
+    const checkActiveBroker = async () => {
+      try {
+        const preferences = await getUserPreferences();
+        setActiveBroker(preferences?.activeBroker || null);
+      } catch (err) {
+        console.error('Error checking active broker:', err);
+        setActiveBroker(null);
+      } finally {
+        setCheckingBroker(false);
+      }
+    };
+
+    checkActiveBroker();
+  }, []);
+
+  // ✅ Show message if no active broker is set
+  if (!checkingBroker && !activeBroker) {
+    return (
+      <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_#1f1f2e,_#0d0d12)] text-neutral-200">
+        <main className="relative z-10 p-6 space-y-6 ml-20 lg:ml-64 transition-all duration-300">
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
+              Portfolio Dashboard
+            </h1>
+          </div>
+          
+          <div className="rounded-xl backdrop-blur-lg bg-black/20 p-8 shadow-xl border border-yellow-400/20 text-center">
+            <h2 className="text-xl font-semibold text-yellow-400 mb-4">No Active Broker</h2>
+            <p className="text-neutral-300 mb-6">
+              Please connect and set an active broker in the Settings page to view your portfolio.
+            </p>
+            <a
+              href="/settings"
+              className="inline-block px-6 py-2 rounded-md text-sm font-medium bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:opacity-90 transition-all duration-300"
+            >
+              Go to Settings
+            </a>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // ✅ Handle error state
+  if (error) {
+    return (
+      <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_#1f1f2e,_#0d0d12)] text-neutral-200">
+        <main className="relative z-10 p-6 space-y-6 ml-20 lg:ml-64 transition-all duration-300">
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
+              Portfolio Dashboard
+            </h1>
+          </div>
+          
+          <div className="rounded-xl backdrop-blur-lg bg-black/20 p-8 shadow-xl border border-red-400/20 text-center">
+            <h2 className="text-xl font-semibold text-red-400 mb-4">Unable to Load Portfolio</h2>
+            <p className="text-neutral-300 mb-6">
+              {error instanceof Error ? error.message : 'Failed to fetch portfolio data'}
+            </p>
+            <button
+              onClick={() => refetch()}
+              className="px-6 py-2 rounded-md text-sm font-medium bg-gradient-to-r from-blue-500 to-indigo-500 text-white hover:opacity-90 transition-all duration-300"
+            >
+              Try Again
+            </button>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_#1f1f2e,_#0d0d12)] text-neutral-200">

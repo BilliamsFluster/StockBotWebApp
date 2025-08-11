@@ -14,6 +14,7 @@ export async function getBrokerCredentials(user, broker) {
   if (!creds) {
     throw new Error(`No credentials found for broker: ${broker}`);
   }
+  
 
   // Map of how each broker gets its credentials
   const brokerCredentialMap = {
@@ -34,6 +35,7 @@ export async function getBrokerCredentials(user, broker) {
     }),
     // future brokers go here...
   };
+  
 
   if (!brokerCredentialMap[broker]) {
     throw new Error(`Unsupported broker: ${broker}`);

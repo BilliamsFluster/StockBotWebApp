@@ -25,6 +25,7 @@ export const logout = () =>
 export const getUserPreferences  = async () =>
 {
   const res = await api.get("/users/preferences"); 
+  
   return res.data.preferences;
 
 }

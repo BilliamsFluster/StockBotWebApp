@@ -15,6 +15,9 @@ export async function getActiveBrokerPortfolio(req, res) {
 
     // 🔹 Get decrypted broker-specific credentials
     const credentials = await getBrokerCredentials(user, activeBroker);
+    if (!credentials) {
+      return res.status(400).json({ error: 'No credentials found for active broker' });
+    }
 
     // 🔹 Call Python StockBot
     const botRes = await axios.post(

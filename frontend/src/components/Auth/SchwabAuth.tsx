@@ -21,9 +21,14 @@ export default function SchwabAuth({ onConnected }: Props) {
   useEffect(() => {
     (async () => {
       try {
+        // Assume checkSchwabCredentials can return the appKey
         const res = await checkSchwabCredentials();
         if (res.exists) {
           setCredentialsSaved(true);
+          // If the API returns the appKey, set it in the state
+          if (res.appKey) {
+            setAppKey(res.appKey);
+          }
         }
       } catch (err) {
         console.error('Failed to check Schwab credentials:', err);
@@ -36,8 +41,8 @@ export default function SchwabAuth({ onConnected }: Props) {
       await saveSchwabCredentials(appKey, appSecret);
       setCredentialsSaved(true);
       setEditMode(false);
-      setAppKey('');
-      setAppSecret('');
+      // setAppKey(''); // 👈 DO NOT clear the app key
+      setAppSecret(''); // ✅ DO clear the app secret for security
       setStatus('success');
       setMessage('Credentials saved successfully!');
     } catch (err) {
@@ -48,7 +53,13 @@ export default function SchwabAuth({ onConnected }: Props) {
   };
 
   const openSchwabAuth = () => {
-    const url = `https://api.schwabapi.com/v1/oauth/authorize?client_id=${appKey || process.env.NEXT_PUBLIC_SCHWAB_CLIENT_ID}&redirect_uri=https://127.0.0.1`;
+    // Use the appKey from the state, which is now populated on load
+    if (!appKey) {
+      setStatus('error');
+      setMessage('Schwab App Key is missing. Please save it or refresh.');
+      return;
+    }
+    const url = `https://api.schwabapi.com/v1/oauth/authorize?client_id=${appKey}&redirect_uri=https://127.0.0.1`;
     window.open(url, '_blank');
   };
 
@@ -92,6 +103,8 @@ export default function SchwabAuth({ onConnected }: Props) {
             onChange={(e) => setAppKey(e.target.value)}
             placeholder="Schwab App Key"
             className="input input-sm w-full bg-neutral-900 border-purple-400/30 text-white"
+            autoComplete="new-password" // Use "new-password" for better compatibility
+            name="schwab-app-key" // Use a unique name to avoid auto-fill
           />
           <input
             type="password"
@@ -99,6 +112,8 @@ export default function SchwabAuth({ onConnected }: Props) {
             onChange={(e) => setAppSecret(e.target.value)}
             placeholder="Schwab App Secret"
             className="input input-sm w-full bg-neutral-900 border-purple-400/30 text-white"
+            autoComplete="new-password" // Use "new-password" for password fields
+            name="schwab-app-secret" // Use a unique name to avoid auto-fill
           />
           <button
             onClick={handleSaveCredentials}
