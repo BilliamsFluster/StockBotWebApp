@@ -5,6 +5,7 @@ used by the websocket handler.
 import os
 import tempfile
 import uuid
+import asyncio
 from .stt import SpeechToText
 from .tts import TextToSpeech
 from .agent import BaseAgent
@@ -12,12 +13,13 @@ from silero_vad import load_silero_vad
 
 
 class JarvisService:
-    def __init__(self, llm_agent: BaseAgent):
+    def __init__(self, llm_agent: BaseAgent, config=None):
         # Speech
         self.stt = SpeechToText()            # must expose transcribe() and transcribe_from_array()
         self.tts = TextToSpeech()            # async synthesize(text, out_path)
 
         # LLM
+        # The llm_agent is now passed in directly, simplifying initialization
         self.agent = llm_agent               # must expose generate() and async generate_stream()
 
         # VAD (used by WS handler)
@@ -68,3 +70,7 @@ class JarvisService:
         )
         await self.tts.synthesize(text, out_path)
         return out_path
+
+    async def process_message(self, message: str):
+        # This should now call the agent's generate method
+        return self.agent.generate(message, output_format="text")

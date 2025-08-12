@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Dict, List, Any
 from jarvis.memory_manager import MemoryManager
+from utils.web_search import fetch_financial_snippets
 
 class BaseAgent(ABC):
     FLAG_MAP: Dict[str, Dict[str, List[str]]] = {
@@ -8,11 +9,18 @@ class BaseAgent(ABC):
         "needs_positions":    {"keywords": ["holdings", "positions", "assets", "what do i own"],       "method": "get_positions"},
         "needs_orders":       {"keywords": ["orders", "pending orders", "placed orders"],               "method": "get_orders"},
         "needs_transactions": {"keywords": ["transactions", "history", "activity", "recent activity"], "method": "get_transactions"},
+        "needs_web_search":   {"keywords": ["news", "market", "latest", "headlines", "current events"], "method": "search_web"},
     }
 
     def __init__(self, model: str, memory_manager: MemoryManager):
         self.model = model
         self.memory_manager = memory_manager
+
+    def search_web(self):
+        """
+        Searches the web for financial news and market data.
+        """
+        return fetch_financial_snippets()
 
     def detect_flags(self, prompt: str) -> Dict[str, bool]:
         lower = prompt.lower()
