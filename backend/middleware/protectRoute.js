@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'yoursecretkey';
+const JWT_SECRET = process.env.JWT_SECRET;
 
 export const protectRoute = async (req, res, next) => {
   // Read token from cookies (requires cookie-parser middleware)
@@ -13,7 +13,7 @@ export const protectRoute = async (req, res, next) => {
   }
   
 
-  try {
+  try {  
     const decoded = jwt.verify(token, JWT_SECRET);
 
     // Attach user to request

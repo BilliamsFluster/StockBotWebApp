@@ -6,11 +6,9 @@ from jarvis.jarvis_service import JarvisService
 from jarvis.ollama_agent import OllamaAgent
 from jarvis.huggingFace_agent import HuggingFaceAgent
 from jarvis.memory_manager import MemoryManager
-from ingestion.provider_manager import ProviderManager
 
 from api.models.jarvis_models import PromptRequest, StartVoiceRequest, SchwabAuthRequest
 
-Pro = ProviderManager() 
 mm = MemoryManager(storage_dir="data/memory")
 
 router = APIRouter()
