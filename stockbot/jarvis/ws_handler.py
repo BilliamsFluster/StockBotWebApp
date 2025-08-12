@@ -66,14 +66,18 @@ def compute_dynamic_silence_threshold(phrase_duration: float):
 
 def should_flush(buf: str) -> bool:
     """
-    Decide when to flush partial LLM text to TTS:
-      - flush at sentence boundaries,
-      - at commas/pauses,
-      - or when buffer gets moderately long to keep latency low.
+    Decide when to flush partial LLM text to TTS.
+    Flushes primarily at sentence boundaries (., !, ?).
+    Also flushes if the buffer gets long as a fallback to keep latency low.
     """
-    if not buf.strip(): return False
-    if BOUNDARY_RE.search(buf): return True
-    if ',' in buf or ':' in buf or ';' in buf or len(buf) > 45: return True
+    if not buf.strip():
+        return False
+    # Prioritize flushing at natural sentence endings.
+    if BOUNDARY_RE.search(buf):
+        return True
+    # As a fallback for long sentences without punctuation, flush after a longer threshold.
+    if len(buf) > 120:
+        return True
     return False
 
 
