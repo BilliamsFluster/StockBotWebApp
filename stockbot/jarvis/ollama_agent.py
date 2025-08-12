@@ -4,11 +4,13 @@ import httpx
 import requests
 import re
 import asyncio
+import os
 from typing import Any, Dict, Optional, AsyncGenerator
 
 from .agent import BaseAgent
 from .memory_manager import MemoryManager
 from ingestion.provider_manager import ProviderManager
+from utils.web_search import fetch_financial_snippets
 
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger("OllamaAgent")
@@ -22,6 +24,7 @@ class OllamaAgent(BaseAgent):
     Supports both non-streaming (`generate`) and streaming (`generate_stream`) replies.
     """
     API_URL = "http://localhost:11434/api/generate"
+    _system_prompt_cache: Optional[str] = None
 
     def __init__(
         self,
@@ -42,6 +45,22 @@ class OllamaAgent(BaseAgent):
         self.provider_name = provider_name
         self.provider_kwargs = provider_kwargs or {}
         self._user_id: str = "default"  # default memory bucket if unset
+
+    def _get_system_prompt(self) -> str:
+        """Loads the system prompt from a file, caching it for reuse."""
+        if OllamaAgent._system_prompt_cache is None:
+            try:
+                # Construct path relative to this file's location
+                current_dir = os.path.dirname(__file__)
+                prompt_path = os.path.join(current_dir, "prompts", "system_prompt.txt")
+                with open(prompt_path, "r", encoding="utf-8") as f:
+                    OllamaAgent._system_prompt_cache = f.read().strip()
+                log.debug("System prompt loaded from file.")
+            except Exception as e:
+                log.error(f"Failed to load system prompt from file: {e}")
+                # Fallback prompt in case the file is missing
+                OllamaAgent._system_prompt_cache = "You are Jarvis, a precise but friendly finance assistant."
+        return OllamaAgent._system_prompt_cache
 
     # ---- optional: set once per session/WS ----
     def set_user(self, user_id: str) -> "OllamaAgent":
@@ -65,9 +84,11 @@ class OllamaAgent(BaseAgent):
     def _resolve_flag_context(self, flags: Dict[str, bool]) -> Dict[str, Any]:
         """
         Fetch provider/tool data based on detected flags.
-        Fails soft (returns partial/empty ctx) if the provider isn't available.
+        Fails soft (returns partial/empty ctx) if a tool isn't available.
         """
         ctx: Dict[str, Any] = {}
+
+        # --- Provider Context (for account-specific data) ---
         try:
             # Lazily obtain a provider (e.g., Schwab) using cached instance if available.
             provider = ProviderManager.get_provider(self.provider_name, self.provider_kwargs)
@@ -87,9 +108,17 @@ class OllamaAgent(BaseAgent):
             # Graceful degradation when provider can't be constructed (e.g., missing token).
             logging.debug(
                 f"[Jarvis] Could not get provider '{self.provider_name}': {e}. "
-                "Proceeding without tool context."
+                "Proceeding without provider context."
             )
-            return ctx
+        
+        # --- Web Search Context ---
+        if flags.get("needs_web_search"):
+            try:
+                log.debug("[Jarvis] Fetching web search results.")
+                ctx["web_search_results"] = fetch_financial_snippets()
+            except Exception as e:
+                log.error(f"[Jarvis] Web search failed: {e}")
+                ctx["web_search_results"] = {"error": f"Web search failed: {e}"}
 
         return ctx
 
@@ -115,7 +144,7 @@ class OllamaAgent(BaseAgent):
         mem_ctx = self.memory_manager.format_context(user_id, query=user_msg, k_long=5, as_json=False)
 
         # 3) Include tool context if we have it.
-        tc = f"Tool context:\n{tool_context}\n\n" if tool_context else ""
+        tc = f"Tool context:\n{json.dumps(tool_context, indent=2)}\n\n" if tool_context else ""
 
         # 4) Formatting hint to the model.
         meta_prompt = {
@@ -124,9 +153,11 @@ class OllamaAgent(BaseAgent):
             "text": "Respond in plain text format, no markdown or JSON.",
         }
 
+        # Get the system prompt from our new file-based method
+        system_prompt = self._get_system_prompt()
+
         return (
-            "You are Jarvis, a precise but friendly finance assistant. "
-            "Use the memory context and tool context if relevant.\n\n"
+            f"{system_prompt}\n\n"
             f"{tc}{mem_ctx}\n\n"
             f"User: {user_msg}\nAssistant:\n\n{meta_prompt.get(output_format, '')}"
         )
