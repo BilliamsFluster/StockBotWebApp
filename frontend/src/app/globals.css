@@ -2,34 +2,107 @@
 @tailwind components;
 @tailwind utilities;
 
-
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* --- Custom Theme Animations & Background --- */
+@keyframes blobFloat {
+  0% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(3vw, -2vh, 0) scale(1.08); }
+  100% { transform: translate3d(0, 0, 0) scale(1); }
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+.blob {
+  position: fixed;
+  filter: blur(100px);
+  opacity: 0.15;
+  pointer-events: none;
+  width: 50vw;
+  height: 50vw;
+  border-radius: 50%;
+  animation: blobFloat 25s ease-in-out infinite;
+}
+.blob-purple {
+  background: #7c3aed;
+  bottom: -25vh;
+  right: -20vw;
+  animation-delay: -8s;
+}
+.blob-blue {
+  background: #338EF7;
+  top: -25vh;
+  left: -20vw;
 }
 
-@media (prefers-color-scheme: dark) {
+
+/* --- Shadcn UI Theme Variables --- */
+@layer base {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --radius: 0.625rem; /* 10px */
+  }
+ 
+  /* THEME UPDATED FOR CLEARER GLASS CARDS */
+  .dark {
+    --background: 0 0% 0%; /* Pure Black */
+    --foreground: 215 20% 65%;
+
+    /* UPDATED: Card is now a transparent BLACK to remove the grey tint */
+    --card: 0 0% 10% / 0.25; 
+    --card-foreground: 210 40% 98%;
+
+    --popover: 240 4% 7%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 217 91% 60%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 240 4% 15%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 240 4% 15%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 240 4% 15%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 210 40% 98%;
+
+    /* Border remains a transparent white to create the glass edge highlight */
+    --border: 210 40% 98% / 0.1;
+    /* UPDATED: Input is also a transparent black */
+    --input: 0 0% 10% / 0.35;
+    --ring: 217 91% 60%;
+  }
+}
+ 
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    background-attachment: fixed;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* --- Custom Component Styles --- */
+@layer components {
+  /* UPDATED: Increased the blur for a more pronounced glass effect */
+  .ink-card {
+    @apply bg-card border border-border rounded-xl backdrop-blur-xl;
+  }
+  .glow-border {
+    @apply relative overflow-hidden;
+  }
+  .glow-border::after {
+    content:"";
+    position:absolute;
+    inset:-1px;
+    border-radius: inherit;
+    pointer-events:none;
+    background: radial-gradient(680px 240px at 50% 0%, rgba(124,58,237,.25), transparent 60%);
+    mask: linear-gradient(#000, transparent 60%);
+  }
+  .btn-gradient {
+    @apply bg-gradient-to-r from-purple-500 to-pink-500 text-white font-semibold hover:opacity-90 transition-opacity;
+  }
 }
 
-
-@keyframes equalizer {
-  0%, 100% { height: 4px; }
-  50% { height: 14px; }
-}

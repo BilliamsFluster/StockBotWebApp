@@ -1,12 +1,20 @@
+"use client";
 import React from 'react';
+import { Pie, PieChart } from "recharts";
 import {
-  PieChart,
-  Pie,
-  Tooltip,
-  Cell,
-  ResponsiveContainer,
-  Label,
-} from 'recharts';
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  ChartLegend,
+  ChartLegendContent,
+} from "@/components/ui/chart";
 
 const COLORS = ['#818cf8', '#4ade80', '#facc15', '#fb7185', '#38bdf8', '#a78bfa'];
 
@@ -50,64 +58,46 @@ const HoldingPieChart: React.FC<Props> = ({ summary, positions }) => {
     );
   }
 
+  const chartConfig = {
+    value: { label: "Value" },
+    aapl: { label: "AAPL", color: "hsl(var(--chart-1))" },
+    nvda: { label: "NVDA", color: "hsl(var(--chart-2))" },
+    tsla: { label: "TSLA", color: "hsl(var(--chart-3))" },
+    msft: { label: "MSFT", color: "hsl(var(--chart-4))" },
+    other: { label: "Other", color: "hsl(var(--muted))" },
+  };
+
   return (
-    <div className="rounded-xl bg-transparent p-4">
-      <h3 className="text-sm font-semibold text-white mb-3">
-        📊 Holdings Allocation
-      </h3>
-      <div className="h-[220px]">
-        <ResponsiveContainer width="100%" height="100%">
+    <Card className="ink-card flex flex-col">
+      <CardHeader>
+        <CardTitle>Holdings by Value</CardTitle>
+        <CardDescription>Top positions in your portfolio.</CardDescription>
+      </CardHeader>
+      <CardContent className="flex-1 pb-0">
+        <ChartContainer
+          config={chartConfig}
+          className="mx-auto aspect-square h-full"
+        >
           <PieChart>
+            <ChartTooltip
+              cursor={false}
+              content={<ChartTooltipContent hideLabel />}
+            />
             <Pie
               data={chartData}
               dataKey="value"
               nameKey="symbol"
-              outerRadius="70%"
-              innerRadius="45%"
-              stroke="none"
-              labelLine={false}
-              label={({ percent, symbol }) =>
-                percent !== undefined && !isNaN(percent)
-                  ? `${symbol}: ${percent.toFixed(1)}%`
-                  : ''
-              }
-            >
-              {chartData.map((entry, index) => (
-                <Cell
-                  key={`cell-${index}`}
-                  fill={COLORS[index % COLORS.length]}
-                  stroke="#0f0f1a"
-                  strokeWidth={2}
-                />
-              ))}
-              <Label
-                value="Total Equity"
-                position="center"
-                fill="#ccc"
-                style={{
-                  fontSize: '0.75rem',
-                  textShadow: '0 0 6px rgba(255,255,255,0.2)',
-                }}
-              />
-            </Pie>
-            <Tooltip
-              formatter={(value: number, name: string, props) => [
-                `$${value.toLocaleString(undefined, {
-                  maximumFractionDigits: 2,
-                })}`,
-                props.payload.symbol,
-              ]}
-              wrapperStyle={{
-                fontSize: '0.75rem',
-                backgroundColor: '#1f1f2e',
-                border: '1px solid #3f3f46',
-              }}
-              labelStyle={{ color: '#e0e0e0' }}
+              innerRadius={60}
+              strokeWidth={5}
+            />
+            <ChartLegend
+              content={<ChartLegendContent nameKey="symbol" />}
+              className="-translate-y-2 flex-wrap gap-2 [&>*]:basis-1/4 [&>*]:justify-center"
             />
           </PieChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
+        </ChartContainer>
+      </CardContent>
+    </Card>
   );
 };
 

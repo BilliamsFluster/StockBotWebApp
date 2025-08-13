@@ -1,18 +1,27 @@
-'use client';
+"use client";
 
-import { useState, ChangeEvent, FormEvent } from 'react';
-import { login } from '../../api/client'; // make sure this sends { withCredentials: true }
-import { useRouter } from 'next/navigation';
-import { toast } from 'react-hot-toast';
-import { useAuth } from '../../context/AuthContext';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { useState, ChangeEvent, FormEvent } from "react";
+import { login } from "../../api/client";
+import { useRouter } from "next/navigation";
+import { toast } from "react-hot-toast";
+import { useAuth } from "../../context/AuthContext";
 
-interface LoginFormFields {
-  email: string;
-  password: string;
+interface LoginFormProps {
+  switchToSignup: () => void;
 }
 
-const LoginForm = () => {
-  const [form, setForm] = useState<LoginFormFields>({ email: '', password: '' });
+export function LoginForm({ switchToSignup }: LoginFormProps) {
+  const [form, setForm] = useState({ email: "", password: "" });
   const { setUser } = useAuth();
   const router = useRouter();
 
@@ -23,66 +32,67 @@ const LoginForm = () => {
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-
-    // Basic client-side validation
-    if (!form.email || !form.password) {
-      return toast.error('Please fill in all fields.');
-    }
-
-    if (form.password.length < 6) {
-      return toast.error('Password must be at least 6 characters.');
-    }
-
     try {
-      // This request will set an HTTP-only cookie in the browser
       const { data } = await login(form);
-
-      // We don't store tokens in localStorage anymore — backend cookie handles auth
       setUser(data.user || true);
-
-      toast.success('Logged in!');
-      router.push('/chatbot');
+      toast.success("Logged in!");
+      router.push("/overview");
     } catch (err: any) {
-      const status = err.response?.status;
-      const msg = err.response?.data?.message || 'Login failed';
-
-      console.error('❌ Login error:', err);
-      toast.error(`Status: ${status || 'N/A'} | ${msg}`);
+      const msg = err.response?.data?.message || "Login failed";
+      toast.error(msg);
     }
   };
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="max-w-sm mx-auto card p-6 bg-base-200 shadow-md space-y-4"
-    >
-      <h2 className="text-lg font-bold">Login</h2>
-
-      <input
-        type="email"
-        name="email"
-        placeholder="Email"
-        className="input input-bordered w-full"
-        value={form.email}
-        onChange={handleChange}
-        required
-      />
-
-      <input
-        type="password"
-        name="password"
-        placeholder="Password"
-        className="input input-bordered w-full"
-        value={form.password}
-        onChange={handleChange}
-        required
-      />
-
-      <button type="submit" className="btn btn-primary w-full">
-        Login
-      </button>
-    </form>
+    // Removed "gradient-ring". The "ink-card" class now provides the glass effect.
+    <Card className="w-full max-w-md ink-card">
+      <CardHeader>
+        <CardTitle>Welcome Back</CardTitle>
+        <CardDescription>
+          Enter your credentials to access your account.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="email">Email</Label>
+            <Input
+              id="email"
+              type="email"
+              placeholder="m@example.com"
+              required
+              name="email"
+              value={form.email}
+              onChange={handleChange}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="password">Password</Label>
+            <Input
+              id="password"
+              type="password"
+              required
+              name="password"
+              value={form.password}
+              onChange={handleChange}
+            />
+          </div>
+          {/* Apply your custom "btn-gradient" class here */}
+          <Button type="submit" className="w-full btn-gradient">
+            Login
+          </Button>
+        </form>
+        <div className="mt-4 text-center text-sm">
+          Don't have an account?{" "}
+          <button
+            type="button"
+            onClick={switchToSignup}
+            className="underline text-primary hover:text-primary/80"
+          >
+            Sign up
+          </button>
+        </div>
+      </CardContent>
+    </Card>
   );
-};
-
-export default LoginForm;
+}

@@ -40,7 +40,9 @@ TRIGGER_WINDOW_SEC = 2.0            # Buffer used for VAD trigger checks
 MAX_HISTORY_SEC = 5.0               # Rolling phrase buffer length cap
 MIN_SILENCE_SEC = 0.3               # Base silence needed to close a phrase
 MAX_SILENCE_SEC = 1.2               # Upper bound on silence timeout
-BOUNDARY_RE = re.compile(r'([\.!\?…]["\')\]]?\s)$')  # Sentence boundary heuristic
+# This new regex is designed to SPLIT a string into sentences, keeping the punctuation.
+# It splits on the whitespace that comes AFTER a sentence-ending character.
+BOUNDARY_SPLIT_RE = re.compile(r'(?<=[.!?…])\s+')
 VAD_OPTS = dict(
     threshold=0.3,
     min_speech_duration_ms=150,
@@ -64,17 +66,7 @@ def compute_dynamic_silence_threshold(phrase_duration: float):
     return max(MIN_SILENCE_SEC, min(timeout, MAX_SILENCE_SEC))
 
 
-def should_flush(buf: str) -> bool:
-    """
-    Decide when to flush partial LLM text to TTS:
-      - flush at sentence boundaries,
-      - at commas/pauses,
-      - or when buffer gets moderately long to keep latency low.
-    """
-    if not buf.strip(): return False
-    if BOUNDARY_RE.search(buf): return True
-    if ',' in buf or ':' in buf or ';' in buf or len(buf) > 45: return True
-    return False
+# The should_flush function is no longer needed with the new sentence-splitting logic.
 
 
 # --- MODIFIED: This function now accepts a speaker_id ---
@@ -95,7 +87,7 @@ async def process_and_send_results(
     """
     # --- Leveling: compute peak/RMS; apply conservative auto-gain if needed ---
     peak = float(phrase_tensor.abs().max()) + 1e-9
-    rms = float(torch.sqrt(torch.mean(phrase_tensor ** 2)))
+    rms = float(torch.sqrt(torch.mean(phrase_tensor ** 2))) 
     dbfs = 20 * math.log10(max(rms, 1e-9))
     gain = 1.0
     if peak > 0.05:
@@ -149,7 +141,7 @@ async def process_and_send_results(
             except Exception as e:
                 await websocket.send_text(json.dumps({"event": "error", "message": f"TTS error: {e}"}))
 
-    # --- Stream LLM deltas; micro-batch into TTS chunks based on should_flush() ---
+    # --- Stream LLM deltas; micro-batch into TTS chunks based on sentence boundaries ---
     full_text = ""
     buf = ""
     await websocket.send_text(json.dumps({"event": "response_start"}))
@@ -161,10 +153,26 @@ async def process_and_send_results(
             full_text += delta
             buf += delta
             await websocket.send_text(json.dumps({"event": "partial_response", "data": delta}))
-            if should_flush(buf):
-                to_speak, buf = buf, ""
-                # Fire-and-forget TTS so LLM streaming keeps flowing
-                asyncio.create_task(flush_tts_phrase(to_speak))
+
+            # New logic: Split the buffer into sentences and process them.
+            sentences = BOUNDARY_SPLIT_RE.split(buf)
+            if len(sentences) > 1:
+                # The last item in the list is the incomplete part of the next sentence.
+                # We keep it in the buffer for the next iteration.
+                to_speak_list = sentences[:-1]
+                buf = sentences[-1]
+
+                for sentence in to_speak_list:
+                    sentence = sentence.strip()
+                    if sentence:
+                        # Fire-and-forget TTS for each complete sentence
+                        asyncio.create_task(flush_tts_phrase(sentence))
+            
+            # Fallback for very long sentences without punctuation to keep latency low
+            elif len(buf) > 150:
+                asyncio.create_task(flush_tts_phrase(buf))
+                buf = "" # Clear buffer after flushing
+
     except asyncio.CancelledError:
         # Interrupted mid-generation (barge-in) — tell client the response stopped
         await websocket.send_text(json.dumps({"event": "response_done"}))

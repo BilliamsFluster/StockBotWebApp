@@ -143,8 +143,15 @@ class OllamaAgent(BaseAgent):
         # 2) Retrieve memory context (long + short-term; filtered by similarity to `user_msg`).
         mem_ctx = self.memory_manager.format_context(user_id, query=user_msg, k_long=5, as_json=False)
 
-        # 3) Include tool context if we have it.
-        tc = f"Tool context:\n{json.dumps(tool_context, indent=2)}\n\n" if tool_context else ""
+        # 3) Combine memory and tool context into a single block.
+        context_str = ""
+        if tool_context:
+            tool_info = json.dumps(tool_context, indent=2)
+            context_str += f"## Market Data\n{tool_info}\n\n"
+        
+        if mem_ctx.strip():
+            # Frame the history as a log, not a script to follow.
+            context_str += f"## Log of Past Conversation\n{mem_ctx}\n\n"
 
         # 4) Formatting hint to the model.
         meta_prompt = {
@@ -156,10 +163,11 @@ class OllamaAgent(BaseAgent):
         # Get the system prompt from our new file-based method
         system_prompt = self._get_system_prompt()
 
+        # Present all context under a single, neutral heading.
         return (
             f"{system_prompt}\n\n"
-            f"{tc}{mem_ctx}\n\n"
-            f"User: {user_msg}\nAssistant:\n\n{meta_prompt.get(output_format, '')}"
+            f"{context_str}"
+            f"## Your Turn\nUser: {user_msg}\nAssistant:\n\n{meta_prompt.get(output_format, '')}"
         )
 
     # =========================

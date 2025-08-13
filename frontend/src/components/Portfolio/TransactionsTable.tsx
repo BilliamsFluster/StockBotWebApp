@@ -1,4 +1,21 @@
 import React, { useMemo } from 'react';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 export type Transaction = {
   id: string | number;
@@ -40,38 +57,36 @@ const TransactionsTable: React.FC<Props> = ({ transactions }) => {
   }
 
   return (
-    <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
-      <h2 className="text-sm font-semibold text-white mb-3">Recent Transactions</h2>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm text-left text-white">
-          <thead className="text-xs text-white/60 uppercase border-b border-white/10">
-            <tr>
-              <th className="py-2">Date</th>
-              <th className="py-2">Symbol</th>
-              <th className="py-2">Type</th>
-              <th className="py-2 text-right">Qty</th>
-              <th className="py-2 text-right">Amount</th>
-            </tr>
-          </thead>
-          <tbody>
+    <Card className="ink-card">
+      <CardHeader>
+        <CardTitle>Cash Transactions</CardTitle>
+        <CardDescription>Recent deposits, withdrawals, and dividends.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Date</TableHead>
+              <TableHead>Type</TableHead>
+              <TableHead className="text-right">Amount</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {parsedTransactions.slice(0, 5).map((tx) => (
-              <tr
-                key={`${tx.id}-${tx.date}`}
-                className="border-b border-white/10 hover:bg-white/10 transition-colors"
-              >
-                <td className="py-2">{new Date(tx.date).toLocaleDateString()}</td>
-                <td className="py-2">{tx.symbol}</td>
-                <td className="py-2">{tx.type}</td>
-                <td className="py-2 text-right">{tx.quantity}</td>
-                <td className="py-2 text-right">
-                  {Number.isFinite(tx.amount) ? `$${tx.amount.toFixed(2)}` : '-'}
-                </td>
-              </tr>
+              <TableRow key={tx.id}>
+                <TableCell>{new Date(tx.date).toLocaleDateString()}</TableCell>
+                <TableCell>
+                  <Badge variant="secondary">{tx.type} {tx.symbol && `(${tx.symbol})`}</Badge>
+                </TableCell>
+                <TableCell className={cn("text-right font-medium", tx.amount >= 0 ? "text-green-400" : "text-red-400")}>
+                  {tx.amount.toLocaleString(undefined, { style: 'currency', currency: 'USD' })}
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   );
 };
 

@@ -149,6 +149,26 @@ class MemoryManager:
         return len(text.split())
 
     # ---------- short-term ----------
+    def format_short_term(self, user_id: str) -> str:
+        """
+        Format the short-term memory for a user as a dialogue transcript.
+        - Labels are normalized to "User" and "You" for privacy.
+        - Each turn is a simple "Speaker: text" line.
+        """
+        all_turns = self.get_short_term(user_id)
+        if not all_turns:
+            return "(no recent conversation)"
+
+        # Format as a simple dialogue transcript
+        lines = []
+        for speaker, text in all_turns:
+            # Use more neutral labels to avoid the model thinking this is a script
+            if speaker == "USER":
+                lines.append(f"User: {text}")
+            elif speaker == "JARVIS":
+                lines.append(f"You: {text}")
+        return "\n".join(lines)
+
     def add_turn(self, user_id: str, user_msg: str, jarvis_reply: str):
         """
         Append a (USER, msg) + (JARVIS, reply) turn and prune by token budget.

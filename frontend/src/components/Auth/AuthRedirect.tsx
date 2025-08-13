@@ -17,7 +17,7 @@ export default function AuthRedirect() {
     }
 
     if (user && pathname === '/') {
-      router.replace('/chatbot');
+      router.replace('/overview');
     }
   }, [user, authChecked, pathname, router]);
 
