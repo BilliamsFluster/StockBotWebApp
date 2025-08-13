@@ -1,48 +1,94 @@
 'use client';
 
-import { useState } from 'react';
-import Sidebar from '@/components/Sidebar';
-import { FaBars } from 'react-icons/fa';
-
-// Import our Jarvis context + widget
+import { useState, useEffect } from 'react';
+import { usePathname } from 'next/navigation';
+import { Toaster } from 'react-hot-toast';
+import { AuthProvider } from '@/context/AuthContext';
+import Providers from '@/components/Providers';
+import AuthRedirect from '@/components/Auth/AuthRedirect';
 import { JarvisProvider } from '@/components/Jarvis/JarvisProvider';
 import JarvisWidget from '@/components/Jarvis/JarvisWidget';
+import Sidebar from '@/components/Sidebar';
+import { Menu } from 'lucide-react';
+import clsx from 'clsx';
 
-export default function LayoutWrapper({ children }: { children: React.ReactNode }) {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+export default function LayoutWrapper({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const [isClient, setIsClient] = useState(false);
+  const pathname = usePathname();
 
-  return (
-    
-      <div className="flex h-screen overflow-hidden">
-        {/* Sidebar */}
-        <Sidebar isMobileOpen={sidebarOpen} setMobileOpen={setSidebarOpen} />
+  // State for sidebar, now managed here
+  const [isMobileOpen, setMobileOpen] = useState(false);
+  const [isSidebarExpanded, setSidebarExpanded] = useState(true);
 
-        {/* Mobile topbar hamburger */}
-        <div className="lg:hidden fixed top-2 left-2 z-50">
-          <button
-            onClick={() => setSidebarOpen(prev => !prev)}
-            className="btn btn-sm btn-circle bg-base-200 text-white"
-          >
-            <FaBars />
-          </button>
-        </div>
+  const isAuthPage =
+    pathname === '/' ||
+    pathname === '/auth' ||
+    pathname === '/login' ||
+    pathname === '/register';
 
-        {/* Mobile overlay */}
-        {sidebarOpen && (
-          <div
-            className="fixed inset-0 bg-black/50 z-40 lg:hidden"
-            onClick={() => setSidebarOpen(false)}
-          />
-        )}
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
-        {/* Main content */}
-        <main className="flex-1 overflow-y-auto bg-base-100 z-0 relative">
+  if (!isClient) {
+    return null; // Or a loading spinner
+  }
+
+  // If it's an auth page, render a simple layout without the sidebar
+  if (isAuthPage) {
+    return (
+      <Providers>
+        <AuthProvider>
+          <AuthRedirect />
           {children}
-        </main>
+          <Toaster position="top-center" toastOptions={{ duration: 3000 }} />
+        </AuthProvider>
+      </Providers>
+    );
+  }
 
-        {/* Floating Jarvis Widget (Global, draggable) */}
-        
-      </div>
-    
+  // Render the main app layout with the sidebar
+  return (
+    <Providers>
+      <JarvisProvider>
+        <AuthProvider>
+          <AuthRedirect />
+          
+          <Sidebar
+            isMobileOpen={isMobileOpen}
+            setMobileOpen={setMobileOpen}
+            isExpanded={isSidebarExpanded}
+            setExpanded={setSidebarExpanded}
+          />
+
+          <main className={clsx(
+            'flex flex-col h-screen overflow-y-auto transition-all duration-300',
+            isSidebarExpanded ? 'lg:ml-64' : 'lg:ml-[76px]'
+          )}>
+            {/* Mobile Header */}
+            <header className="lg:hidden sticky top-0 z-30 flex h-14 items-center gap-4 border-b border-border bg-background/80 backdrop-blur-lg px-4 md:px-6">
+              <button
+                className="p-2 -ml-2 rounded-md hover:bg-accent hover:text-accent-foreground"
+                onClick={() => setMobileOpen(true)}
+              >
+                <Menu className="h-6 w-6" />
+                <span className="sr-only">Open sidebar</span>
+              </button>
+            </header>
+
+            <div className="flex-1">
+              {children}
+            </div>
+          </main>
+
+          {!isAuthPage && <JarvisWidget />}
+          <Toaster position="top-center" toastOptions={{ duration: 3000 }} />
+        </AuthProvider>
+      </JarvisProvider>
+    </Providers>
   );
 }

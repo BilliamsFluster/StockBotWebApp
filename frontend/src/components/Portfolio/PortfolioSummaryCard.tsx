@@ -1,4 +1,35 @@
 import React from 'react';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+
+type StatProps = {
+  label: string;
+  value: string | number;
+  unit?: string;
+  isLoading?: boolean;
+};
+
+function Stat({ label, value, unit, isLoading }: StatProps) {
+  return (
+    <div className="bg-muted/40 rounded-lg p-3">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      {isLoading ? (
+        <Skeleton className="h-6 w-24 mt-1" />
+      ) : (
+        <div className="text-lg font-semibold text-card-foreground">
+          {value}
+          {unit && <span className="text-sm text-muted-foreground ml-1">{unit}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface PortfolioSummaryProps {
   summary: {
@@ -7,33 +38,57 @@ interface PortfolioSummaryProps {
     equity: number;
     cash: number;
   };
+  isLoading?: boolean;
 }
 
-const PortfolioSummaryCard: React.FC<PortfolioSummaryProps> = ({ summary }) => {
+const PortfolioSummaryCard: React.FC<PortfolioSummaryProps> = ({ summary, isLoading = false }) => {
+  // Mock data - replace with props
+  const data = {
+    netLiq: 127420,
+    dayPL: 1245,
+    ytdPL: 18920,
+    buyingPower: 232000,
+    beta: 1.45,
+    sharpe: 1.2,
+  };
+
   return (
-    <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
-      <h2 className="text-sm font-semibold text-white mb-3 flex items-center gap-1">
-        <span>💼</span> Account Summary
-      </h2>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-neutral-400">
-        <div>
-          <p className="opacity-70">Account #</p>
-          <p className="font-semibold text-white">{summary.accountNumber}</p>
+    <Card className="ink-card">
+      <CardHeader>
+        <CardTitle>Portfolio Summary</CardTitle>
+        <CardDescription>Key performance indicators for your account.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <Stat
+            label="Net Liquidity"
+            value={data.netLiq.toLocaleString()}
+            unit="USD"
+            isLoading={isLoading}
+          />
+          <Stat
+            label="Day's P/L"
+            value={data.dayPL.toLocaleString()}
+            unit="USD"
+            isLoading={isLoading}
+          />
+          <Stat
+            label="YTD P/L"
+            value={data.ytdPL.toLocaleString()}
+            unit="USD"
+            isLoading={isLoading}
+          />
+          <Stat
+            label="Buying Power"
+            value={data.buyingPower.toLocaleString()}
+            unit="USD"
+            isLoading={isLoading}
+          />
+          <Stat label="SPY Beta" value={data.beta} isLoading={isLoading} />
+          <Stat label="Sharpe Ratio" value={data.sharpe} isLoading={isLoading} />
         </div>
-        <div>
-          <p className="opacity-70">Liquidation Value</p>
-          <p className="font-semibold text-white">${summary.liquidationValue.toLocaleString()}</p>
-        </div>
-        <div>
-          <p className="opacity-70">Equity</p>
-          <p className="font-semibold text-white">${summary.equity.toLocaleString()}</p>
-        </div>
-        <div>
-          <p className="opacity-70">Cash</p>
-          <p className="font-semibold text-white">${summary.cash.toLocaleString()}</p>
-        </div>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 };
 

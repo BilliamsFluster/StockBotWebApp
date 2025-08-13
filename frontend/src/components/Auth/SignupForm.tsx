@@ -1,24 +1,28 @@
-'use client';
+"use client";
 
-import { useState, ChangeEvent, FormEvent } from 'react';
-import { signup } from '@/api/client';
-import { toast } from 'react-hot-toast';
-
-interface SignupFormFields {
-  username: string;
-  email: string;
-  password: string;
-}
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { useState, ChangeEvent, FormEvent } from "react";
+import { signup } from "@/api/client";
+import { toast } from "react-hot-toast";
 
 interface SignupFormProps {
   switchToLogin: () => void;
 }
 
-const SignupForm = ({ switchToLogin }: SignupFormProps) => {
-  const [form, setForm] = useState<SignupFormFields>({
-    username: '',
-    email: '',
-    password: '',
+export function SignupForm({ switchToLogin }: SignupFormProps) {
+  const [form, setForm] = useState({
+    username: "",
+    email: "",
+    password: "",
   });
 
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -30,48 +34,75 @@ const SignupForm = ({ switchToLogin }: SignupFormProps) => {
     e.preventDefault();
     try {
       await signup(form);
-      toast.success('Signup successful! Please log in.');
+      toast.success("Signup successful! Please log in.");
       switchToLogin();
     } catch (error: any) {
-      const msg = error?.response?.data?.message || 'Signup failed';
+      const msg = error?.response?.data?.message || "Signup failed";
       toast.error(msg);
     }
   };
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <input
-        type="text"
-        name="username"
-        placeholder="Username"
-        className="input input-bordered"
-        value={form.username}
-        onChange={handleChange}
-        required
-      />
-      <input
-        type="email"
-        name="email"
-        placeholder="Email"
-        className="input input-bordered"
-        value={form.email}
-        onChange={handleChange}
-        required
-      />
-      <input
-        type="password"
-        name="password"
-        placeholder="Password"
-        className="input input-bordered"
-        value={form.password}
-        onChange={handleChange}
-        required
-      />
-      <button type="submit" className="btn btn-primary">
-        Sign Up
-      </button>
-    </form>
+    // Removed "gradient-ring". The "ink-card" class now provides the glass effect.
+    <Card className="w-full max-w-md ink-card">
+      <CardHeader>
+        <CardTitle>Create an Account</CardTitle>
+        <CardDescription>
+          Enter your details below to get started.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="username">Username</Label>
+            <Input
+              id="username"
+              type="text"
+              placeholder="yourusername"
+              required
+              name="username"
+              value={form.username}
+              onChange={handleChange}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="email">Email</Label>
+            <Input
+              id="email"
+              type="email"
+              placeholder="m@example.com"
+              required
+              name="email"
+              value={form.email}
+              onChange={handleChange}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="password">Password</Label>
+            <Input
+              id="password"
+              type="password"
+              required
+              name="password"
+              value={form.password}
+              onChange={handleChange}
+            />
+          </div>
+          <Button type="submit" className="w-full btn-gradient">
+            Create Account
+          </Button>
+        </form>
+        <div className="mt-4 text-center text-sm">
+          Already have an account?{" "}
+          <button
+            type="button"
+            onClick={switchToLogin}
+            className="underline text-primary hover:text-primary/80"
+          >
+            Login
+          </button>
+        </div>
+      </CardContent>
+    </Card>
   );
-};
-
-export default SignupForm;
+}

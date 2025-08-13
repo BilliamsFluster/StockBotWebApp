@@ -1,13 +1,27 @@
+"use client";
 import React, { useMemo } from 'react';
 import {
-  LineChart,
+  Area,
+  AreaChart,
+  CartesianGrid,
   Line,
+  LineChart,
+  Tooltip,
   XAxis,
   YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  CartesianGrid,
 } from 'recharts';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from '@/components/ui/chart';
 
 type Trade = {
   date: string;
@@ -73,25 +87,66 @@ const AccountBalanceGraph: React.FC<Props> = ({ trades, initialBalance = 10000 }
     );
   }
 
+  const chartData = [
+    { month: 'January', balance: 18600 },
+    { month: 'February', balance: 30500 },
+    { month: 'March', balance: 23700 },
+    { month: 'April', balance: 27300 },
+    { month: 'May', balance: 20900 },
+    { month: 'June', balance: 21400 },
+  ];
+
+  const chartConfig = {
+    balance: {
+      label: 'Balance',
+      color: 'hsl(var(--primary))',
+    },
+  };
+
   return (
-    <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-pink-400/20">
-      <h2 className="text-sm font-semibold mb-3 text-white">📈 Account Balance Over Time</h2>
-      <div className="h-[250px]">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={graphData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2e2e3e" />
-            <XAxis dataKey="date" stroke="#ccc" fontSize={12} />
-            <YAxis stroke="#ccc" fontSize={12} />
-            <Tooltip
-              formatter={(value: number) => [`$${value.toFixed(2)}`, 'Account Value']}
-              contentStyle={{ backgroundColor: '#1f1f2e', border: '1px solid #3f3f46' }}
-              labelStyle={{ color: '#e0e0e0' }}
+    <Card className="ink-card rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-pink-400/20">
+      <CardHeader>
+        <CardTitle>Account Balance</CardTitle>
+        <CardDescription>Your account balance over the last 6 months</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ChartContainer config={chartConfig} className="h-64 w-full">
+          <AreaChart data={chartData}>
+            <defs>
+              <linearGradient id="fillBalance" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="var(--color-balance)" stopOpacity={0.8} />
+                <stop offset="95%" stopColor="var(--color-balance)" stopOpacity={0.1} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid vertical={false} strokeDasharray="3 3" className="stroke-border/50" />
+            <XAxis
+              dataKey="month"
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+              tickFormatter={(value) => value.slice(0, 3)}
             />
-            <Line type="monotone" dataKey="balance" stroke="#4ade80" strokeWidth={2} dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
+            <YAxis
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+              tickFormatter={(value) => `$${value / 1000}k`}
+            />
+            <ChartTooltip
+              cursor={false}
+              content={<ChartTooltipContent indicator="dot" />}
+            />
+            <Area
+              dataKey="balance"
+              type="natural"
+              fill="url(#fillBalance)"
+              stroke="var(--color-balance)"
+              stackId="a"
+            />
+          </AreaChart>
+        </ChartContainer>
+      </CardContent>
+    </Card>
   );
 };
 

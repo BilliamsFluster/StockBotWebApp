@@ -1,4 +1,20 @@
 import React, { useMemo } from 'react';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
 type SchwabTransaction = any;
 
@@ -56,47 +72,42 @@ const TradingHistoryTable: React.FC<Props> = ({ transactions }) => {
   }
 
   return (
-    <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
-      <h2 className="text-sm font-semibold text-white mb-3">Recent Trades</h2>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm text-left text-white">
-          <thead className="text-xs text-white/60 uppercase border-b border-white/10">
-            <tr>
-              <th className="py-2">Date</th>
-              <th className="py-2">Symbol</th>
-              <th className="py-2">Action</th>
-              <th className="py-2 text-right">Shares</th>
-              <th className="py-2 text-right">Amount</th>
-              <th className="py-2 text-right">Price</th>
-            </tr>
-          </thead>
-          <tbody>
-            {trades.slice(0, 5).map((trade) => {
-              const isBuy = trade.action === 'BUY';
-              const colorClass = isBuy ? 'text-green-400' : 'text-red-400';
-
-              return (
-                <tr
-                  key={`${trade.id}-${trade.date}`}
-                  className="border-b border-white/10 hover:bg-white/10 transition-colors"
-                >
-                  <td className="py-2">{new Date(trade.date).toLocaleDateString()}</td>
-                  <td className="py-2">{trade.symbol}</td>
-                  <td className={`py-2 font-semibold ${colorClass}`}>{trade.action}</td>
-                  <td className={`py-2 text-right ${colorClass}`}>{trade.quantity}</td>
-                  <td className={`py-2 text-right ${colorClass}`}>
-                    ${trade.amount.toFixed(2)}
-                  </td>
-                  <td className="py-2 text-right">
-                    {trade.price ? `$${trade.price.toFixed(2)}` : '—'}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <Card className="ink-card">
+      <CardHeader>
+        <CardTitle>Trading History</CardTitle>
+        <CardDescription>Your recent trade executions.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Date</TableHead>
+              <TableHead>Symbol</TableHead>
+              <TableHead>Action</TableHead>
+              <TableHead className="text-right">Quantity</TableHead>
+              <TableHead className="text-right">Avg. Price</TableHead>
+              <TableHead className="text-right">Total</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {trades.slice(0, 5).map((trade) => (
+              <TableRow key={trade.id}>
+                <TableCell>{new Date(trade.date).toLocaleDateString()}</TableCell>
+                <TableCell className="font-medium">{trade.symbol}</TableCell>
+                <TableCell>
+                  <Badge variant={trade.action === "BUY" ? "default" : "destructive"}>
+                    {trade.action}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-right">{trade.quantity}</TableCell>
+                <TableCell className="text-right">{trade.price !== undefined ? trade.price.toFixed(2) : '—'}</TableCell>
+                <TableCell className="text-right">{trade.amount.toLocaleString(undefined, { style: 'currency', currency: 'USD' })}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   );
 };
 

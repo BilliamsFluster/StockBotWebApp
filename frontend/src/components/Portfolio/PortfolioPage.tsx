@@ -1,32 +1,52 @@
-'use client';
+"use client";
 
-import React, { useEffect, useState } from 'react';
+import * as React from "react";
+import { useEffect, useMemo, useState } from "react";
+import { usePortfolioData } from "@/hooks/usePortfolioData";
+import { getUserPreferences } from "@/api/client";
+
+/** shadcn/ui */
 import {
-  FaWallet,
-  FaDollarSign,
-  FaChartPie,
-  FaBalanceScale,
-} from 'react-icons/fa';
-import PortfolioSummaryCard from './PortfolioSummaryCard';
-import PositionTable from './PositionTable';
-import HoldingPieChart from './HoldingPieChart';
-import GainLossBarChart from './GainLossBarChart';
-import InsightsPanel from './InsightsPanel';
-import TransactionsTable from './TransactionsTable';
-import TradingHistoryTable from './TradingHistoryTable';
-import AccountBalanceGraph from './AccountBalanceGraph';
-import { usePortfolioData } from '@/hooks/usePortfolioData';
-import { getUserPreferences } from '@/api/client';
+  Card, CardHeader, CardContent, CardTitle, CardDescription, CardFooter,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
 
-const statWidgets = [
-  { icon: <FaWallet className="w-4 h-4 text-purple-400" />, label: 'Liquidation', field: 'liquidationValue' },
-  { icon: <FaDollarSign className="w-4 h-4 text-pink-400" />, label: 'Equity', field: 'equity' },
-  { icon: <FaChartPie className="w-4 h-4 text-indigo-400" />, label: 'Cash', field: 'cash' },
-  { icon: <FaBalanceScale className="w-4 h-4 text-purple-300" />, label: 'Buying Power', field: 'buyingPower' },
-];
+/** icons */
+import {
+  Wallet, DollarSign, PieChart, Scale, RefreshCw, AlertTriangle, CalendarClock,
+} from "lucide-react";
 
-const defaultSummary = {
-  accountNumber: '—',
+/** your local components */
+import PortfolioSummaryCard from "./PortfolioSummaryCard";
+import PositionTable from "./PositionTable";
+import HoldingPieChart from "./HoldingPieChart";
+import GainLossBarChart from "./GainLossBarChart";
+import InsightsPanel from "./InsightsPanel";
+import TransactionsTable from "./TransactionsTable";
+import TradingHistoryTable from "./TradingHistoryTable";
+import AccountBalanceGraph from "./AccountBalanceGraph";
+
+/* -------------------- types & constants -------------------- */
+type Summary = {
+  accountNumber: string;
+  liquidationValue: number;
+  equity: number;
+  cash: number;
+  buyingPower: number;
+  dayTradingBuyingPower: number;
+  cashAvailableForTrading: number;
+  cashAvailableForWithdrawal: number;
+  accruedInterest: number;
+  marginBalance: number;
+  shortBalance: number;
+};
+
+const DEFAULT_SUMMARY: Summary = {
+  accountNumber: "—",
   liquidationValue: 0,
   equity: 0,
   cash: 0,
@@ -39,181 +59,291 @@ const defaultSummary = {
   shortBalance: 0,
 };
 
-const PortfolioPage: React.FC = () => {
+const STAT_WIDGETS: {
+  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
+  label: string;
+  field: keyof Summary;
+  tint: string;
+}[] = [
+  { icon: Wallet,     label: "Liquidation", field: "liquidationValue", tint: "text-violet-400" },
+  { icon: DollarSign, label: "Equity",      field: "equity",           tint: "text-indigo-300" },
+  { icon: PieChart,   label: "Cash",        field: "cash",             tint: "text-sky-300" },
+  { icon: Scale,      label: "Buying Power",field: "buyingPower",      tint: "text-fuchsia-300" },
+];
+
+/* -------------------- page -------------------- */
+export default function PortfolioPage() {
   const { data, isLoading, error, refetch } = usePortfolioData();
   const [activeBroker, setActiveBroker] = useState<string | null>(null);
   const [checkingBroker, setCheckingBroker] = useState(true);
-  
-  const summary = data?.portfolio?.summary ?? defaultSummary;
+
+  const summary: Summary = data?.portfolio?.summary ?? DEFAULT_SUMMARY;
   const positions = data?.portfolio?.positions ?? [];
   const transactions = data?.portfolio?.transactions ?? [];
 
-  // Check if user has an active broker set
+  /** Check active broker once */
   useEffect(() => {
-    const checkActiveBroker = async () => {
+    (async () => {
       try {
-        const preferences = await getUserPreferences();
-        setActiveBroker(preferences?.activeBroker || null);
-      } catch (err) {
-        console.error('Error checking active broker:', err);
+        const prefs = await getUserPreferences();
+        setActiveBroker(prefs?.activeBroker || null);
+      } catch (e) {
+        console.error("Error checking active broker:", e);
         setActiveBroker(null);
       } finally {
         setCheckingBroker(false);
       }
-    };
-
-    checkActiveBroker();
+    })();
   }, []);
 
-  // ✅ Show message if no active broker is set
+  /** Friendly timestamp */
+  const timestamp = useMemo(
+    () =>
+      new Date().toLocaleString(undefined, {
+        weekday: "short",
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    []
+  );
+
+  /* ------------- empty/guard states ------------- */
+
   if (!checkingBroker && !activeBroker) {
     return (
-      <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_#1f1f2e,_#0d0d12)] text-neutral-200">
-        <main className="relative z-10 p-6 space-y-6 ml-20 lg:ml-64 transition-all duration-300">
-          <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
-              Portfolio Dashboard
-            </h1>
-          </div>
-          
-          <div className="rounded-xl backdrop-blur-lg bg-black/20 p-8 shadow-xl border border-yellow-400/20 text-center">
-            <h2 className="text-xl font-semibold text-yellow-400 mb-4">No Active Broker</h2>
-            <p className="text-neutral-300 mb-6">
-              Please connect and set an active broker in the Settings page to view your portfolio.
-            </p>
-            <a
-              href="/settings"
-              className="inline-block px-6 py-2 rounded-md text-sm font-medium bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:opacity-90 transition-all duration-300"
-            >
-              Go to Settings
-            </a>
-          </div>
-        </main>
+      <div className="px-4 py-6 space-y-6">
+        <Header title="Portfolio Dashboard" timestamp={timestamp} />
+        <Card className="border-yellow-400/30 bg-black/40 backdrop-blur">
+          <CardHeader>
+            <CardTitle className="text-yellow-400">No Active Broker</CardTitle>
+            <CardDescription>
+              Connect and set an active broker to view your portfolio.
+            </CardDescription>
+          </CardHeader>
+          <CardFooter>
+            <Button asChild className="bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white">
+              <a href="/settings">Go to Settings</a>
+            </Button>
+          </CardFooter>
+        </Card>
       </div>
     );
   }
 
-  // ✅ Handle error state
   if (error) {
     return (
-      <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_#1f1f2e,_#0d0d12)] text-neutral-200">
-        <main className="relative z-10 p-6 space-y-6 ml-20 lg:ml-64 transition-all duration-300">
-          <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
-              Portfolio Dashboard
-            </h1>
-          </div>
-          
-          <div className="rounded-xl backdrop-blur-lg bg-black/20 p-8 shadow-xl border border-red-400/20 text-center">
-            <h2 className="text-xl font-semibold text-red-400 mb-4">Unable to Load Portfolio</h2>
-            <p className="text-neutral-300 mb-6">
-              {error instanceof Error ? error.message : 'Failed to fetch portfolio data'}
-            </p>
-            <button
-              onClick={() => refetch()}
-              className="px-6 py-2 rounded-md text-sm font-medium bg-gradient-to-r from-blue-500 to-indigo-500 text-white hover:opacity-90 transition-all duration-300"
-            >
-              Try Again
-            </button>
-          </div>
-        </main>
+      <div className="px-4 py-6 space-y-6">
+        <Header title="Portfolio Dashboard" timestamp={timestamp} />
+        <Alert variant="destructive" className="border-red-500/30 bg-red-500/10">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Unable to load portfolio</AlertTitle>
+          <AlertDescription>
+            {error instanceof Error ? error.message : "Failed to fetch portfolio data"}
+          </AlertDescription>
+        </Alert>
+        <Button onClick={() => refetch()} className="w-fit">
+          <RefreshCw className="mr-2 h-4 w-4" /> Try Again
+        </Button>
       </div>
     );
   }
 
+  /* ------------- main ------------- */
+
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_#1f1f2e,_#0d0d12)] text-neutral-200">
-      {/* Background Blobs */}
-      <div className="absolute -top-24 -left-24 w-80 h-80 bg-purple-600/20 rounded-full blur-2xl pointer-events-none" />
-      <div className="absolute -bottom-24 -right-24 w-96 h-96 bg-pink-600/20 rounded-full blur-3xl pointer-events-none" />
+    <div className="px-4 py-6 space-y-6">
+      <Header title="Portfolio Dashboard" timestamp={timestamp} activeBroker={activeBroker || undefined} />
 
-      {/* Content */}
-      <main className="relative z-10 p-6 space-y-6 ml-20 lg:ml-64 transition-all duration-300">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
-            Portfolio Dashboard
-          </h1>
-          <span className="text-sm text-neutral-500">
-            {new Date().toLocaleString(undefined, {
-              weekday: 'short',
-              year: 'numeric',
-              month: 'short',
-              day: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
-          </span>
+      {/* KPIs */}
+      <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {STAT_WIDGETS.map(({ icon: Icon, label, field, tint }) => (
+          <Card key={label} className="bg-black/40 backdrop-blur border-white/10">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+                <span>{label}</span>
+                <Icon className={`h-4 w-4 ${tint}`} />
+              </div>
+              <div className="text-xl font-semibold text-white">
+                {isLoading ? (
+                  <Skeleton className="h-6 w-24 bg-white/10" />
+                ) : (
+                  currency(typeof summary[field] === "number" ? summary[field] : 0)
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </section>
+
+      {/* Main grid */}
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Left */}
+        <div className="space-y-6">
+          <Card className="bg-black/40 backdrop-blur border-white/10">
+            <CardHeader>
+              <CardTitle>Holdings Breakdown</CardTitle>
+              <CardDescription>Allocation by symbol/sector (mock if feed missing).</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {isLoading ? <ChartSkeleton /> : <HoldingPieChart summary={summary} positions={positions} />}
+            </CardContent>
+          </Card>
+
+          <Card className="bg-black/40 backdrop-blur border-white/10">
+            <CardHeader>
+              <CardTitle>AI Insights</CardTitle>
+              <CardDescription>Generated from your current positions.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {isLoading ? <ListSkeleton rows={3} /> : <InsightsPanel positions={positions} />}
+            </CardContent>
+          </Card>
+
+          {!isLoading && (
+            <Card className="bg-black/40 backdrop-blur border-white/10">
+              <CardHeader>
+                <CardTitle>Account Summary</CardTitle>
+                <CardDescription>Cash, balances, margin, and availability.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <PortfolioSummaryCard summary={summary} />
+              </CardContent>
+            </Card>
+          )}
+
+          <Card className="bg-black/40 backdrop-blur border-white/10">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <CalendarClock className="h-4 w-4" /> Account Value Over Time
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {isLoading ? <ChartSkeleton /> : <AccountBalanceGraph trades={transactions} />}
+            </CardContent>
+          </Card>
         </div>
 
-        {/* KPI Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {statWidgets.map(({ icon, label, field }) => (
-            <div
-              key={label}
-              className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20"
-            >
-              <div className="flex justify-between text-xs text-neutral-400 mb-1">
-                {label}
-                {icon}
-              </div>
-              <div className="text-xl font-bold text-white">
-                {isLoading
-                  ? '…'
-                  : `$${summary[field as keyof typeof summary].toLocaleString()}`}
-              </div>
-            </div>
-          ))}
-        </div>
+        {/* Right */}
+        <div className="space-y-6">
+          <Card className="bg-black/40 backdrop-blur border-white/10">
+            <CardHeader>
+              <CardTitle>Daily P/L</CardTitle>
+              <CardDescription>Per-position 1D contribution.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {isLoading ? <ChartSkeleton /> : <GainLossBarChart data={positions} />}
+            </CardContent>
+          </Card>
 
-        {/* Main Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="space-y-6">
-            <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
-              <h2 className="text-sm font-semibold mb-2 text-white">Holdings Breakdown</h2>
-              {isLoading ? <p>Loading…</p> : <HoldingPieChart summary={summary} positions={positions} />}
-            </div>
-
-            <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
-              <h2 className="text-sm font-semibold mb-2 text-white">AI Insights</h2>
-              {isLoading ? <p>Loading…</p> : <InsightsPanel positions={positions} />}
-            </div>
-
-            {!isLoading && <PortfolioSummaryCard summary={summary} />}
-
-            <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
-              <h2 className="text-sm font-semibold mb-2 text-white">Account Value Over Time</h2>
-              {isLoading ? <p>Loading…</p> : <AccountBalanceGraph trades={transactions} />}
-            </div>
-          </div>
-
-          <div className="space-y-6">
-            <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
-              <h2 className="text-sm font-semibold mb-2 text-white">Daily P/L</h2>
-              {isLoading ? <p>Loading…</p> : <GainLossBarChart data={positions} />}
-            </div>
-
-            <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
-              <h2 className="text-sm font-semibold mb-2 text-white">Your Positions</h2>
+          <Card className="bg-black/40 backdrop-blur border-white/10">
+            <CardHeader>
+              <CardTitle>Your Positions</CardTitle>
+              <CardDescription>Realtime snapshot across connected broker.</CardDescription>
+            </CardHeader>
+            <CardContent>
               {isLoading ? (
-                <p>Loading…</p>
+                <TableSkeleton />
               ) : positions.length ? (
                 <PositionTable positions={positions} />
               ) : (
-                <p className="text-center text-neutral-500">No positions to display.</p>
+                <div className="text-center text-muted-foreground text-sm">No positions to display.</div>
               )}
-            </div>
+            </CardContent>
+          </Card>
 
-            {!isLoading && <TradingHistoryTable transactions={transactions} />}
-            {!isLoading && <TransactionsTable transactions={transactions} />}
-          </div>
+          {!isLoading && (
+            <Card className="bg-black/40 backdrop-blur border-white/10">
+              <CardHeader>
+                <CardTitle>Trading History</CardTitle>
+                <CardDescription>Recent trades, tags & notes.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <TradingHistoryTable transactions={transactions} />
+              </CardContent>
+            </Card>
+          )}
+
+          {!isLoading && (
+            <Card className="bg-black/40 backdrop-blur border-white/10">
+              <CardHeader>
+                <CardTitle>Transactions</CardTitle>
+                <CardDescription>Cash movements, fees, dividends.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <TransactionsTable transactions={transactions} />
+              </CardContent>
+            </Card>
+          )}
         </div>
+      </section>
 
-        {/* Error message inline */}
-        {error && <div className="text-center py-4 text-red-400">Error loading data</div>}
-      </main>
+      {/* Inline error (soft) */}
+      {error && (
+        <>
+          <Separator className="my-2" />
+          <Alert variant="destructive" className="border-red-500/30 bg-red-500/10">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>Error loading data</AlertDescription>
+          </Alert>
+        </>
+      )}
     </div>
   );
-};
+}
 
-export default PortfolioPage;
+/* -------------------- small pieces -------------------- */
+
+function Header({ title, timestamp, activeBroker }: { title: string; timestamp: string; activeBroker?: string }) {
+  return (
+    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+      <div className="flex items-center gap-3">
+        <h1 className="text-2xl md:text-3xl font-semibold bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 via-violet-400 to-fuchsia-400">
+          {title}
+        </h1>
+        {activeBroker && <Badge variant="outline">Active: {activeBroker}</Badge>}
+      </div>
+      <div className="text-sm text-muted-foreground">{timestamp}</div>
+    </div>
+  );
+}
+
+function currency(n: number) {
+  return n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+}
+
+/** Pretty skeletons for charts/tables/lists */
+function ChartSkeleton() {
+  return (
+    <div className="space-y-3">
+      <Skeleton className="h-36 w-full bg-white/10" />
+      <div className="flex gap-2">
+        <Skeleton className="h-3 w-24 bg-white/10" />
+        <Skeleton className="h-3 w-16 bg-white/10" />
+      </div>
+    </div>
+  );
+}
+function TableSkeleton() {
+  return (
+    <div className="space-y-2">
+      <Skeleton className="h-8 w-full bg-white/10" />
+      {[0,1,2,3,4].map((i)=> <Skeleton key={i} className="h-6 w-full bg-white/10" />)}
+    </div>
+  );
+}
+function ListSkeleton({ rows=3 }: { rows?: number }) {
+  return (
+    <div className="space-y-2">
+      {Array.from({length: rows}).map((_,i)=>(
+        <div key={i} className="flex items-center gap-2">
+          <Skeleton className="h-3 w-3 rounded-full bg-white/10" />
+          <Skeleton className="h-4 w-3/4 bg-white/10" />
+        </div>
+      ))}
+    </div>
+  );
+}
