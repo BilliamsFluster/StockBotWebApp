@@ -141,7 +141,6 @@ export default function BrokerPage() {
                 <Button
                   onClick={refresh}
                   disabled={summary.checking}
-                  className="btn-gradient"
                 >
                   {summary.checking && (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -205,7 +204,7 @@ function StatusBadge({
 }) {
   const variant =
     state === true
-      ? "secondary"
+      ? "default"
       : state === false
       ? "destructive"
       : "secondary";

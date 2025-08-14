@@ -1,9 +1,10 @@
 "use client";
 
 import * as React from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Bot,
   LayoutDashboard,
@@ -38,7 +39,9 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { cn } from "@/lib/utils"; // Using the global cn utility
+import { cn } from "@/lib/utils";
+import { logout } from "@/api/client";
+import { useAuth } from "@/context/AuthContext";
 
 // ---- props ----
 interface SidebarProps {
@@ -78,13 +81,31 @@ export default function Sidebar({ isMobileOpen, setMobileOpen, isExpanded, setEx
     }
   };
 
+  const [username, setUsername] = useState('User');
+
+  useEffect(() => {
+    fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/users/profile`, {
+      credentials: 'include',
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error('Not authenticated');
+        return r.json();
+      })
+      .then((data) => {
+        if (data.username) setUsername(data.username);
+      })
+      .catch(() => {
+        setUsername('Guest');
+      });
+  }, []);
+
   return (
     <>
       {/* Desktop sidebar */}
       <aside
         className={cn(
-          "group fixed left-0 top-0 z-40 hidden h-screen border-r bg-black/40 backdrop-blur",
-          "supports-[backdrop-filter]:backdrop-blur-md border-white/10 lg:block",
+          "group fixed left-0 top-0 z-40 hidden h-screen border-r bg-background/80 backdrop-blur",
+          "supports-[backdrop-filter]:backdrop-blur-md lg:block",
           "transition-[width] duration-300 ease-out",
           isExpanded ? "w-64" : "w-[76px]"
         )}
@@ -94,6 +115,7 @@ export default function Sidebar({ isMobileOpen, setMobileOpen, isExpanded, setEx
           expanded={isExpanded}
           setExpanded={setExpanded}
           onLinkClick={handleLinkClick}
+          username={username}
         />
       </aside>
 
@@ -101,7 +123,7 @@ export default function Sidebar({ isMobileOpen, setMobileOpen, isExpanded, setEx
       <Sheet open={isMobileOpen} onOpenChange={setMobileOpen}>
         <SheetContent
           side="left"
-          className="w-[80vw] p-0 bg-black/70 backdrop-blur supports-[backdrop-filter]:backdrop-blur-md border-white/10"
+          className="w-[80vw] border-r p-0 bg-background/90 backdrop-blur supports-[backdrop-filter]:backdrop-blur-md"
         >
           <SheetHeader className="px-4 pt-4 pb-2">
             <SheetTitle className="sr-only">Navigation</SheetTitle>
@@ -112,6 +134,7 @@ export default function Sidebar({ isMobileOpen, setMobileOpen, isExpanded, setEx
             setExpanded={() => {}} // No-op for mobile
             onLinkClick={() => setMobileOpen(false)}
             isMobile
+            username={username}
           />
         </SheetContent>
       </Sheet>
@@ -127,13 +150,28 @@ function SidebarInner({
   setExpanded,
   onLinkClick,
   isMobile,
+  username,
 }: {
   pathname: string;
   expanded: boolean;
   setExpanded: (v: boolean) => void;
   onLinkClick: () => void;
   isMobile?: boolean;
+  username: string;
 }) {
+  const router = useRouter();
+  const { setUser } = useAuth();
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      setUser(null);
+      router.push('/');
+    } catch (err) {
+      console.error('Logout failed', err);
+    }
+  };
+
   return (
     <TooltipProvider delayDuration={80}>
       <div className="flex h-full flex-col">
@@ -148,7 +186,7 @@ function SidebarInner({
             }}
           >
             {expanded ? (
-              <span className="text-2xl font-extrabold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
+              <span className="text-2xl font-extrabold text-primary">
                 Jarvis
               </span>
             ) : (
@@ -157,7 +195,7 @@ function SidebarInner({
                   src="/BotLogo.png"
                   alt="Jarvis"
                   fill
-                  className="object-contain invert brightness-200 mix-blend-screen"
+                  className="object-contain dark:invert dark:brightness-200 dark:mix-blend-screen"
                 />
               </div>
             )}
@@ -167,7 +205,7 @@ function SidebarInner({
             <Button
               variant="ghost"
               size="icon"
-              className="text-zinc-300 hover:text-white"
+              className="text-muted-foreground hover:text-foreground"
               onClick={() => setExpanded(!expanded)}
             >
               {expanded ? <PanelLeftClose size={18} /> : <PanelRightClose size={18} />}
@@ -175,15 +213,15 @@ function SidebarInner({
           )}
         </div>
 
-        <Separator className="border-white/10" />
+        <Separator />
 
         {/* Nav */}
         <ScrollArea className="flex-1 px-2 py-3">
-          <nav className="space-y-6 text-sm text-zinc-300">
+          <nav className="space-y-6 text-sm">
             {navSections.map(({ title, links }) => (
               <div key={title} className="space-y-2">
                 {expanded && (
-                  <div className="px-3 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                  <div className="px-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80">
                     {title}
                   </div>
                 )}
@@ -196,24 +234,17 @@ function SidebarInner({
                         onClick={onLinkClick}
                         className={cn(
                           "flex items-center rounded-md px-3 py-2 transition-colors",
-                          "hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500",
+                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
                           expanded ? "gap-3 justify-start" : "justify-center",
                           isActive
-                            ? "bg-indigo-500/25 text-white ring-1 ring-inset ring-indigo-400/40"
-                            : "text-zinc-300"
+                            ? "bg-primary/10 text-primary"
+                            : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                         )}
                       >
-                        <Icon
-                          size={18}
-                          className={cn(
-                            "shrink-0",
-                            isActive ? "text-white" : "text-zinc-300"
-                          )}
-                        />
+                        <Icon size={18} className="shrink-0" />
                         {expanded && <span className="text-sm">{label}</span>}
-                        {/* active indicator pill */}
                         {!expanded && isActive && (
-                          <span className="absolute right-0 h-6 w-1 rounded-l bg-indigo-400" />
+                          <span className="absolute right-0 h-6 w-1 rounded-l bg-primary" />
                         )}
                       </Link>
                     );
@@ -237,7 +268,7 @@ function SidebarInner({
           </nav>
         </ScrollArea>
 
-        <Separator className="border-white/10" />
+        <Separator />
 
         {/* Footer: user / settings quick menu */}
         <div className={cn("p-3", expanded ? "px-3" : "px-2")}>
@@ -246,17 +277,17 @@ function SidebarInner({
               <Button
                 variant="ghost"
                 className={cn(
-                  "w-full justify-start gap-3 text-left text-zinc-300 hover:text-white",
+                  "w-full justify-start gap-3 text-left text-muted-foreground hover:text-foreground",
                   expanded ? "px-2" : "px-0"
                 )}
               >
-                <div className="flex size-8 items-center justify-center rounded-md bg-gradient-to-br from-indigo-500/40 to-purple-600/40 ring-1 ring-white/10">
+                <div className="flex size-8 items-center justify-center rounded-md bg-primary/20 ring-1 ring-border">
                   <User size={16} />
                 </div>
                 {expanded && (
                   <div className="flex flex-col">
-                    <span className="text-sm font-medium">Trader</span>
-                    <span className="text-xs text-zinc-500">@you</span>
+                    <span className="text-sm font-medium text-foreground">{username}</span>
+                    <span className="text-xs text-muted-foreground">@{username.toLowerCase()}</span>
                   </div>
                 )}
               </Button>
@@ -270,7 +301,7 @@ function SidebarInner({
                 <Link href="/brokers">Brokers</Link>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => alert("Sign out (wire this)")}>
+              <DropdownMenuItem onClick={handleLogout} className="cursor-pointer">
                 Sign out
               </DropdownMenuItem>
             </DropdownMenuContent>

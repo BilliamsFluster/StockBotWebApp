@@ -1,8 +1,7 @@
 "use client";
 
 import * as React from "react";
-// REMOVED: import { useTheme } from "next-themes";
-import { toast } from "react-hot-toast"; // Using react-hot-toast as configured in LayoutWrapper
+import { toast } from "react-hot-toast";
 
 /* --- Shadcn UI Components --- */
 import { Button } from "@/components/ui/button";
@@ -18,7 +17,8 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { Download, Upload, Info, ShieldCheck, BookOpen, Copy, Moon, Sun, Palette, Eye, EyeOff } from "lucide-react";
+import { Download, Upload, Info, ShieldCheck, BookOpen, Copy, Moon, Sun, Palette, Eye, EyeOff, Settings as SettingsIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 /* ---------------------------------- */
 type SettingsState = {
@@ -65,6 +65,14 @@ const DEFAULTS: SettingsState = {
   },
 };
 
+const ACCENT_OPTIONS = [
+  { value: "violet", label: "Violet" },
+  { value: "indigo", label: "Indigo" },
+  { value: "blue", label: "Blue" },
+  { value: "cyan", label: "Cyan" },
+  { value: "emerald", label: "Emerald" },
+] as const;
+
 // Mock app build data — wire to your real env if available
 const APP = {
   version: "1.7.0",
@@ -74,8 +82,6 @@ const APP = {
 };
 
 export default function SettingsPage() {
-  // REMOVED: const { setTheme } = useTheme();
-
   const [state, setState] = React.useState<SettingsState>(() => {
     try {
       const raw = localStorage.getItem("settings");
@@ -90,37 +96,28 @@ export default function SettingsPage() {
     if (typeof window === 'undefined') return;
     const root = document.documentElement;
 
-    // --- Theme Mode (replaces next-themes) ---
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     const handleSystemThemeChange = (e: MediaQueryListEvent) => {
       root.classList.toggle('dark', e.matches);
     };
-    // Clean up previous listener
+    
     mediaQuery.removeEventListener('change', handleSystemThemeChange);
-    // Apply new theme logic
+    
     if (state.appearance.mode === 'system') {
       root.classList.toggle('dark', mediaQuery.matches);
       mediaQuery.addEventListener('change', handleSystemThemeChange);
     } else {
       root.classList.toggle('dark', state.appearance.mode === 'dark');
     }
-    // --- End Theme Mode ---
 
-    // true black
     root.dataset.trueBlack = String(state.appearance.trueBlack);
-    // accent color
     root.dataset.accent = state.appearance.accent;
-    // density
     root.dataset.density = state.appearance.density;
-    // animations
     root.dataset.anim = state.appearance.animations ? "on" : "off";
-    // privacy mode
     root.dataset.privacy = state.privacy.privacyMode ? "on" : "off";
 
-    // persist
     localStorage.setItem("settings", JSON.stringify(state));
 
-    // Cleanup listener on component unmount
     return () => {
       mediaQuery.removeEventListener('change', handleSystemThemeChange);
     };
@@ -150,18 +147,9 @@ export default function SettingsPage() {
   };
 
   const downloadReleaseNotes = () => {
-    const md = `# Release Notes v${APP.version} (${APP.buildDate})
-- New: Brokers page with connection tools and status.
-- New: Overview page with StockBot performance tiles.
-- Improved: True-black theme & animated background blobs.
-- Fix: Order ticket validation edge cases.
-
-## Previous
-${RELEASE_NOTES.map(n=>`### v${n.version} — ${n.date}\n${n.items.map(i=>`- ${i}`).join("\n")}`).join("\n\n")}
-`;
+    const md = `# Release Notes v${APP.version} (${APP.buildDate})\n- New: Brokers page with connection tools and status.\n- New: Overview page with StockBot performance tiles.\n- Improved: True-black theme & animated background blobs.\n- Fix: Order ticket validation edge cases.\n\n## Previous\n${RELEASE_NOTES.map(n=>`### v${n.version} — ${n.date}\n${n.items.map(i=>`- ${i}`).join("\n")}`).join("\n\n")}`;
     const blob = new Blob([md], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
-    // FIXED: Defined 'a' element within this function's scope
     const a = document.createElement("a");
     a.href = url;
     a.download = `RELEASE_NOTES_v${APP.version}.md`;
@@ -185,16 +173,16 @@ ${RELEASE_NOTES.map(n=>`### v${n.version} — ${n.date}\n${n.items.map(i=>`- ${i
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => setState(DEFAULTS)}>Reset to Defaults</Button>
-          <Button className="btn-gradient" onClick={() => toast.success("Settings saved!")}>Save Settings</Button>
+          <Button onClick={() => toast.success("Settings saved!")}>Save Settings</Button>
         </div>
       </div>
 
       <Tabs defaultValue="appearance" className="w-full">
         <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="appearance">Appearance</TabsTrigger>
-          <TabsTrigger value="privacy">Privacy</TabsTrigger>
-          <TabsTrigger value="info">Info</TabsTrigger>
-          <TabsTrigger value="about">About</TabsTrigger>
+          <TabsTrigger value="appearance"><Palette className="h-4 w-4 mr-2" />Appearance</TabsTrigger>
+          <TabsTrigger value="privacy"><ShieldCheck className="h-4 w-4 mr-2" />Privacy</TabsTrigger>
+          <TabsTrigger value="info"><Info className="h-4 w-4 mr-2" />Info</TabsTrigger>
+          <TabsTrigger value="about"><BookOpen className="h-4 w-4 mr-2" />About</TabsTrigger>
         </TabsList>
 
         {/* Appearance */}
@@ -216,7 +204,7 @@ ${RELEASE_NOTES.map(n=>`### v${n.version} — ${n.date}\n${n.items.map(i=>`- ${i
                     <Moon className="mr-2 h-4 w-4" /> Dark
                   </Button>
                   <Button variant={state.appearance.mode==="system"?"default":"outline"} onClick={()=>setState(s=>({...s, appearance:{...s.appearance, mode:"system"}}))}>
-                    System
+                    <SettingsIcon className="mr-2 h-4 w-4" /> System
                   </Button>
                 </div>
               </div>
@@ -242,11 +230,14 @@ ${RELEASE_NOTES.map(n=>`### v${n.version} — ${n.date}\n${n.items.map(i=>`- ${i
                 >
                   <SelectTrigger><SelectValue placeholder="Accent color" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="indigo">Indigo</SelectItem>
-                    <SelectItem value="violet">Violet</SelectItem>
-                    <SelectItem value="blue">Blue</SelectItem>
-                    <SelectItem value="cyan">Cyan</SelectItem>
-                    <SelectItem value="emerald">Emerald</SelectItem>
+                    {ACCENT_OPTIONS.map(opt => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        <div className="flex items-center gap-2">
+                          <div className={cn("h-4 w-4 rounded-full", `accent-swatch-${opt.value}`)} />
+                          <span>{opt.label}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
