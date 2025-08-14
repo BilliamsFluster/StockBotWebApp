@@ -2,9 +2,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.routes.jarvis_routes import router as jarvis_router
 from api.routes.broker_routes import router as broker_router
+from ingestion.provider_manager import ProviderManager
 
 
 app = FastAPI()
+Pro = ProviderManager() 
 
 app.add_middleware(
     CORSMiddleware,

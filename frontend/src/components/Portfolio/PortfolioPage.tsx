@@ -244,13 +244,13 @@ export default function PortfolioPage() {
               <CardDescription>Realtime snapshot across connected broker.</CardDescription>
             </CardHeader>
             <CardContent>
-              {isLoading ? (
+                {isLoading ? (
                 <TableSkeleton />
-              ) : positions.length ? (
+                ) : positions.length ? (
                 <PositionTable positions={positions} />
-              ) : (
+                ) : (
                 <div className="text-center text-muted-foreground text-sm">No positions to display.</div>
-              )}
+                )}
             </CardContent>
           </Card>
 

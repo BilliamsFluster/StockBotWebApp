@@ -19,7 +19,7 @@ export default function RootLayout({
     <html lang="en" className="dark">
       <body className={inter.className}>
         {/* These divs render the blobs. */}
-        <div className="blob blob-purple"></div>
+        <div className="blob blob-accent"></div>
         <div className="blob blob-blue"></div>
 
         {/* This wrapper ensures your content appears ON TOP of the blobs. */}

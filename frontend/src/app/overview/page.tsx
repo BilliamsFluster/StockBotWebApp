@@ -1,5 +1,5 @@
 "use client";
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import {
   Card,
   CardContent,
@@ -21,6 +21,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
+import { OnboardingTeaser } from "@/components/OnboardingTeaser";
+import { useOnboarding } from "@/context/OnboardingContext";
 
 // --- Type Definitions ---
 type Bench = "SPY" | "QQQ" | "Custom Factor";
@@ -28,6 +30,7 @@ type IdxRow = { name: string; chg: number };
 type Mover = { sym: string; name: string; chg: number; vol: string };
 
 export default function OverviewPage() {
+  const { setShowOnboarding } = useOnboarding();
   /** ------- MOCK DATA (replace with live) ------- */
   const portfolio = {
     netLiq: 127420, realized: 18920, unrealized: 1245, marginUtil: 0.31, buyingPower: 232000, excessLiq: 75000,
@@ -71,6 +74,14 @@ export default function OverviewPage() {
   /** ------- UI STATE ------- */
   const [frame, setFrame] = useState<"1D"|"1W"|"1M"|"YTD"|"1Y">("YTD");
   const [activeBenches, setActiveBenches] = useState<Bench[]>(["SPY"]);
+  const [isOnboardingDone, setIsOnboardingDone] = useState(true);
+
+  useEffect(() => {
+    // This check runs on the client, where localStorage is available.
+    const done = localStorage.getItem('onboarding_done_v1') === 'true';
+    setIsOnboardingDone(done);
+  }, []);
+
   const toggleBench = (b:Bench) =>
     setActiveBenches(prev => prev.includes(b) ? prev.filter(x=>x!==b) : [...prev, b]);
 
@@ -81,6 +92,11 @@ export default function OverviewPage() {
   // This prevents the "double nav" issue.
   return (
     <div className="p-4 md:p-6 space-y-6">
+      {/* Onboarding Teaser */}
+      {!isOnboardingDone && (
+        <OnboardingTeaser onOpen={() => setShowOnboarding(true)} />
+      )}
+
       {/* Header */}
       <Card className="ink-card">
         <CardContent className="p-5 md:p-6 flex flex-col md:flex-row items-start md:items-center gap-4">
