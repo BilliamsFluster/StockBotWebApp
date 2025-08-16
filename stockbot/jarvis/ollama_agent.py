@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional, AsyncGenerator
 
 from .agent import BaseAgent
 from .memory_manager import MemoryManager
-from ingestion.provider_manager import ProviderManager
+from providers.provider_manager import ProviderManager
 from utils.web_search import fetch_financial_snippets
 
 logging.basicConfig(level=logging.DEBUG)

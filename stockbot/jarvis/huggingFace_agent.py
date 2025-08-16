@@ -20,7 +20,7 @@ except Exception:
         return False
 
 from .agent import BaseAgent
-from ingestion.provider_manager import ProviderManager
+from providers.provider_manager import ProviderManager
 
 log = logging.getLogger("HuggingFaceAgent")
 if not log.handlers:
