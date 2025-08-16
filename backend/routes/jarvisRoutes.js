@@ -20,7 +20,7 @@ export default function createJarvisRoutes(app) {
   // =====================
   // TEXT + CONTROL ROUTES
   // =====================
-  router.post("/ask", protectRoute, handleJarvisPrompt);
+  /*router.post("/ask", protectRoute, handleJarvisPrompt);
 
   router.post("/voice/start", protectRoute, startVoiceAssistant);
   router.post("/voice/stop", protectRoute, stopVoiceAssistant);
@@ -28,7 +28,7 @@ export default function createJarvisRoutes(app) {
   router.get("/voice/status", protectRoute, getVoiceStatus);
 
   router.get("/voice/stream", voiceStream);
-  router.post("/voice/event", relayVoiceData);
+  router.post("/voice/event", relayVoiceData);*/
 
   router.get("/portfolio", protectRoute, getPortfolioData);
   router.get("/models", protectRoute, fetchModels);
