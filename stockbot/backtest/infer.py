@@ -21,9 +21,18 @@ def _load_scaler(path: str):
     return None, None
 
 def _apply_scaler(X: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
+    # Handle empty or 1D input
+    if X.size == 0:
+        return X
+    if X.ndim == 1:
+        # [features] -> [1, 1, features]
+        X = X[None, None, :]
+    elif X.ndim == 2:
+        # [samples, features] -> [samples, 1, features]
+        X = X[:, None, :]
     F = X.shape[2]
     flat = X.reshape(-1, F)
-    flat = (flat - mean) / std
+    flat = (flat - mean[:F]) / std[:F]
     flat = np.nan_to_num(flat, nan=0.0, posinf=1e6, neginf=-1e6)
     return flat.reshape(X.shape)
 
@@ -41,7 +50,6 @@ def infer_probabilities(
     tmp = df.dropna(subset=feature_cols)
 
     # Build windows
-    # We pass a dummy label_col just to satisfy the function; it doesn't use labels here.
     X, _ = create_sliding_windows(tmp, feature_columns=feature_cols, window_size=window_size, label_col=feature_cols[0])
 
     # Align output index to the end of each window
@@ -53,8 +61,21 @@ def infer_probabilities(
         X = _apply_scaler(X, mean, std)
     X = np.nan_to_num(X, nan=0.0, posinf=1e6, neginf=-1e6)
 
-    # Torch model load
-    model = build_model(model_kind, num_features=X.shape[2], seq_len=X.shape[1])
+    # --- Fix shape issues here ---
+    if X.size == 0:
+        raise ValueError("Input features array X is empty after windowing/scaling.")
+    if X.ndim == 1:
+        # [features] -> [1, 1, features]
+        X = X[None, None, :]
+    elif X.ndim == 2:
+        # [samples, features] -> [samples, 1, features]
+        X = X[:, None, :]
+
+    # Now X is guaranteed to be 3D
+    num_features = X.shape[2]
+    seq_len = X.shape[1]
+
+    model = build_model(model_kind, num_features=num_features, seq_len=seq_len)
     state = torch.load(model_path, map_location="cpu")
     model.load_state_dict(state)
     model.eval().to(device)

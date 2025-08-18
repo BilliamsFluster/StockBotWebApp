@@ -4,36 +4,100 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class FocalLoss(nn.Module):
-    def __init__(self, gamma: float = 2.0, alpha=None, reduction: str = "mean"):
-        super().__init__()
+    def __init__(self, alpha=1, gamma=2, reduction='mean'):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
         self.gamma = gamma
         self.reduction = reduction
-        if alpha is None:
-            self.register_buffer("alpha", None)  # keeps device alignment
-        elif isinstance(alpha, (float, int)):
-            t = torch.tensor([float(alpha)], dtype=torch.float32)
-            self.register_buffer("alpha", t)
-        elif isinstance(alpha, torch.Tensor):
-            self.register_buffer("alpha", alpha.detach().clone().float())
+        
+    def forward(self, inputs, targets):
+        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
+        pt = torch.exp(-ce_loss)
+        focal_loss = self.alpha * (1-pt)**self.gamma * ce_loss
+        
+        if self.reduction == 'mean':
+            return torch.mean(focal_loss)
+        elif self.reduction == 'sum':
+            return torch.sum(focal_loss)
         else:
-            # list/ndarray -> tensor
-            t = torch.as_tensor(alpha, dtype=torch.float32)
-            self.register_buffer("alpha", t)
+            return focal_loss
 
-    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        # logits: [N, C], targets: [N]
-        ce = F.cross_entropy(logits, targets, reduction="none")
-        pt = torch.exp(-ce)
-        loss = (1 - pt) ** self.gamma * ce
+class WeightedFocalLoss(nn.Module):
+    def __init__(self, alpha=None, gamma=2, reduction='mean'):
+        super(WeightedFocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+        
+    def forward(self, inputs, targets):
+        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
+        pt = torch.exp(-ce_loss)
+        
         if self.alpha is not None:
-            # gather alpha by class
-            if self.alpha.numel() == 1:
-                loss = self.alpha.to(loss.device) * loss
-            else:
-                at = self.alpha.to(loss.device).gather(0, targets)
-                loss = at * loss
-        if self.reduction == "mean":
-            return loss.mean()
-        if self.reduction == "sum":
-            return loss.sum()
-        return loss
+            # Apply class weights
+            at = self.alpha[targets]
+            focal_loss = at * (1-pt)**self.gamma * ce_loss
+        else:
+            focal_loss = (1-pt)**self.gamma * ce_loss
+            
+        if self.reduction == 'mean':
+            return torch.mean(focal_loss)
+        elif self.reduction == 'sum':
+            return torch.sum(focal_loss)
+        else:
+            return focal_loss
+
+class LabelSmoothingLoss(nn.Module):
+    def __init__(self, smoothing=0.1):
+        super(LabelSmoothingLoss, self).__init__()
+        self.smoothing = smoothing
+        self.confidence = 1.0 - smoothing
+        
+    def forward(self, x, target):
+        logprobs = F.log_softmax(x, dim=-1)
+        nll_loss = -logprobs.gather(dim=-1, index=target.unsqueeze(1))
+        nll_loss = nll_loss.squeeze(1)
+        smooth_loss = -logprobs.mean(dim=-1)
+        loss = self.confidence * nll_loss + self.smoothing * smooth_loss
+        return loss.mean()
+
+class DiceLoss(nn.Module):
+    def __init__(self, smooth=1e-5):
+        super(DiceLoss, self).__init__()
+        self.smooth = smooth
+        
+    def forward(self, inputs, targets):
+        # Flatten input and target
+        inputs = inputs.view(-1)
+        targets = targets.view(-1)
+        
+        # Calculate intersection and union
+        intersection = (inputs * targets).sum()
+        union = inputs.sum() + targets.sum()
+        
+        dice = (2. * intersection + self.smooth) / (union + self.smooth)
+        return 1 - dice
+
+class FocalDiceLoss(nn.Module):
+    def __init__(self, alpha=1, gamma=2, smooth=1e-5):
+        super(FocalDiceLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.smooth = smooth
+        
+    def forward(self, inputs, targets):
+        # Calculate Dice loss
+        inputs = inputs.view(-1)
+        targets = targets.view(-1)
+        
+        intersection = (inputs * targets).sum()
+        union = inputs.sum() + targets.sum()
+        dice = (2. * intersection + self.smooth) / (union + self.smooth)
+        dice_loss = 1 - dice
+        
+        # Calculate focal loss
+        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
+        pt = torch.exp(-ce_loss)
+        focal_loss = self.alpha * (1-pt)**self.gamma * ce_loss
+        
+        return dice_loss + focal_loss.mean()

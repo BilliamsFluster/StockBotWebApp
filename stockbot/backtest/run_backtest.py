@@ -2,8 +2,8 @@
 from __future__ import annotations
 import argparse, os, json
 import pandas as pd
-from stockbot.eval.infer import infer_probabilities
-from stockbot.eval.backtest import backtest_long_flat, BTConfig
+from stockbot.backtest.infer import infer_probabilities
+from stockbot.backtest.backtest import backtest_long_flat, BTConfig
 
 def main():
     ap = argparse.ArgumentParser()

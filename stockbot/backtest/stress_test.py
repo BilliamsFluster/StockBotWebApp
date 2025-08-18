@@ -5,8 +5,8 @@ from typing import List, Tuple, Dict, Optional
 import numpy as np
 import pandas as pd
 
-from stockbot.eval.infer import infer_probabilities
-from stockbot.eval.backtest import backtest_long_flat, BTConfig
+from stockbot.backtest.infer import infer_probabilities
+from stockbot.backtest.backtest import backtest_long_flat, BTConfig
 
 def frange(start: float, stop: float, step: float) -> List[float]:
     # inclusive of stop if exactly hits; careful with float steps

@@ -1,9 +1,9 @@
-# stockbot/eval/backtest.py
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Dict
 import numpy as np
 import pandas as pd
+
 
 @dataclass
 class BTConfig:
@@ -16,6 +16,8 @@ class BTConfig:
     fee_bps: float = 0.0              # commissions in bps per side
     max_leverage: float = 1.0         # position = weight * equity / price
     risk_per_trade: float = 1.0       # 100% of allowed weight (simple long/flat)
+    initial_equity: float = 1.0       # starting capital (normalized units)
+
 
 def _atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     prev_close = df["Close"].shift(1)
@@ -26,26 +28,37 @@ def _atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     ], axis=1).max(axis=1)
     return tr.rolling(period, min_periods=period).mean()
 
+
 def backtest_long_flat(
     df: pd.DataFrame,
     p_up: pd.Series,
     cfg: BTConfig = BTConfig(),
 ) -> Dict[str, object]:
     """
-    Long/Flat daily close-to-close backtest.
-    Entry at next open after signal (simplification), apply ATR stop/TP intraday as close-based approximations.
+    Long/Flat daily backtest.
+    Entry at next open after signal (no look-ahead).
+    Stop/TP approximated on daily data (evaluated on close).
     """
+    if df.empty:
+        raise ValueError("backtest_long_flat: input price DataFrame is empty.")
+
     df = df.copy()
-    df = df.loc[p_up.index.min(): p_up.index.max()].copy()
+    # Limit df to the period where probabilities exist
+    if not p_up.index.is_monotonic_increasing:
+        p_up = p_up.sort_index()
+    start_i, end_i = p_up.index.min(), p_up.index.max()
+    df = df.loc[start_i:end_i].copy()
+
+    # Indicators
     df["ATR"] = _atr(df, cfg.atr_period)
 
-    # Align p_up to df index
-    p_up = p_up.reindex(df.index).fillna(method="ffill")
+    # Align probs to price index and forward-fill gaps
+    p_up = p_up.reindex(df.index).ffill()
 
     in_pos = False
     entry_price = 0.0
     stop = take = None
-    equity = 1.0
+    equity = float(cfg.initial_equity)
     equity_curve = []
     position = 0.0  # shares
     trades = []
@@ -56,69 +69,69 @@ def backtest_long_flat(
     for i in range(1, len(df)):
         today = df.index[i]
         yest  = df.index[i - 1]
-        price_open = df["Open"].iloc[i]
-        price_close= df["Close"].iloc[i]
-        atr = df["ATR"].iloc[i]
+        price_open  = float(df["Open"].iloc[i])
+        price_close = float(df["Close"].iloc[i])
+        atr = float(df["ATR"].iloc[i])
 
-        # Signal (use previous day prob for next-day open execution)
-        prob = p_up.iloc[i - 1]
+        # Signal from previous day (no look-ahead)
+        prob = float(p_up.iloc[i - 1])
 
-        # Exit logic
+        # Exit logic first
         if in_pos:
-            # Stop/TP (approximate using close)
             hit_stop = (price_close <= stop) if stop is not None else False
             hit_take = (cfg.tp_atr is not None) and (price_close >= take)
             exit_signal = (prob < cfg.exit_threshold)
 
             if hit_stop or hit_take or exit_signal:
-                # Exit at close price with costs
                 px = price_close * (1 - slip) * (1 - fee)
                 pnl = (px - entry_price) * position
-                equity += pnl / 1.0
-                trades.append({"entry": yest, "exit": today, "entry_px": entry_price, "exit_px": px, "pnl": pnl})
+                equity += pnl
+                trades.append({
+                    "entry": yest, "exit": today,
+                    "entry_px": entry_price, "exit_px": px, "pnl": pnl
+                })
                 in_pos = False
                 position = 0.0
                 entry_price = 0.0
                 stop = take = None
 
-        # Entry logic
+        # Entry logic after exit checks
         if not in_pos and prob >= cfg.entry_threshold:
-            # Enter long at open with costs
             px = price_open * (1 + slip) * (1 + fee)
-            # position sizing: invest all equity (long/flat simple model)
             position = (equity * cfg.max_leverage * cfg.risk_per_trade) / px
             entry_price = px
             in_pos = True
-            stop = entry_price - cfg.sl_atr * atr if atr == atr else None
-            take = entry_price + cfg.tp_atr * atr if (cfg.tp_atr is not None and atr == atr) else None
+            stop = entry_price - cfg.sl_atr * atr if np.isfinite(atr) else None
+            take = entry_price + cfg.tp_atr * atr if (cfg.tp_atr is not None and np.isfinite(atr)) else None
 
-        # Mark to market (close)
+        # Mark-to-market
         if in_pos:
-            equity = equity * (price_close / df["Close"].iloc[i - 1])
+            prev_close = float(df["Close"].iloc[i - 1])
+            if prev_close > 0:
+                equity *= (price_close / prev_close)
 
         equity_curve.append({"date": today, "equity": equity})
 
-    eq = pd.DataFrame(equity_curve).set_index("date")["equity"]
+    # Outputs
+    eq = pd.DataFrame(equity_curve).set_index("date")["equity"].astype(float)
     ret = eq.pct_change().fillna(0.0)
 
-    # Metrics
-    total_return = eq.iloc[-1] - 1.0
-    sharpe = (ret.mean() / (ret.std() + 1e-12)) * np.sqrt(252)
-    cummax = eq.cummax()
-    drawdown = (eq / cummax - 1.0)
-    max_dd = drawdown.min()
+    total_return = float(eq.iloc[-1] / eq.iloc[0] - 1.0) if eq.iloc[0] != 0 else float("nan")
+    sharpe = float((ret.mean() / (ret.std() + 1e-12)) * np.sqrt(252.0))
+    drawdown = (eq / eq.cummax() - 1.0)
+    max_dd = float(drawdown.min())
 
     wins = sum(1 for t in trades if t["pnl"] > 0)
-    win_rate = wins / max(1, len(trades))
+    win_rate = float(wins / max(1, len(trades)))
 
     return {
         "equity_curve": eq,
         "trades": pd.DataFrame(trades),
         "metrics": {
-            "total_return": float(total_return),
-            "sharpe": float(sharpe),
-            "max_drawdown": float(max_dd),
+            "total_return": total_return,
+            "sharpe": sharpe,
+            "max_drawdown": max_dd,
             "num_trades": len(trades),
-            "win_rate": float(win_rate),
+            "win_rate": win_rate,
         }
     }
