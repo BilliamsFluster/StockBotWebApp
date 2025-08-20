@@ -37,15 +37,19 @@ class BrokerAdapterBase:
 # Sim broker (used by env/backtests)
 # ------------------------------
 
+
 class SimBroker(BrokerAdapterBase):
     """Tied to your ExecutionModel + 'next bar' snapshot provider."""
     def __init__(self, exec_model, get_next_bar):
         self.exec = exec_model
         self._get_next_bar = get_next_bar
+        self.last_fills: List[Fill] = []   
 
     def place_orders(self, orders: List[Order]) -> List[Fill]:
         prices, volumes = self._get_next_bar()  # dicts: symbol -> (O,H,L,C), symbol -> vol
-        return self.exec.simulate_fills(orders, prices, volumes)
+        fills = self.exec.simulate_fills(orders, prices, volumes)
+        self.last_fills = list(fills)     
+        return fills
 
 # ------------------------------
 # Live/Paper broker adapter
