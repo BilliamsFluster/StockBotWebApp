@@ -12,6 +12,7 @@ import Settings from "@/components/Stockbot/Settings";
 
 export default function Page() {
   const [tab, setTab] = useState("dashboard");
+  const [backtestRunId, setBacktestRunId] = useState<string | null>(null);
 
   return (
     <div className="p-6 space-y-6">
@@ -28,10 +29,16 @@ export default function Page() {
         <TabsContent value="dashboard">
           <Dashboard
             onNewTraining={() => setTab("new-training")}
-            onNewBacktest={() => setTab("new-backtest")}
-            // Keep the signature but ignore the id since RunDetail is upload-only now
+            onNewBacktest={() => {
+              setBacktestRunId(null);
+              setTab("new-backtest");
+            }}
             onOpenRun={(_id) => {
               setTab("run-detail");
+            }}
+            onBacktestRun={(id) => {
+              setBacktestRunId(id);
+              setTab("new-backtest");
             }}
           />
         </TabsContent>
@@ -48,6 +55,7 @@ export default function Page() {
 
         <TabsContent value="new-backtest">
           <NewBacktest
+            runId={backtestRunId ?? undefined}
             onJobCreated={(_id) => {
               setTab("run-detail");
             }}
