@@ -18,6 +18,7 @@ import createJarvisRoutes from "./routes/jarvisRoutes.js";
 import schwabRoutes from "./routes/schwabRoutes.js";
 import alpacaRoutes from "./routes/alpacaRoutes.js";
 import brokerRoutes from "./routes/brokerRoutes.js";
+import stockbotRoutes from "./routes/stockbotRoutes.js";
 
 dotenv.config();
 connectDB();
@@ -64,6 +65,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/schwab", schwabRoutes);
 app.use("/api/alpaca", alpacaRoutes);
 app.use("/api/broker", brokerRoutes);
+app.use("/api/stockbot", stockbotRoutes);
 
 // ✅ Jarvis routes (pass the WS-enabled app)
 app.use("/api/jarvis", createJarvisRoutes(app));

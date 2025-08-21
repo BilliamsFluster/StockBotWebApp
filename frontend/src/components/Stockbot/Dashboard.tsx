@@ -24,7 +24,7 @@ export default function Dashboard({
     setLoading(true);
     try {
       // You can pass ?type=train or ?type=backtest if your API supports filters
-      const data = await fetchJSON<RunSummary[]>("/api/runs");
+      const data = await fetchJSON<RunSummary[]>("/api/stockbot/runs");
       setRuns(data ?? []);
     } catch (e) {
       console.error(e);
