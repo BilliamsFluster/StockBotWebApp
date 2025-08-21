@@ -147,28 +147,42 @@ def _run_subprocess_sync(args: List[str], rec: RunRecord):
     env["PYTHONUTF8"] = "1"
     env["PYTHONLEGACYWINDOWSSTDIO"] = "1"
 
+    # ---- Defensive: forbid None and coerce to str
+    clean_args: List[str] = []
+    for a in args:
+        if a is None:
+            raise ValueError("Internal error: command contained None")
+        clean_args.append(str(a))
+
     try:
-        cmdline = " ".join([shlex.quote(python_bin), *(shlex.quote(a) for a in args)])
+        cmdline = " ".join([shlex.quote(python_bin), *(shlex.quote(x) for x in clean_args)])
     except Exception:
-        cmdline = f"{python_bin} " + " ".join(args)
+        cmdline = f"{python_bin} " + " ".join(clean_args)
 
     with log_path.open("ab") as log:
         log.write(f"[{datetime.utcnow().isoformat()}] CMD: {cmdline}\n".encode())
-        proc = subprocess.Popen(
-            [python_bin, *args],
-            cwd=str(PROJECT_ROOT),
-            env=env,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            shell=False
-        )
-        rec.pid = proc.pid
-        code = proc.wait()
-        log.write(f"[{datetime.utcnow().isoformat()}] EXIT: {code}\n".encode())
+        try:
+            proc = subprocess.Popen(
+                [python_bin, *clean_args],
+                cwd=str(PROJECT_ROOT),
+                env=env,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                shell=False,
+            )
+            rec.pid = proc.pid
+            code = proc.wait()
+            log.write(f"[{datetime.utcnow().isoformat()}] EXIT: {code}\n".encode())
+            rec.finished_at = datetime.utcnow().isoformat()
+            rec.status = "SUCCEEDED" if code == 0 else "FAILED"
+            rec.error = None if code == 0 else f"Exited with code {code}"
+        except Exception as e:
+            # log the exception as well
+            log.write(f"[{datetime.utcnow().isoformat()}] ERROR: {e!r}\n".encode())
+            rec.finished_at = datetime.utcnow().isoformat()
+            rec.status = "FAILED"
+            rec.error = repr(e)
 
-    rec.finished_at = datetime.utcnow().isoformat()
-    rec.status = "SUCCEEDED" if code == 0 else "FAILED"
-    rec.error = None if code == 0 else f"Exited with code {code}"
     RUNS[rec.id] = rec
 
 # --------------- API ----------------
@@ -211,30 +225,56 @@ async def start_train_job(req: TrainRequest, bg: BackgroundTasks):
 
 async def start_backtest_job(req: BacktestRequest, bg: BackgroundTasks):
     import uuid
+
+    # ---- choose output folder
     out_dir = _choose_outdir(req.out_dir, req.out_tag)
     run_id = uuid.uuid4().hex[:10]
 
-    # Default settings from request
-    policy = req.policy
-    symbols = list(req.symbols)
-    start = req.start
-    end = req.end
+    # ---- pull basic fields (copy to locals so we can mutate safely)
+    policy  = (req.policy or "equal")
+    symbols = [s.strip() for s in (req.symbols or []) if isinstance(s, str) and s.strip()]
+    start   = (req.start or "").strip()
+    end     = (req.end or "").strip()
 
-    # If referencing a previous run, pull its model
-    if req.run_id:
+    # ---- basic validation
+    if not start or not end:
+        raise HTTPException(status_code=400, detail="start and end are required (YYYY-MM-DD).")
+    if not symbols:
+        raise HTTPException(status_code=400, detail="At least one symbol is required.")
+
+    # ---- optional: resolve a previous run's model and defaults
+    # (ensure BacktestRequest has: run_id: Optional[str] = None)
+    if getattr(req, "run_id", None):
         prev = RUNS.get(req.run_id)
         if not prev:
             raise HTTPException(status_code=400, detail="run_id not found")
         model_path = Path(prev.out_dir) / "ppo_policy.zip"
         if not model_path.exists():
             raise HTTPException(status_code=400, detail="Model not found for run")
-        policy = str(model_path)
+
+        # prefer explicitly given policy; otherwise use the previous run's saved model
+        policy = policy or str(model_path)
+
+        # If previous run stored the split in meta, use them as fallbacks only when not provided
         meta = prev.meta or {}
         if isinstance(meta, dict):
-            symbols = meta.get("symbols", symbols)
-            start = meta.get("eval_start", start)
-            end = meta.get("eval_end", end)
+            # Only override if our local value is still empty
+            if not symbols:
+                syms = meta.get("symbols")
+                if isinstance(syms, list):
+                    symbols = [str(s).strip() for s in syms if str(s).strip()]
+            if not start:
+                start = str(meta.get("eval_start") or meta.get("start") or start or "").strip()
+            if not end:
+                end   = str(meta.get("eval_end")   or meta.get("end")   or end   or "").strip()
 
+        # re-validate after overrides
+        if not start or not end:
+            raise HTTPException(status_code=400, detail="Derived start/end from run_id are empty.")
+        if not symbols:
+            raise HTTPException(status_code=400, detail="Derived symbols from run_id are empty.")
+
+    # ---- persist run record
     rec = RunRecord(
         id=run_id, type="backtest", status="QUEUED",
         out_dir=str(out_dir),
@@ -243,16 +283,18 @@ async def start_backtest_job(req: BacktestRequest, bg: BackgroundTasks):
     )
     RUNS[run_id] = rec
 
+    # ---- build clean arg list (no None, all str)
     args = [
         "-m", "stockbot.backtest.run",
-        "--config", req.config_path,
-        "--policy", policy,
+        "--config", str(req.config_path or "stockbot/env/env.example.yaml"),
+        "--policy", str(policy),
         "--out", str(out_dir),
-        "--start", start,
-        "--end", end,
-        "--symbols", *symbols,
+        "--start", str(start),
+        "--end", str(end),
+        "--symbols", *[str(s) for s in symbols],
     ]
 
+    # enqueue
     bg.add_task(_run_subprocess_sync, args, rec)
     return JSONResponse({"job_id": run_id})
 
