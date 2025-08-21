@@ -89,8 +89,8 @@ def main():
                       eval=(args.eval_start,  args.eval_end))
     else:
         split = _infer_split_from_cfg(cfg)
-        print(f"[auto-split] train={split.train[0]}→{split.train[1]}  "
-              f"eval={split.eval[0]}→{split.eval[1]}")
+        print(f"[auto-split] train={split.train[0]}->{split.train[1]}  "
+              f"eval={split.eval[0]}->{split.eval[1]}")
 
     # Force outputs into stockbot/runs/<out>
     base_dir = Path(__file__).resolve().parent.parent / "runs"
@@ -152,9 +152,8 @@ def main():
     tr = total_return(curve, start_cash)
     mdd = max_drawdown(curve)
     shp = daily_sharpe(curve, start_cash)
-    print(f"== Eval ({split.eval[0]}→{split.eval[1]}) ==")
+    print(f"== Eval ({split.eval[0]}->{split.eval[1]}) ==")
     print(f"Total Return: {tr:+.3f}  |  MaxDD: {mdd:.3f}  |  Sharpe(daily-ish): {shp:.3f}")
-
 
 if __name__ == "__main__":
     main()

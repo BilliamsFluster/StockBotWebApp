@@ -1,3 +1,4 @@
+// src/app/stockbot/page.tsx (or wherever your Page lives)
 "use client";
 
 import React, { useState } from "react";
@@ -11,7 +12,6 @@ import Settings from "@/components/Stockbot/Settings";
 
 export default function Page() {
   const [tab, setTab] = useState("dashboard");
-  const [lastJobId, setLastJobId] = useState<string | undefined>(undefined);
 
   return (
     <div className="p-6 space-y-6">
@@ -29,8 +29,8 @@ export default function Page() {
           <Dashboard
             onNewTraining={() => setTab("new-training")}
             onNewBacktest={() => setTab("new-backtest")}
-            onOpenRun={(id) => {
-              setLastJobId(id);
+            // Keep the signature but ignore the id since RunDetail is upload-only now
+            onOpenRun={(_id) => {
               setTab("run-detail");
             }}
           />
@@ -38,8 +38,8 @@ export default function Page() {
 
         <TabsContent value="new-training">
           <NewTraining
-            onJobCreated={(id) => {
-              setLastJobId(id);
+            // Keep the callback for UX flow; no longer pass to RunDetail
+            onJobCreated={(_id) => {
               setTab("run-detail");
             }}
             onCancel={() => setTab("dashboard")}
@@ -48,8 +48,7 @@ export default function Page() {
 
         <TabsContent value="new-backtest">
           <NewBacktest
-            onJobCreated={(id) => {
-              setLastJobId(id);
+            onJobCreated={(_id) => {
               setTab("run-detail");
             }}
             onCancel={() => setTab("dashboard")}
@@ -57,7 +56,8 @@ export default function Page() {
         </TabsContent>
 
         <TabsContent value="run-detail">
-          <RunDetail jobIdProp={lastJobId} />
+          {/* RunDetail is now upload-only and takes no props */}
+          <RunDetail />
         </TabsContent>
 
         <TabsContent value="compare">

@@ -14,14 +14,14 @@ export default function CompareRuns() {
   const [rows, setRows] = useState<any[]>([]);
 
   const loadRuns = async () => {
-    const data = await fetchJSON<RunSummary[]>("/api/runs");
+    const data = await fetchJSON<RunSummary[]>("/api/stockbot/runs");
     setRuns(data ?? []);
   };
 
   const loadSelected = async () => {
     const out: any[] = [];
     for (const id of selected) {
-      const art = await fetchJSON<RunArtifacts>(`/api/runs/${id}/artifacts`);
+      const art = await fetchJSON<RunArtifacts>(`/api/stockbot/runs/${id}/artifacts`);
       if (!art?.metrics) continue;
       const m = await fetchJSON<Metrics>(art.metrics);
       out.push({ id, ...m });

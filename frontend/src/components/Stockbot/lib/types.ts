@@ -1,5 +1,12 @@
-export type RunStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+export type RunStatus =
+  | "QUEUED"
+  | "PENDING"
+  | "RUNNING"
+  | "SUCCEEDED"
+  | "FAILED"
+  | "CANCELLED";
 
+  
 export interface RunSummary {
   id: string;
   type: "train" | "backtest";
@@ -12,16 +19,16 @@ export interface RunSummary {
 
 export interface JobStatusResponse extends RunSummary {}
 
-export interface RunArtifacts {
-  metrics: string;
-  equity: string;
-  orders: string;
-  trades: string;
-  summary: string;
-  config?: string;
-  model?: string; // for training runs
-}
-
+export type RunArtifacts = {
+  metrics: string | null;
+  equity: string | null;
+  orders: string | null;
+  trades: string | null;
+  summary: string | null;
+  config: string | null;
+  model?: string | null;
+  job_log?: string | null;
+};
 export interface Metrics {
   total_return: number;
   cagr: number;
