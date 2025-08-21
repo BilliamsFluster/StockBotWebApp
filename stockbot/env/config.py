@@ -30,6 +30,9 @@ class RewardConfig:
     w_drawdown: float = 0.0
     w_turnover: float = 0.0
     w_vol: float = 0.0
+    w_leverage: float = 0.0
+    vol_window: int = 10
+    stop_eq_frac: float = 0.0
     sharpe_window: int = 0
     sharpe_scale: float = 0.0
 
@@ -46,6 +49,7 @@ class EpisodeConfig:
 class FeatureConfig:
     use_custom_pipeline: bool = True
     indicators: Sequence[str] = ("logret", "rsi14")
+    window: int = 64
 
 @dataclass(frozen=True)
 class EnvConfig:
