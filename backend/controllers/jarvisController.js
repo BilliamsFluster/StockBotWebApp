@@ -9,8 +9,7 @@ import WebSocket from "ws";
 
 const STOCKBOT_URL = process.env.STOCKBOT_URL;
 
-// Global reference to running voice assistant process
-let voiceProcess = null;
+
 
 // ---- TEXT PROMPT → LLM ----
 export const handleJarvisPrompt = async (req, res) => {
