@@ -62,6 +62,7 @@ class BacktestRequest(BaseModel):
     end: str
     out_tag: Optional[str] = None
     out_dir: Optional[str] = None  # optional; if omitted -> RUNS_DIR/<tag>
+    run_id: Optional[str] = None
 
 class RunRecord(BaseModel):
     id: str
@@ -213,6 +214,27 @@ async def start_backtest_job(req: BacktestRequest, bg: BackgroundTasks):
     out_dir = _choose_outdir(req.out_dir, req.out_tag)
     run_id = uuid.uuid4().hex[:10]
 
+    # Default settings from request
+    policy = req.policy
+    symbols = list(req.symbols)
+    start = req.start
+    end = req.end
+
+    # If referencing a previous run, pull its model
+    if req.run_id:
+        prev = RUNS.get(req.run_id)
+        if not prev:
+            raise HTTPException(status_code=400, detail="run_id not found")
+        model_path = Path(prev.out_dir) / "ppo_policy.zip"
+        if not model_path.exists():
+            raise HTTPException(status_code=400, detail="Model not found for run")
+        policy = str(model_path)
+        meta = prev.meta or {}
+        if isinstance(meta, dict):
+            symbols = meta.get("symbols", symbols)
+            start = meta.get("eval_start", start)
+            end = meta.get("eval_end", end)
+
     rec = RunRecord(
         id=run_id, type="backtest", status="QUEUED",
         out_dir=str(out_dir),
@@ -224,11 +246,11 @@ async def start_backtest_job(req: BacktestRequest, bg: BackgroundTasks):
     args = [
         "-m", "stockbot.backtest.run",
         "--config", req.config_path,
-        "--policy", req.policy,
+        "--policy", policy,
         "--out", str(out_dir),
-        "--start", req.start,
-        "--end", req.end,
-        "--symbols", *req.symbols,
+        "--start", start,
+        "--end", end,
+        "--symbols", *symbols,
     ]
 
     bg.add_task(_run_subprocess_sync, args, rec)

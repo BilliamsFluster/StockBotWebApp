@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { fetchJSON, postJSON } from "./lib/api";
+import { addRecentRun } from "./lib/runs";
 import type { JobStatusResponse, RunArtifacts } from "./lib/types";
 
 type TrainPayload = {
@@ -153,6 +154,7 @@ export default function NewTraining({
       setProgress("Job started. Polling status…");
 
       // Optionally jump to Run Detail tab immediately:
+      addRecentRun({ id: resp.job_id, type: "train", status: "QUEUED", created_at: new Date().toISOString() });
       onJobCreated(resp.job_id);
     } catch (e: any) {
       setError(e?.message ?? String(e));
