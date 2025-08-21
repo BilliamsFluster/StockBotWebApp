@@ -36,7 +36,8 @@ class PortfolioTradingEnv(gym.Env):
             if missing:
                 raise RuntimeError(f"{s} missing features {missing}")
 
-        F = len(required)
+        self._cols = list(required)
+        F = len(self._cols)
         self.observation_space = spaces.Dict({
             "window": spaces.Box(low=-np.inf, high=np.inf, shape=(self.lookback, self.N, F), dtype=np.float32),
             "portfolio": spaces.Box(low=-np.inf, high=np.inf, shape=(3 + self.N,), dtype=np.float32)
@@ -75,7 +76,7 @@ class PortfolioTradingEnv(gym.Env):
         win = []
         for s in self.syms:
             sl = self.src.panel[s].iloc[i-self.lookback:i]
-            arr = sl[["open","high","low","close","volume","logret"]].values
+            arr = sl[self._cols].values
             win.append(arr)
         return np.transpose(np.stack(win, axis=0), (1,0,2)).astype(np.float32)
 
@@ -177,13 +178,29 @@ class PortfolioTradingEnv(gym.Env):
         turnover = float(np.sum(np.abs(target_w - self._last_weights)))
         pen_dd = self.cfg.reward.w_drawdown * dd_after
         pen_to = self.cfg.reward.w_turnover * turnover
-        r = r_base - pen_dd - pen_to
+
+        ret_step = (eq_close_t - eq_prev_close) / max(eq_prev_close, 1e-9)
+        self._ret_hist.append(float(ret_step))
+        pen_vol = 0.0
+        if self.cfg.reward.w_vol > 0 and len(self._ret_hist) >= self.cfg.reward.vol_window:
+            vol = float(np.std(self._ret_hist[-self.cfg.reward.vol_window:]))
+            pen_vol = self.cfg.reward.w_vol * vol
+        gross = self.port.gross_exposure(prices_close_t, eq_close_t)
+        lev_cap = self.cfg.margin.max_gross_leverage
+        pen_lev = self.cfg.reward.w_leverage * max(0.0, gross - lev_cap)
+
+        r = r_base - pen_dd - pen_to - pen_vol - pen_lev
 
         self._last_weights = target_w
         terminated = self._i >= len(self.src.index) - 1
         truncated = False
         if self.cfg.episode.max_steps is not None:
             truncated = (self._i - self._i0) >= self.cfg.episode.max_steps
+
+        stop_frac = getattr(self.cfg.reward, "stop_eq_frac", 0.0)
+        if stop_frac > 0 and eq_close_t < stop_frac * self._equity0:
+            terminated = True
+            r -= 1.0
 
         info = {
             "equity": eq_close_t,
@@ -192,6 +209,8 @@ class PortfolioTradingEnv(gym.Env):
             "r_base": float(r_base),
             "pen_turnover": float(pen_to),
             "pen_drawdown": float(pen_dd),
+            "pen_vol": float(pen_vol),
+            "pen_leverage": float(pen_lev),
         }
         return self._obs(self._i), float(r), bool(terminated), bool(truncated), info
 

@@ -22,8 +22,7 @@ class StockTradingEnv(gym.Env):
         self.lookback = episode.lookback
 
         # window tensor: choose deterministic column order
-        # required cols: open, high, low, close, volume, logret (others can be appended later)
-        cols = ["open","high","low","close","volume","logret"]
+        cols = ["open", "high", "low", "close", "volume"] + list(self.features.indicators)
         missing = [c for c in cols if c not in self.src.df.columns]
         if missing:
             raise RuntimeError(f"Missing required feature columns: {missing}")
