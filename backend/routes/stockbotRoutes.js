@@ -8,7 +8,8 @@ import {
   getRunProxy,
   uploadPolicyProxy,
   getRunArtifactsProxy,
-  getRunArtifactFileProxy, 
+  getRunArtifactFileProxy,
+  getRunBundleProxy,
 } from "../controllers/stockbotController.js";
 import { protectRoute } from "../middleware/protectRoute.js";
 
@@ -28,8 +29,10 @@ router.get("/runs/:id/artifacts", protectRoute, getRunArtifactsProxy);
 
 // Stream a specific artifact (metrics, equity, trades, orders, summary, config, model, job_log)
 router.get("/runs/:id/files/:name", protectRoute, getRunArtifactFileProxy);
+router.get("/runs/:id/bundle", protectRoute, getRunBundleProxy);
 
 router.post("/policies/upload", protectRoute, upload.single("file"), uploadPolicyProxy);
 
 
 export default router;
+
