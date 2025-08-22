@@ -32,3 +32,10 @@ export async function downloadRunBundle(runId: string, includeModel = true): Pro
   return data as Blob;
 }
 
+export async function getAiInsights() {
+  const { data } = await axios.get(buildUrl("/api/stockbot/insights"), {
+    withCredentials: true,
+  });
+  return data as { insights: string[] };
+}
+

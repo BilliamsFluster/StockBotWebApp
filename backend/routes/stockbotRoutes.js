@@ -10,6 +10,7 @@ import {
   getRunArtifactsProxy,
   getRunArtifactFileProxy,
   getRunBundleProxy,
+  getInsightsProxy,
 } from "../controllers/stockbotController.js";
 import { protectRoute } from "../middleware/protectRoute.js";
 
@@ -32,6 +33,9 @@ router.get("/runs/:id/files/:name", protectRoute, getRunArtifactFileProxy);
 router.get("/runs/:id/bundle", protectRoute, getRunBundleProxy);
 
 router.post("/policies/upload", protectRoute, upload.single("file"), uploadPolicyProxy);
+
+// AI insights
+router.get("/insights", protectRoute, getInsightsProxy);
 
 
 export default router;
