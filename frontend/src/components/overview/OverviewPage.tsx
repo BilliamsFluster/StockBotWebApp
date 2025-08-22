@@ -56,6 +56,24 @@ export default function OverviewPage() {
   // Load live portfolio data only when a broker is active
   const { data, isLoading } = usePortfolioData(Boolean(activeBroker));
   const summary = data?.portfolio?.summary;
+  const positions = data?.portfolio?.positions ?? [];
+  const transactions = data?.portfolio?.transactions ?? [];
+
+  const realizedPL = useMemo(() => {
+    const start = new Date(new Date().getFullYear(), 0, 1);
+    return transactions
+      .filter(tx => tx.type === "TRADE" && new Date(tx.date) >= start)
+      .reduce((acc, tx) => acc + (tx.amount || 0), 0);
+  }, [transactions]);
+
+  const unrealizedPL = useMemo(() => {
+    return positions.reduce((acc, p) => acc + (p.dayPL || 0), 0);
+  }, [positions]);
+
+  const cashAllocation = useMemo(() => {
+    if (!summary || !summary.equity) return "0%";
+    return ((summary.cash / summary.equity) * 100).toFixed(0) + "%";
+  }, [summary]);
 
   const perf = { sharpe:1.45, sortino:2.10, maxDD:-11.3 };
   const benchmarks: Bench[] = ["SPY", "QQQ", "Custom Factor"];
@@ -107,11 +125,6 @@ export default function OverviewPage() {
     setActiveBenches(prev => prev.includes(b) ? prev.filter(x=>x!==b) : [...prev, b]);
 
   /** ------- COMPUTED ------- */
-  const marginUtilPct = useMemo(() => {
-    if (!summary || !summary.equity) return "0%";
-    const util = summary.marginBalance / summary.equity;
-    return (util * 100).toFixed(0) + "%";
-  }, [summary]);
 
   // The content is now wrapped in a single div, not an extra Layout component.
   // This prevents the "double nav" issue.
@@ -150,7 +163,7 @@ export default function OverviewPage() {
                 <Stat label="Excess Liquidity" loading />
                 <Stat label="Realized P/L (YTD)" loading />
                 <Stat label="Unrealized P/L (1D)" loading />
-                <Stat label="Margin Utilization" loading />
+                <Stat label="Cash Allocation" loading />
               </div>
             ) : !activeBroker ? (
               <div className="space-y-4">
@@ -160,7 +173,7 @@ export default function OverviewPage() {
                   <Stat label="Excess Liquidity" loading />
                   <Stat label="Realized P/L (YTD)" loading />
                   <Stat label="Unrealized P/L (1D)" loading />
-                  <Stat label="Margin Utilization" loading />
+                  <Stat label="Cash Allocation" loading />
                 </div>
                 <p className="text-sm text-muted-foreground">
                   No active broker connected. Set one in settings to view your portfolio.
@@ -174,9 +187,17 @@ export default function OverviewPage() {
                 <Stat label="Net Liq" value={fmtCash(summary?.liquidationValue ?? 0)} />
                 <Stat label="Buying Power" value={fmtCash(summary?.buyingPower ?? 0)} />
                 <Stat label="Excess Liquidity" value={fmtCash(summary?.cash ?? 0)} />
-                <Stat label="Realized P/L (YTD)" value={fmtCash(0)} isPositive />
-                <Stat label="Unrealized P/L (1D)" value={fmtCash(0)} isPositive />
-                <Stat label="Margin Utilization" value={marginUtilPct} />
+                <Stat
+                  label="Realized P/L (YTD)"
+                  value={fmtCash(realizedPL)}
+                  isPositive={realizedPL >= 0}
+                />
+                <Stat
+                  label="Unrealized P/L (1D)"
+                  value={fmtCash(unrealizedPL)}
+                  isPositive={unrealizedPL >= 0}
+                />
+                <Stat label="Cash Allocation" value={cashAllocation} />
               </div>
             )}
           </CardContent>
