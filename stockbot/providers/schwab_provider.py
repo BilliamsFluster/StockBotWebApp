@@ -190,11 +190,24 @@ class SchwabProvider(BaseProvider):
         transactions = []
         for tx in raw_transactions:
             transfer_items = tx.get("transferItems", [])
-            first = transfer_items[0] if transfer_items else {}
-            instrument = first.get("instrument", {})
+            # Schwab returns multiple transfer items (fees, currency, security). Pick the security item if present.
+            sec_item = next(
+                (
+                    item
+                    for item in transfer_items
+                    if item.get("instrument", {}).get("assetType") != "CURRENCY"
+                ),
+                transfer_items[0] if transfer_items else {},
+            )
+            instrument = sec_item.get("instrument", {})
             symbol = instrument.get("symbol", "").replace("CURRENCY_", "")
-            quantity = float(first.get("amount", 0))
-            price = first.get("price")
+            quantity = float(sec_item.get("amount", 0))
+            price = sec_item.get("price")
+            if price is not None:
+                try:
+                    price = float(price)
+                except Exception:
+                    price = None
             try:
                 transactions.append({
                     "id": tx.get("activityId"),
