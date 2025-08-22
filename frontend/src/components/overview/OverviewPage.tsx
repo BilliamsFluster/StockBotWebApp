@@ -20,6 +20,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { OnboardingTeaser } from "@/components/OnboardingTeaser";
 import { useOnboarding } from "@/context/OnboardingContext";
 import { getUserPreferences } from "@/api/client";
@@ -30,6 +31,7 @@ import { getMarketHighlights } from "@/api/stockbot";
 type Bench = "SPY" | "QQQ" | "Custom Factor";
 type IdxRow = { name: string; chg: number };
 type Mover = { sym: string; name: string; chg: number; vol: string };
+type HighlightSection = { title: string; items: string[] };
 
 export default function OverviewPage() {
   const { setShowOnboarding } = useOnboarding();
@@ -77,13 +79,13 @@ export default function OverviewPage() {
   const perf = { sharpe:1.45, sortino:2.10, maxDD:-11.3 };
   const benchmarks: Bench[] = ["SPY", "QQQ", "Custom Factor"];
 
-  const [highlights, setHighlights] = useState<string>("");
+  const [highlights, setHighlights] = useState<HighlightSection[] | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
         const { highlights } = await getMarketHighlights();
-        setHighlights(highlights);
+        setHighlights(parseHighlights(highlights));
       } catch (e) {
         console.error("Failed to load highlights", e);
       }
@@ -246,8 +248,22 @@ export default function OverviewPage() {
         <Card className="ink-card">
           <CardHeader><CardTitle>News & Macro Highlights</CardTitle></CardHeader>
           <CardContent>
-            {highlights ? (
-              <pre className="whitespace-pre-wrap text-sm">{highlights}</pre>
+            {highlights?.length ? (
+              <ScrollArea className="max-h-80 pr-4">
+                <div className="space-y-4 text-sm">
+                  {highlights.map((section, idx) => (
+                    <div key={section.title} className="space-y-1">
+                      {idx > 0 && <Separator className="my-2" />}
+                      <h4 className="font-medium">{section.title}</h4>
+                      <ul className="list-disc pl-4 space-y-1">
+                        {section.items.map((item, i) => (
+                          <li key={i} className="leading-relaxed">{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
             ) : (
               <div className="text-sm text-muted-foreground">Loading highlights...</div>
             )}
@@ -367,4 +383,31 @@ function EquityArea({tone}:{tone?:"blue"|"purple"}) {
 /** ---------- Utils ---------- */
 function fmtCash(n:number){
   return n.toLocaleString(undefined,{style:"currency",currency:"USD",maximumFractionDigits:0});
+}
+
+function parseHighlights(text: string): HighlightSection[] {
+  return text
+    .split(/\n\s*\n/)
+    .map(block => {
+      const rawLines = block.split("\n");
+      if (!rawLines.length) return null;
+      const [titleLine, ...rest] = rawLines;
+
+      const items: string[] = [];
+      let current = "";
+      rest.forEach(line => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        if (/^[-*\u2022]\s*/.test(trimmed)) {
+          if (current) items.push(current.trim());
+          current = trimmed.replace(/^[-*\u2022]\s*/, "");
+        } else {
+          current += (current ? " " : "") + trimmed;
+        }
+      });
+      if (current) items.push(current.trim());
+
+      return { title: titleLine.trim(), items } as HighlightSection;
+    })
+    .filter(Boolean) as HighlightSection[];
 }
