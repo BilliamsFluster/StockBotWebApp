@@ -87,7 +87,9 @@ const TradingHistoryTable: React.FC<Props> = ({ transactions }) => {
                   </Badge>
                 </TableCell>
                 <TableCell className="text-right">{trade.quantity}</TableCell>
-                <TableCell className="text-right">{trade.price !== undefined ? trade.price.toFixed(2) : '—'}</TableCell>
+                <TableCell className="text-right">
+                  {typeof trade.price === "number" ? trade.price.toFixed(2) : "—"}
+                </TableCell>
                 <TableCell className="text-right">{trade.amount.toLocaleString(undefined, { style: 'currency', currency: 'USD' })}</TableCell>
               </TableRow>
             ))}
