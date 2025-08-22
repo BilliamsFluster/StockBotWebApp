@@ -159,6 +159,38 @@ class SchwabProvider(BaseProvider):
         except Exception:
             raw_transactions = []
 
+        # --- Performance metrics ---
+        day_pl = sum(float(p.get("currentDayProfitLoss", 0)) for p in raw_positions)
+        ytd_pl = 0.0
+        current_year = datetime.utcnow().year
+        for tx in raw_transactions:
+            if tx.get("type") != "TRADE":
+                continue
+            trade_date = tx.get("tradeDate") or tx.get("time")
+            try:
+                dt = datetime.fromisoformat(str(trade_date).replace("Z", "+00:00"))
+            except Exception:
+                continue
+            if dt.year != current_year:
+                continue
+            transfer_items = tx.get("transferItems", [])
+            sec_item = next(
+                (
+                    item
+                    for item in transfer_items
+                    if item.get("instrument", {}).get("assetType") != "CURRENCY"
+                ),
+                None,
+            )
+            if not sec_item or sec_item.get("positionEffect") != "CLOSING":
+                continue
+            net = float(tx.get("netAmount", 0))
+            cost = float(sec_item.get("cost", 0))
+            ytd_pl += net - cost
+
+        summary["dayPL"] = day_pl
+        summary["ytdPL"] = ytd_pl
+
         # ✅ Normalize positions
         positions = []
         for pos in raw_positions:
@@ -190,11 +222,24 @@ class SchwabProvider(BaseProvider):
         transactions = []
         for tx in raw_transactions:
             transfer_items = tx.get("transferItems", [])
-            first = transfer_items[0] if transfer_items else {}
-            instrument = first.get("instrument", {})
+            # Schwab returns multiple transfer items (fees, currency, security). Pick the security item if present.
+            sec_item = next(
+                (
+                    item
+                    for item in transfer_items
+                    if item.get("instrument", {}).get("assetType") != "CURRENCY"
+                ),
+                transfer_items[0] if transfer_items else {},
+            )
+            instrument = sec_item.get("instrument", {})
             symbol = instrument.get("symbol", "").replace("CURRENCY_", "")
-            quantity = float(first.get("amount", 0))
-            price = first.get("price")
+            quantity = float(sec_item.get("amount", 0))
+            price = sec_item.get("price")
+            if price is not None:
+                try:
+                    price = float(price)
+                except Exception:
+                    price = None
             try:
                 transactions.append({
                     "id": tx.get("activityId"),
