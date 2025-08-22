@@ -147,3 +147,27 @@ export async function getInsightsProxy(req, res) {
     return res.status(status).json(body);
   }
 }
+
+/** GET /api/stockbot/highlights */
+export async function getHighlightsProxy(req, res) {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const activeBroker = user.preferences?.activeBroker;
+    if (!activeBroker) {
+      return res.status(400).json({ error: "No active broker set" });
+    }
+
+    const credentials = await getBrokerCredentials(user, activeBroker);
+    const { data } = await axios.post(`${STOCKBOT_URL}/api/stockbot/highlights`, {
+      broker: activeBroker,
+      credentials,
+    });
+    return res.json(data);
+  } catch (e) {
+    const status = e.response?.status || 500;
+    const body = e.response?.data || { error: errMsg(e) };
+    return res.status(status).json(body);
+  }
+}
