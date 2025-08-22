@@ -21,8 +21,11 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
 import { OnboardingTeaser } from "@/components/OnboardingTeaser";
 import { useOnboarding } from "@/context/OnboardingContext";
+import { getUserPreferences } from "@/api/client";
+import { usePortfolioData } from "@/hooks/usePortfolioData";
 
 // --- Type Definitions ---
 type Bench = "SPY" | "QQQ" | "Custom Factor";
@@ -31,11 +34,29 @@ type Mover = { sym: string; name: string; chg: number; vol: string };
 
 export default function OverviewPage() {
   const { setShowOnboarding } = useOnboarding();
-  /** ------- MOCK DATA (replace with live) ------- */
-  const portfolio = {
-    netLiq: 127420, realized: 18920, unrealized: 1245, marginUtil: 0.31, buyingPower: 232000, excessLiq: 75000,
-    ccy: [{ccy:"USD", wt:0.92},{ccy:"EUR", wt:0.05},{ccy:"JPY", wt:0.03}],
-  };
+
+  // Track which broker is active so we can conditionally fetch portfolio data
+  const [activeBroker, setActiveBroker] = useState<string | null>(null);
+  const [checkingBroker, setCheckingBroker] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const prefs = await getUserPreferences();
+        setActiveBroker(prefs?.activeBroker || null);
+      } catch (e) {
+        console.error("Error checking active broker:", e);
+        setActiveBroker(null);
+      } finally {
+        setCheckingBroker(false);
+      }
+    })();
+  }, []);
+
+  // Load live portfolio data only when a broker is active
+  const { data, isLoading } = usePortfolioData(Boolean(activeBroker));
+  const summary = data?.portfolio?.summary;
+
   const perf = { sharpe:1.45, sortino:2.10, maxDD:-11.3 };
   const benchmarks: Bench[] = ["SPY", "QQQ", "Custom Factor"];
 
@@ -86,7 +107,11 @@ export default function OverviewPage() {
     setActiveBenches(prev => prev.includes(b) ? prev.filter(x=>x!==b) : [...prev, b]);
 
   /** ------- COMPUTED ------- */
-  const marginUtilPct = useMemo(()=> (portfolio.marginUtil*100).toFixed(0)+"%", [portfolio.marginUtil]);
+  const marginUtilPct = useMemo(() => {
+    if (!summary || !summary.equity) return "0%";
+    const util = summary.marginBalance / summary.equity;
+    return (util * 100).toFixed(0) + "%";
+  }, [summary]);
 
   // The content is now wrapped in a single div, not an extra Layout component.
   // This prevents the "double nav" issue.
@@ -118,28 +143,42 @@ export default function OverviewPage() {
         <Card className="ink-card xl:col-span-2">
           <CardHeader><CardTitle>Real-time Portfolio Snapshot</CardTitle></CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-              <Stat label="Net Liq" value={fmtCash(portfolio.netLiq)} />
-              <Stat label="Buying Power" value={fmtCash(portfolio.buyingPower)} />
-              <Stat label="Excess Liquidity" value={fmtCash(portfolio.excessLiq)} />
-              <Stat label="Realized P/L (YTD)" value={fmtCash(portfolio.realized)} isPositive />
-              <Stat label="Unrealized P/L (1D)" value={fmtCash(portfolio.unrealized)} isPositive />
-              <Stat label="Margin Utilization" value={marginUtilPct} />
-            </div>
-            <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div>
-                <h3 className="text-xs text-muted-foreground mb-2">Currency Exposure</h3>
-                <div className="flex flex-wrap gap-2">
-                  {portfolio.ccy.map(c => (
-                    <Badge key={c.ccy} variant="secondary">{c.ccy} {Math.round(c.wt*100)}%</Badge>
-                  ))}
+            {checkingBroker || isLoading ? (
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                <Stat label="Net Liq" loading />
+                <Stat label="Buying Power" loading />
+                <Stat label="Excess Liquidity" loading />
+                <Stat label="Realized P/L (YTD)" loading />
+                <Stat label="Unrealized P/L (1D)" loading />
+                <Stat label="Margin Utilization" loading />
+              </div>
+            ) : !activeBroker ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                  <Stat label="Net Liq" loading />
+                  <Stat label="Buying Power" loading />
+                  <Stat label="Excess Liquidity" loading />
+                  <Stat label="Realized P/L (YTD)" loading />
+                  <Stat label="Unrealized P/L (1D)" loading />
+                  <Stat label="Margin Utilization" loading />
                 </div>
+                <p className="text-sm text-muted-foreground">
+                  No active broker connected. Set one in settings to view your portfolio.
+                </p>
+                <Button asChild size="sm" className="w-fit">
+                  <a href="/settings">Go to Settings</a>
+                </Button>
               </div>
-              <div>
-                <h3 className="text-xs text-muted-foreground mb-2">Equity Curve (mock)</h3>
-                <EquityArea />
+            ) : (
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                <Stat label="Net Liq" value={fmtCash(summary?.liquidationValue ?? 0)} />
+                <Stat label="Buying Power" value={fmtCash(summary?.buyingPower ?? 0)} />
+                <Stat label="Excess Liquidity" value={fmtCash(summary?.cash ?? 0)} />
+                <Stat label="Realized P/L (YTD)" value={fmtCash(0)} isPositive />
+                <Stat label="Unrealized P/L (1D)" value={fmtCash(0)} isPositive />
+                <Stat label="Margin Utilization" value={marginUtilPct} />
               </div>
-            </div>
+            )}
           </CardContent>
         </Card>
 
@@ -286,11 +325,15 @@ export default function OverviewPage() {
 }
 
 /** ---------- Reusable UI Components (Styled with Theme Variables) ---------- */
-function Stat({label, value, isPositive}:{label:string; value:string; isPositive?:boolean}) {
+function Stat({label, value, isPositive, loading}:{label:string; value?:string; isPositive?:boolean; loading?:boolean}) {
   return (
     <div className="bg-muted/40 rounded-lg p-3">
       <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={`text-lg font-semibold text-card-foreground ${isPositive ? "text-green-400" : ""}`}>{value}</div>
+      {loading ? (
+        <Skeleton className="h-5 w-20 mt-1" />
+      ) : (
+        <div className={`text-lg font-semibold text-card-foreground ${isPositive ? "text-green-400" : ""}`}>{value ?? "—"}</div>
+      )}
     </div>
   );
 }
