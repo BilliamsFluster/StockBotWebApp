@@ -93,7 +93,6 @@ export default function OverviewPage() {
 
   const marketHighlights = highlights?.find(s => /market/i.test(s.title));
   const relevantEvents = highlights?.find(s => /relevant/i.test(s.title));
-  const holdingsEvents = highlights?.find(s => /(account|holding)/i.test(s.title));
   const calendarEvents = highlights?.find(s => /calendar/i.test(s.title));
 
   const indices: IdxRow[] = [
@@ -251,7 +250,6 @@ export default function OverviewPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-1 gap-6">
           <HighlightCard title="Market Highlights" items={marketHighlights?.items} />
           <HighlightCard title="Relevant Events" items={relevantEvents?.items} />
-          <HighlightCard title="My Holdings" items={holdingsEvents?.items} />
           <CalendarCard title="Economic Calendar" items={calendarEvents?.items} />
         </div>
 
