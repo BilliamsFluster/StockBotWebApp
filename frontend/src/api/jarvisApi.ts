@@ -10,6 +10,26 @@ type User = {
   preferences?: UserPreferences;
 };
 
+export type DomAction =
+  | { op: "wait_for"; selector: string; timeout_ms?: number }
+  | { op: "click"; selector: string }
+  | { op: "fill"; selector: string; value: string; submit?: boolean }
+  | { op: "type"; selector: string; text: string }
+  | { op: "press"; selector: string; keys: string }
+  | { op: "set_style"; selector: string; style: Record<string, string> }
+  | { op: "set_text"; selector: string; text: string }
+  | { op: "select"; selector: string; value: string | string[] }
+  | { op: "scroll"; to?: "top" | "bottom"; y?: number };
+
+export async function planPageEdit(goal: string): Promise<{ actions: DomAction[] }> {
+  const res = await axios.post(
+    `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/edit/plan`,
+    { goal },
+    { withCredentials: true, headers: { "Content-Type": "application/json" } }
+  );
+  return res.data;
+}
+
 // Submit text prompt to Jarvis
 export const askJarvis = async (prompt: string, user: User) => {
   const model = user?.preferences?.model || 'llama3';

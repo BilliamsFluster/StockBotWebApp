@@ -18,10 +18,11 @@ export async function startTrainProxy(req, res) {
     const { data } = await axios.post(`${STOCKBOT_URL}/api/stockbot/train`, req.body);
     return res.json(data);
   } catch (e) {
-    return res.status(400).json({ error: errMsg(e) });
+    const status = e.response?.status || 500;
+    const body = e.response?.data || { error: e.message || 'Unknown error' };
+    return res.status(status).json(body);   // <- forward real detail
   }
 }
-
 
 
 

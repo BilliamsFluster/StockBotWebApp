@@ -71,6 +71,8 @@ const navSections = [
   },
 ];
 
+const slug = (s: string) => s.toLowerCase().trim().replace(/\s+/g, "-");
+
 // ---- component ----
 export default function Sidebar({ isMobileOpen, setMobileOpen, isExpanded, setExpanded }: SidebarProps) {
   const pathname = usePathname() ?? "";
@@ -81,21 +83,21 @@ export default function Sidebar({ isMobileOpen, setMobileOpen, isExpanded, setEx
     }
   };
 
-  const [username, setUsername] = useState('User');
+  const [username, setUsername] = useState("User");
 
   useEffect(() => {
     fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/users/profile`, {
-      credentials: 'include',
+      credentials: "include",
     })
       .then((r) => {
-        if (!r.ok) throw new Error('Not authenticated');
+        if (!r.ok) throw new Error("Not authenticated");
         return r.json();
       })
       .then((data) => {
         if (data.username) setUsername(data.username);
       })
       .catch(() => {
-        setUsername('Guest');
+        setUsername("Guest");
       });
   }, []);
 
@@ -166,9 +168,9 @@ function SidebarInner({
     try {
       await logout();
       setUser(null);
-      router.push('/');
+      router.push("/");
     } catch (err) {
-      console.error('Logout failed', err);
+      console.error("Logout failed", err);
     }
   };
 
@@ -184,11 +186,10 @@ function SidebarInner({
                 setExpanded(!expanded);
               }
             }}
+            aria-label="Toggle sidebar width"
           >
             {expanded ? (
-              <span className="text-2xl font-extrabold text-primary">
-                Jarvis
-              </span>
+              <span className="text-2xl font-extrabold text-primary">Jarvis</span>
             ) : (
               <div className="size-10 relative">
                 <Image
@@ -207,6 +208,7 @@ function SidebarInner({
               size="icon"
               className="text-muted-foreground hover:text-foreground"
               onClick={() => setExpanded(!expanded)}
+              aria-label={expanded ? "Collapse sidebar" : "Expand sidebar"}
             >
               {expanded ? <PanelLeftClose size={18} /> : <PanelRightClose size={18} />}
             </Button>
@@ -228,9 +230,13 @@ function SidebarInner({
                 <ul className="space-y-1">
                   {links.map(({ href, icon: Icon, label }) => {
                     const isActive = pathname === href;
+                    const hook = `nav-${slug(label)}`; // stable hook for navigate()
                     const item = (
                       <Link
                         href={href}
+                        data-test={hook}                             // ← EVERY nav link
+                        aria-label={`Nav ${label}`}
+                        aria-current={isActive ? "page" : undefined}
                         onClick={onLinkClick}
                         className={cn(
                           "flex items-center rounded-md px-3 py-2 transition-colors",
@@ -295,12 +301,13 @@ function SidebarInner({
             <DropdownMenuContent align={expanded ? "start" : "end"} className="w-52">
               <DropdownMenuLabel>Account</DropdownMenuLabel>
               <DropdownMenuItem asChild>
-                <Link href="/settings">Settings</Link>
+                <Link href="/settings" data-test={`menu-${slug("Settings")}`}>Settings</Link>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
-                <Link href="/brokers">Brokers</Link>
+                <Link href="/brokers" data-test={`menu-${slug("Brokers")}`}>Brokers</Link>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
+              {/* Sign out is a button action, not a link */}
               <DropdownMenuItem onClick={handleLogout} className="cursor-pointer">
                 Sign out
               </DropdownMenuItem>

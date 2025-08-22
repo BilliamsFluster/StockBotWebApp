@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import LayoutWrapper from "@/components/LayoutWrapper";
+import DebugBridge from "@/components/DebugBridge";
+
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -25,6 +27,7 @@ export default function RootLayout({
         {/* This wrapper ensures your content appears ON TOP of the blobs. */}
         {/* ADDED min-h-screen to prevent the background cutoff on short pages. */}
         <div className="relative z-10 flex min-h-screen flex-col">
+          <DebugBridge />
           <LayoutWrapper>{children}</LayoutWrapper>
         </div>
       </body>

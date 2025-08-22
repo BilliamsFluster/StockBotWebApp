@@ -1,3 +1,5 @@
+# stockbot/api/controllers/stockbot_controller.py
+
 import os
 import sys
 import shlex
@@ -6,9 +8,9 @@ import zipfile
 from tempfile import NamedTemporaryFile
 from pathlib import Path
 from datetime import datetime
-from typing import List, Optional, Dict, Literal
+from typing import Any, List, Optional, Dict, Literal
 import secrets
-
+import yaml
 
 from fastapi import BackgroundTasks, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse, FileResponse
@@ -30,6 +32,14 @@ PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", _guess_project_root()))
 RUNS_DIR = PROJECT_ROOT / "stockbot" / "runs"
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
+print(f"[StockBotController] PROJECT_ROOT = {PROJECT_ROOT}")  # helpful log
+
+def _resolve_under_project(path: str | Path) -> Path:
+    p = Path(path)
+    if not p.is_absolute():
+        p = (PROJECT_ROOT / p).resolve()
+    return p
+
 # Allow-list server-write roots (optional but recommended)
 ALLOWED_OUTPUT_ROOTS: List[Path] = [RUNS_DIR]
 if os.environ.get("STOCKBOT_EXTRA_OUT_ROOT"):
@@ -40,7 +50,53 @@ if os.environ.get("STOCKBOT_EXTRA_OUT_ROOT"):
 RunType = Literal["train", "backtest"]
 RunStatus = Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"]
 
+# --- UI-driven sub-configs that mirror your EnvConfig schema ---
+class FeesModel(BaseModel):
+    commission_per_share: float = 0.0
+    commission_pct_notional: float = 0.0005
+    slippage_bps: float = 1.0
+    borrow_fee_apr: float = 0.0
+
+class MarginModel(BaseModel):
+    max_gross_leverage: float = 1.0
+    
+    maintenance_margin: float = 0.25
+    cash_borrow_apr: float = 0.05
+    intraday_only: bool = False
+
+class ExecModel(BaseModel):
+    order_type: Literal["market", "limit"] = "market"
+    limit_offset_bps: float = 0.0
+    participation_cap: float = 0.1
+    impact_k: float = 0.0
+
+class EpisodeModel(BaseModel):
+    lookback: int = 64
+    max_steps: Optional[int] = 256
+    start_cash: float = 100_000.0
+    allow_short: bool = True
+    rebalance_eps: float = 0.0
+    randomize_start: bool = False
+    horizon: Optional[int] = None
+
+class FeatureModel(BaseModel):
+    use_custom_pipeline: bool = True
+    window: int = 64
+    indicators: List[str] = Field(default_factory=lambda: ["logret", "rsi14"])
+
+class RewardModel(BaseModel):
+    mode: Literal["delta_nav", "log_nav"] = "delta_nav"
+    w_drawdown: float = 0.0
+    w_turnover: float = 0.0
+    w_vol: float = 0.0
+    vol_window: int = 10
+    w_leverage: float = 0.0
+    stop_eq_frac: float = 0.0
+    sharpe_window: Optional[int] = None
+    sharpe_scale: Optional[float] = None
+
 class TrainRequest(BaseModel):
+    # training flags
     config_path: str = "stockbot/env/env.example.yaml"
     normalize: bool = True
     policy: Literal["mlp", "window_cnn"] = "window_cnn"
@@ -48,18 +104,33 @@ class TrainRequest(BaseModel):
     seed: int = 42
     out_tag: Optional[str] = None
     out_dir: Optional[str] = None  # optional; if omitted -> RUNS_DIR/<tag>
+
     # Optional explicit split:
     train_start: Optional[str] = None
     train_end: Optional[str] = None
     eval_start: Optional[str] = None
     eval_end: Optional[str] = None
 
+    # UI-driven env overrides (all optional)
+    symbols: Optional[List[str]] = None
+    start: Optional[str] = None
+    end: Optional[str] = None
+    interval: Optional[str] = None
+    adjusted: Optional[bool] = None
+
+    fees: Optional[FeesModel] = None
+    margin: Optional[MarginModel] = None
+    exec: Optional[ExecModel] = None
+    episode: Optional[EpisodeModel] = None
+    features: Optional[FeatureModel] = None
+    reward: Optional[RewardModel] = None
+
 class BacktestRequest(BaseModel):
     config_path: str = "stockbot/env/env.example.yaml"
-    policy: str = "equal"
-    symbols: List[str] = Field(default_factory=lambda: ["AAPL", "MSFT"])
-    start: str
-    end: str
+    policy: str = "equal"  # "equal" | "flat" | "first_long" | path/to/ppo.zip
+    symbols: List[str] = None
+    start: Optional[str] = None
+    end: Optional[str] = None
     out_tag: Optional[str] = None
     out_dir: Optional[str] = None  # optional; if omitted -> RUNS_DIR/<tag>
     run_id: Optional[str] = None
@@ -126,6 +197,62 @@ def _artifact_paths(out_dir: Path) -> Dict[str, Path]:
         "job_log":  out_dir / "job.log",
     }
 
+def _deep_merge(dst: Dict[str, Any], src: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Deep merge src into dst (in place) and return dst.
+    - dicts are merged recursively
+    - None in src is ignored (keeps dst)
+    - lists/other types overwrite
+    """
+    for k, v in src.items():
+        if v is None:
+            continue
+        if isinstance(v, dict) and isinstance(dst.get(k), dict):
+            _deep_merge(dst[k], v)
+        else:
+            dst[k] = v
+    return dst
+
+def _load_yaml(path: str | Path) -> Dict[str, Any]:
+    p = _resolve_under_project(path)            # <— resolve relative to PROJECT_ROOT
+    if not p.exists():
+        raise HTTPException(status_code=400, detail=f"config_path not found: {p}")
+    try:
+        return yaml.safe_load(p.read_text()) or {}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse YAML: {e}")
+
+
+def _dump_yaml(d: Dict[str, Any], path: Path) -> None:
+    try:
+        path.write_text(yaml.safe_dump(d, sort_keys=False))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write YAML snapshot: {e}")
+
+def _build_env_overrides(req: TrainRequest) -> Dict[str, Any]:
+    """
+    Build a dict with only the keys the user provided (so we don't stomp defaults).
+    Matches EnvConfig’s schema.
+    """
+    env: Dict[str, Any] = {}
+
+    # top-level env fields
+    if req.symbols is not None:  env["symbols"] = list(req.symbols)
+    if req.start is not None:    env["start"] = req.start
+    if req.end is not None:      env["end"] = req.end
+    if req.interval is not None: env["interval"] = req.interval
+    if req.adjusted is not None: env["adjusted"] = bool(req.adjusted)
+
+    # sub-blocks
+    if req.fees is not None:     env["fees"] = req.fees.model_dump()
+    if req.margin is not None:   env["margin"] = req.margin.model_dump()
+    if req.exec is not None:     env["exec"] = req.exec.model_dump()
+    if req.episode is not None:  env["episode"] = req.episode.model_dump()
+    if req.features is not None: env["features"] = req.features.model_dump()
+    if req.reward is not None:   env["reward"] = req.reward.model_dump()
+
+    return env
+
 # -------- Subprocess runner ---------
 
 def _run_subprocess_sync(args: List[str], rec: RunRecord):
@@ -189,22 +316,39 @@ def _run_subprocess_sync(args: List[str], rec: RunRecord):
 
 async def start_train_job(req: TrainRequest, bg: BackgroundTasks):
     import uuid
+
+    # choose run folder
     out_dir = _choose_outdir(req.out_dir, req.out_tag)
     run_id = uuid.uuid4().hex[:10]
 
+    # load base YAML
+    base_cfg = _load_yaml(req.config_path)
+
+    # apply UI overrides (only provided keys)
+    overrides = _build_env_overrides(req)
+    merged_cfg = _deep_merge(base_cfg, overrides)
+
+    # write config snapshot into run folder
+    snapshot_path = Path(out_dir) / "config.snapshot.yaml"
+    _dump_yaml(merged_cfg, snapshot_path)
+
+    # record run
     rec = RunRecord(
         id=run_id, type="train", status="QUEUED",
         out_dir=str(out_dir),
         created_at=datetime.utcnow().isoformat(),
-        meta=req.model_dump(),
+        meta={
+            **req.model_dump(),
+            "config_snapshot": str(snapshot_path),
+        },
     )
     RUNS[run_id] = rec
 
-    # Pass absolute out path
+    # build args targeting the SNAPSHOT (not the original)
     args = [
         "-m", "stockbot.rl.train_ppo",
-        "--config", req.config_path,
-        "--out", str(out_dir),
+        "--config", str(snapshot_path.resolve()),   # <— ensure absolute path
+        "--out", str(Path(out_dir).resolve()),
         "--timesteps", str(req.timesteps),
         "--seed", str(req.seed),
     ]
@@ -212,89 +356,112 @@ async def start_train_job(req: TrainRequest, bg: BackgroundTasks):
         args.append("--normalize")
     if req.policy:
         args.extend(["--policy", req.policy])
+
+    # explicit split (optional)
     if req.train_start and req.train_end and req.eval_start and req.eval_end:
         args.extend([
             "--train-start", req.train_start,
-            "--train-end", req.train_end,
-            "--eval-start", req.eval_start,
-            "--eval-end", req.eval_end,
+            "--train-end",   req.train_end,
+            "--eval-start",  req.eval_start,
+            "--eval-end",    req.eval_end,
         ])
 
+    # enqueue
     bg.add_task(_run_subprocess_sync, args, rec)
     return JSONResponse({"job_id": run_id})
 
 async def start_backtest_job(req: BacktestRequest, bg: BackgroundTasks):
     import uuid
 
-    # ---- choose output folder
     out_dir = _choose_outdir(req.out_dir, req.out_tag)
     run_id = uuid.uuid4().hex[:10]
 
-    # ---- pull basic fields (copy to locals so we can mutate safely)
+    # pull fields but keep None if not explicitly provided
     policy  = (req.policy or "equal")
-    symbols = [s.strip() for s in (req.symbols or []) if isinstance(s, str) and s.strip()]
-    start   = (req.start or "").strip()
-    end     = (req.end or "").strip()
+    symbols = [s.strip() for s in (req.symbols or []) if isinstance(s, str) and s.strip()] if req.symbols else None
+    start   = (req.start or "").strip() if req.start else None
+    end     = (req.end or "").strip() if req.end else None
 
-    # ---- basic validation
+    # resolve template config (to compare defaults)
+    cfg_path = _resolve_under_project(req.config_path or "stockbot/env/env.example.yaml")
+    try:
+        tmpl_cfg = yaml.safe_load(cfg_path.read_text()) or {}
+    except Exception:
+        tmpl_cfg = {}
+
+    def _norm_syms(x):
+        return [str(s).strip() for s in (x or []) if str(s).strip()]
+
+    tmpl_syms = _norm_syms(tmpl_cfg.get("symbols", []))
+    tmpl_start = str(tmpl_cfg.get("start") or "").strip()
+    tmpl_end   = str(tmpl_cfg.get("end") or "").strip()
+
+    # If run_id is present, start with snapshot & model, then only override with non-template values
+    if getattr(req, "run_id", None):
+        prev = RUNS.get(req.run_id)
+        if not prev:
+            raise HTTPException(status_code=400, detail="run_id not found")
+
+        prev_out = Path(prev.out_dir)
+        snap = prev_out / "config.snapshot.yaml"
+        if not snap.exists():
+            raise HTTPException(status_code=400, detail="config.snapshot.yaml not found for run")
+        cfg_path = snap.resolve()
+
+        try:
+            snap_cfg = yaml.safe_load(snap.read_text()) or {}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to parse snapshot: {e}")
+
+        snap_syms = _norm_syms(snap_cfg.get("symbols", []))
+        snap_start = str(snap_cfg.get("start") or "").strip()
+        snap_end   = str(snap_cfg.get("end") or "").strip()
+
+        # Heuristic: if the request provided template defaults, treat as "not explicitly set"
+        # so we inherit from the snapshot.
+        if symbols is None or symbols == tmpl_syms:
+            symbols = snap_syms
+        if not start or start == tmpl_start:
+            start = snap_start
+        if not end or end == tmpl_end:
+            end = snap_end
+
+        # Auto-use trained model unless the caller gave a custom policy zip or a named baseline
+        model_path = prev_out / "ppo_policy.zip"
+        if (not req.policy or req.policy in ("", "equal", "flat", "first_long")) and model_path.exists():
+            policy = str(model_path.resolve())
+
+    # Final validation
     if not start or not end:
         raise HTTPException(status_code=400, detail="start and end are required (YYYY-MM-DD).")
     if not symbols:
         raise HTTPException(status_code=400, detail="At least one symbol is required.")
 
-    # ---- optional: resolve a previous run's model and defaults
-    # (ensure BacktestRequest has: run_id: Optional[str] = None)
-    if getattr(req, "run_id", None):
-        prev = RUNS.get(req.run_id)
-        if not prev:
-            raise HTTPException(status_code=400, detail="run_id not found")
-        model_path = Path(prev.out_dir) / "ppo_policy.zip"
-        if not model_path.exists():
-            raise HTTPException(status_code=400, detail="Model not found for run")
-
-        # prefer explicitly given policy; otherwise use the previous run's saved model
-        policy = policy or str(model_path)
-
-        # If previous run stored the split in meta, use them as fallbacks only when not provided
-        meta = prev.meta or {}
-        if isinstance(meta, dict):
-            # Only override if our local value is still empty
-            if not symbols:
-                syms = meta.get("symbols")
-                if isinstance(syms, list):
-                    symbols = [str(s).strip() for s in syms if str(s).strip()]
-            if not start:
-                start = str(meta.get("eval_start") or meta.get("start") or start or "").strip()
-            if not end:
-                end   = str(meta.get("eval_end")   or meta.get("end")   or end   or "").strip()
-
-        # re-validate after overrides
-        if not start or not end:
-            raise HTTPException(status_code=400, detail="Derived start/end from run_id are empty.")
-        if not symbols:
-            raise HTTPException(status_code=400, detail="Derived symbols from run_id are empty.")
-
-    # ---- persist run record
+    # Persist & run
     rec = RunRecord(
         id=run_id, type="backtest", status="QUEUED",
         out_dir=str(out_dir),
         created_at=datetime.utcnow().isoformat(),
-        meta=req.model_dump(),
+        meta={
+            **req.model_dump(),
+            "resolved_config": str(cfg_path),
+            "resolved_symbols": symbols,
+            "resolved_start": start,
+            "resolved_end": end,
+            "resolved_policy": policy,
+        },
     )
     RUNS[run_id] = rec
 
-    # ---- build clean arg list (no None, all str)
     args = [
         "-m", "stockbot.backtest.run",
-        "--config", str(req.config_path or "stockbot/env/env.example.yaml"),
+        "--config", str(cfg_path),
         "--policy", str(policy),
-        "--out", str(out_dir),
+        "--out", str(Path(out_dir).resolve()),
         "--start", str(start),
         "--end", str(end),
         "--symbols", *[str(s) for s in symbols],
     ]
-
-    # enqueue
     bg.add_task(_run_subprocess_sync, args, rec)
     return JSONResponse({"job_id": run_id})
 
@@ -327,11 +494,14 @@ def get_run(run_id: str):
         "error": r.error,
     }
 
-def get_artifacts(run_id: str):
+def _artifact_map_for_run(run_id: str) -> Dict[str, Path]:
     r = RUNS.get(run_id)
     if not r:
         raise HTTPException(status_code=404, detail="Not found")
-    paths = _artifact_paths(Path(r.out_dir))
+    return _artifact_paths(Path(r.out_dir))
+
+def get_artifacts(run_id: str):
+    paths = _artifact_map_for_run(run_id)
     def mkapi(name: str, p: Path):
         return f"/api/stockbot/runs/{run_id}/files/{name}" if p.exists() else None
     return {k: mkapi(k, v) for k, v in paths.items()}

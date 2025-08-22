@@ -146,92 +146,7 @@ export const processJarvisAudio = async (req, res) => {
   }
 };
 
-// Stream Jarvis audio back to frontend
-export const playJarvisAudio = async (req, res) => {
-  try {
-    const accessToken = await refreshSchwabAccessTokenInternal(req.user._id);
-    if (!accessToken) {
-      return res.status(401).json({ error: "Failed to refresh Schwab token." });
-    }
 
-    const response = await axios.get(
-      `${STOCKBOT_URL}/api/jarvis/audio/play`,
-      {
-        headers: { Authorization: `Bearer ${accessToken}` },
-        responseType: 'arraybuffer',
-      }
-    );
-
-    res.set('Content-Type', 'audio/mpeg');
-    res.send(response.data);
-  } catch (error) {
-    console.error("🔴 Failed to stream Jarvis audio:", error.message);
-    res.status(500).json({ error: "Audio playback failed." });
-  }
-};
-
-
-// ---- STOP VOICE ASSISTANT ----
-export const stopVoiceAssistant = async (req, res) => {
-  try {
-    const response = await axios.post(`${STOCKBOT_URL}/api/jarvis/voice/stop`);
-    res.json(response.data);
-  } catch (error) {
-    console.error("🔴 Failed to stop voice assistant:", error.message);
-    res.status(500).json({ error: "Failed to stop voice assistant." });
-  }
-};
-
-// ---- INTERRUPT TTS ----
-export const interruptVoiceAssistant = async (req, res) => {
-  try {
-    await axios.post(`${STOCKBOT_URL}/api/interrupt`);
-    res.json({ message: "TTS interrupted." });
-  } catch (e) {
-    res.status(500).json({ error: "Interrupt failed." });
-  }
-};
-
-// ---- POLL VOICE STATUS ----
-export const getVoiceStatus = async (req, res) => {
-  try {
-    const response = await axios.get(`${STOCKBOT_URL}/api/status`);
-    res.json(response.data);
-  } catch (e) {
-    res.status(500).json({ error: "Failed to get voice status." });
-  }
-};
-
-// ---- VOICE STREAM ----
-let clients = [];
-
-export const voiceStream = (req, res) => {
-  res.set({
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-  });
-  res.flushHeaders();
-
-  const clientId = Date.now();
-  clients.push({ id: clientId, res });
-  console.log(`[SSE] Client connected: ${clientId}. Total: ${clients.length}`);
-
-  req.on('close', () => {
-    clients = clients.filter(c => c.id !== clientId);
-    console.log(`[SSE] Client disconnected: ${clientId}`);
-  });
-};
-
-export const relayVoiceData = (req, res) => {
-  const { text } = req.body;
-  if (!text) return res.status(400).send("Missing text");
-
-  clients.forEach(c =>
-    c.res.write(`data: ${JSON.stringify({ text })}\n\n`)
-  );
-  res.sendStatus(200);
-};
 
 export const getPortfolioData = async (req, res) => {
   try {
@@ -302,3 +217,22 @@ export function proxyJarvisVoiceWs(clientWs, req) {
     botWs.close();
   });
 }
+
+
+export const planJarvisEdit = async (req, res) => {
+  try {
+    const { goal, context } = req.body || {};
+    if (!goal) return res.status(400).json({ error: "Missing goal" });
+
+    // Call Stockbot FastAPI without brokerage tokens
+    const r = await axios.post(
+      `${STOCKBOT_URL}/api/jarvis/edit/plan`,
+      { goal, context },
+      { timeout: 10000 }  // tune if you like
+    );
+    return res.json(r.data); // { actions: [...] }
+  } catch (e) {
+    log("🔴 planJarvisEdit failed", e?.response?.status, e?.response?.data || e?.message);
+    return res.status(502).json({ error: "planning_failed" });
+  }
+};

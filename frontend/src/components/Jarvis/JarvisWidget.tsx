@@ -1,4 +1,3 @@
-// components/Jarvis/JarvisWidget.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -6,12 +5,27 @@ import { useJarvis } from "@/components/Jarvis/JarvisProvider";
 import { gsap } from "gsap";
 import { Draggable } from "gsap/Draggable";
 
-/** shadcn/ui bits for the popover UI */
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { Settings, RefreshCw, FileText, Mic, Volume2 } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Dialog,
+  DialogTrigger,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { toast } from "react-hot-toast";
+
+import { Settings, RefreshCw, FileText, Mic, Volume2, Wand2 } from "lucide-react";
+import { planPageEdit } from "@/api/jarvisApi"; // backend proxy → Stockbot /api/jarvis/edit/plan
+import { applyDomActions } from "@/utils/applyDomActions";
 
 gsap.registerPlugin(Draggable);
 
@@ -29,15 +43,25 @@ function closestCorner(rect: DOMRect, vw: number, vh: number): Corner {
 }
 
 function stateColor(s: string) {
-  if (s === "listening") return "#22d3ee";   // cyan-400
-  if (s === "speaking") return "#a78bfa";    // violet-400
-  return "#94a3b8";                          // slate-400
+  if (s === "listening") return "#22d3ee";
+  if (s === "speaking") return "#a78bfa";
+  return "#94a3b8";
 }
 
 export default function JarvisWidget() {
   const { enabled, setEnabled, state } = useJarvis();
+  
+
   const [open, setOpen] = useState(false);
   const [dockCorner, setDockCorner] = useState<Corner>("br");
+
+  // page edit dialog
+  const [editOpen, setEditOpen] = useState(false);
+  const [allowEditing, setAllowEditing] = useState(false);
+  const [goal, setGoal] = useState("");
+  const [isPlanning, setIsPlanning] = useState(false);
+  const [plan, setPlan] = useState<{ actions: any[] } | null>(null);
+  const [isApplying, setIsApplying] = useState(false);
 
   const widgetRef = useRef<HTMLDivElement>(null);
   const orbitRef = useRef<HTMLDivElement>(null);
@@ -47,13 +71,11 @@ export default function JarvisWidget() {
   const size = 64, view = 100, cx = 50, cy = 50;
   const rInner = 28, minLen = 5, maxLen = 16;
 
-  // reactive mirrors
   const enabledRef = useRef(enabled);
   const stateRef = useRef<JarvisState>((state as JarvisState) || "idle");
   useEffect(() => { enabledRef.current = enabled; }, [enabled]);
   useEffect(() => { stateRef.current = (state as JarvisState) || "idle"; }, [state]);
 
-  // unified power (0..1)
   const powerRef = useRef(0);
   const setPower = (target: number, dur = 0.35) => {
     const obj = { p: powerRef.current };
@@ -65,13 +87,11 @@ export default function JarvisWidget() {
     });
   };
 
-  // ring color via CSS var
   const ring = stateColor(state as string);
   useEffect(() => {
     if (widgetRef.current) widgetRef.current.style.setProperty("--ring", ring);
   }, [ring]);
 
-  // “audio” bars
   const levelsRef = useRef<number[]>(Array(BAR_COUNT).fill(0.1));
   const seeds = useRef<number[]>(
     Array.from({ length: BAR_COUNT }, (_, i) => {
@@ -81,7 +101,6 @@ export default function JarvisWidget() {
   );
   const [, force] = useState(0);
 
-  // perpetual spin
   useEffect(() => {
     const el = orbitRef.current;
     if (!el) return;
@@ -91,13 +110,11 @@ export default function JarvisWidget() {
     return () => { orbitTweenRef.current?.kill(); orbitTweenRef.current = null; };
   }, []);
 
-  // power reacts to enabled/state
   useEffect(() => {
     const on = enabled && stateRef.current !== "idle";
     setPower(on ? 1 : 0);
   }, [enabled, state]);
 
-  // oscillator
   const osc = (speed: number, offset = 0) => {
     const t = gsap.ticker.time + offset;
     const a = Math.sin(t * speed);
@@ -107,7 +124,6 @@ export default function JarvisWidget() {
     return Math.max(0, Math.min(1, v));
   };
 
-  // live loop
   useEffect(() => {
     const loop = () => {
       const isEnabled = enabledRef.current;
@@ -138,7 +154,6 @@ export default function JarvisWidget() {
     return () => gsap.ticker.remove(loop);
   }, []);
 
-  // drag + dock
   useEffect(() => {
     const el = widgetRef.current;
     if (!el) return;
@@ -189,6 +204,47 @@ export default function JarvisWidget() {
 
   const active = enabled && (state as JarvisState) !== "idle";
 
+  // ----- Edit flow handlers -----
+  const onGeneratePlan = async () => {
+    if (!allowEditing) {
+      toast("Editing is disabled. Toggle 'Allow page editing' to proceed.");
+      return;
+    }
+    if (!goal.trim()) {
+      toast("No goal provided. Describe what Jarvis should change on this page.");
+      return;
+    }
+    setIsPlanning(true);
+    setPlan(null);
+    try {
+      const res = await planPageEdit(goal);
+      setPlan(res);
+    } catch (e: any) {
+      toast("Plan failed: " + String(e?.message || e));
+    } finally {
+      setIsPlanning(false);
+    }
+  };
+
+  const onApplyPlan = async () => {
+    if (!plan?.actions?.length) {
+      toast("Nothing to apply: The plan is empty.");
+      return;
+    }
+    setIsApplying(true);
+    try {
+      const results = await applyDomActions(plan.actions);
+      const ok = results.filter(r => r.ok).length;
+      const fail = results.length - ok;
+      toast(`Page updated: ${ok} action(s) succeeded${fail ? `, ${fail} failed` : ""}.`);
+      setEditOpen(false);
+    } catch (e: any) {
+      toast("Apply failed: " + String(e?.message || e));
+    } finally {
+      setIsApplying(false);
+    }
+  };
+
   return (
     <>
       <div
@@ -205,7 +261,7 @@ export default function JarvisWidget() {
         onClick={() => setOpen((v) => !v)}
         onKeyDown={(e) => e.key === "Enter" && setOpen((v) => !v)}
       >
-        {/* outer glow (matches theme accent) */}
+        {/* outer glow */}
         <div
           className="absolute -inset-1 rounded-full -z-10"
           style={{
@@ -286,14 +342,14 @@ export default function JarvisWidget() {
         {open && (
           <div
             className={[
-              "absolute min-w-[260px] rounded-xl pointer-events-auto",
+              "absolute min-w-[300px] rounded-xl pointer-events-auto",
               "bg-black/70 backdrop-blur-md border border-white/10",
               "text-white shadow-[0_30px_70px_rgba(0,0,0,.55)] jarvis-panel",
               popupPos,
             ].join(" ")}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="p-3">
+            <div className="p-3 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Badge variant="outline" className="border-white/15 text-white/70">Jarvis</Badge>
@@ -308,7 +364,7 @@ export default function JarvisWidget() {
                 </Badge>
               </div>
 
-              <Separator className="my-3 bg-white/10" />
+              <Separator className="bg-white/10" />
 
               <div className="flex items-center justify-between rounded-md border border-white/10 p-2.5">
                 <div className="flex items-center gap-2">
@@ -318,21 +374,79 @@ export default function JarvisWidget() {
                 <Switch checked={enabled} onCheckedChange={(v)=>setEnabled(!!v)} />
               </div>
 
-              <div className="mt-2 grid grid-cols-3 gap-2">
+              <div className="flex items-center justify-between rounded-md border border-white/10 p-2.5">
+                <div className="flex items-center gap-2">
+                  <Wand2 className="h-4 w-4 text-violet-300" />
+                  <div className="text-sm">Allow page editing</div>
+                </div>
+                <Switch checked={allowEditing} onCheckedChange={setAllowEditing} />
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
                 <Button variant="outline" className="justify-center gap-2 border-white/15 hover:bg-white/10" onClick={() => {/* wire reset */}}>
                   <RefreshCw className="h-4 w-4" /> <span className="text-xs">Reset</span>
                 </Button>
                 <Button variant="outline" className="justify-center gap-2 border-white/15 hover:bg-white/10" onClick={() => {/* route settings */}}>
                   <Settings className="h-4 w-4" /> <span className="text-xs">Settings</span>
                 </Button>
-                <Button variant="outline" className="justify-center gap-2 border-white/15 hover:bg-white/10" onClick={() => {/* open logs */}}>
-                  <FileText className="h-4 w-4" /> <span className="text-xs">Logs</span>
-                </Button>
+
+                {/* Edit Page (opens dialog) */}
+                <Dialog open={editOpen} onOpenChange={setEditOpen}>
+                  <DialogTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="justify-center gap-2 border-white/15 hover:bg-white/10"
+                      onClick={() => setEditOpen(true)}
+                    >
+                      ✏️ <span className="text-xs">Edit page</span>
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-[540px]">
+                    <DialogHeader>
+                      <DialogTitle>Plan a page edit</DialogTitle>
+                      <DialogDescription>Describe what Jarvis should change on this page.</DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="jv-goal">Goal</Label>
+                      <Textarea
+                        id="jv-goal"
+                        value={goal}
+                        onChange={(e)=>setGoal(e.target.value)}
+                        placeholder="e.g., Fill the search box with 'AAPL', press Enter, then highlight the first result."
+                        className="min-h-[90px] text-white"
+                      />
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs text-white/60">Editing is <b>{allowEditing ? "enabled" : "disabled"}</b>.</div>
+                        <Button size="sm" variant="secondary" onClick={onGeneratePlan} disabled={isPlanning}>
+                          {isPlanning ? "Planning..." : "Generate plan"}
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Planned actions</Label>
+                      <ScrollArea className="h-40 rounded-md border border-white/10 p-2 bg-black/40">
+                        <pre className="text-xs whitespace-pre-wrap break-words">
+                          {plan ? JSON.stringify(plan, null, 2) : "— no plan yet —"}
+                        </pre>
+                      </ScrollArea>
+                    </div>
+
+                    <DialogFooter className="gap-2 sm:gap-0">
+                      <Button variant="outline" onClick={()=>setEditOpen(false)}>Close</Button>
+                      <Button onClick={onApplyPlan} disabled={!plan?.actions?.length || isApplying}>
+                        {isApplying ? "Applying..." : "Apply to page"}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+
               </div>
 
-              <div className="mt-2 flex items-center gap-2 text-[11px] text-white/50">
+              <div className="flex items-center gap-2 text-[11px] text-white/50">
                 <Volume2 className="h-3.5 w-3.5" />
-                <span>Tip: drag me to any corner</span>
+                <span>Tip: add stable selectors (e.g. <code>data-jv="..."</code>) to your UI for reliable edits.</span>
               </div>
             </div>
           </div>

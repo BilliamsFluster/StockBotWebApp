@@ -35,6 +35,7 @@ class RewardConfig:
     stop_eq_frac: float = 0.0
     sharpe_window: int = 0
     sharpe_scale: float = 0.0
+    
 
 @dataclass(frozen=True)
 class EpisodeConfig:
@@ -44,6 +45,8 @@ class EpisodeConfig:
     allow_short: bool = True
     action_space: Literal["weights", "orders"] = "weights"
     rebalance_eps: float = 0.0  # gate micro-rebalances; fraction of equity per-symbol
+    randomize_start: bool = False  
+    horizon: Optional[int] = None
 
 @dataclass(frozen=True)
 class FeatureConfig:
