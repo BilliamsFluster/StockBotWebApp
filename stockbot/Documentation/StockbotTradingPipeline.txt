@@ -1,0 +1,41 @@
+StockBotPipeline.txt
+====================
+
+1. Frontend Submission
+----------------------
+- StockBot page exposes “New Training” and “New Backtest” tabs.
+- Training form posts to `/api/stockbot/train` and then polls `/api/stockbot/runs/{job_id}` for status and artifacts.
+- Backtest form posts to `/api/stockbot/backtest` with either a baseline name or a saved model path.
+
+2. Node Proxy
+-------------
+- Express routes gate each endpoint with auth middleware.
+- `/train`, `/backtest`, `/runs`, `/runs/:id`, and artifact routes forward requests to the Python service using Axios and stream responses back to the browser.
+
+3. FastAPI Orchestration
+------------------------
+- `/api/stockbot/train` merges UI overrides into a YAML config snapshot, records run metadata, and enqueues a subprocess for `stockbot.rl.train_ppo`.
+- `/api/stockbot/backtest` optionally reuses a prior run’s snapshot/model, validates dates and symbols, and spawns `stockbot.backtest.run`.
+- `_run_subprocess_sync` adjusts environment variables, pipes stdout/stderr to `job.log`, tracks exit status, and updates run status.
+- `/api/stockbot/runs` and related endpoints expose run status and artifact paths; `/runs/{id}/bundle` streams a zip archive.
+
+4. Training Engine
+------------------
+- `train_ppo.py` builds train/eval environments (optionally normalized), configures PPO (MLP or CNN policy), logs to CSV/TensorBoard, and saves `ppo_policy.zip`.
+- After training it performs a quick evaluation and prints return, drawdown, and Sharpe metrics.
+
+5. Environment Builder
+----------------------
+- `make_env` uses YFinance data, choosing `StockTradingEnv` for single symbols or `PortfolioTradingEnv` for multiple.
+- Optionally wraps with `ObsNorm` to track mean/std stats, then with a `Monitor` to log episode returns.
+
+6. Backtest Engine
+------------------
+- `backtest/run.py` loads the policy (baseline or PPO), runs a deterministic episode, records equity, orders, and fills, and writes:
+  - `equity.csv`, `orders.csv`, `trades.csv`
+  - `summary.json` (config metadata)
+  - `metrics.json` (returns, drawdown, Sharpe, hit rate, etc.)
+
+7. Result Retrieval
+-------------------
+- Frontend polls `/api/stockbot/runs/{id}` until the job reaches a terminal state, then fetches `/api/stockbot/runs/{id}/artifacts` or downloads a zip bundle for visualization or export.
