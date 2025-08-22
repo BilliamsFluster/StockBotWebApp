@@ -84,6 +84,17 @@ class AlpacaProvider(BaseProvider):
         print(self.api_key)
         return self._request("GET", "/v2/account")
 
+    def get_account_summary(self) -> Dict[str, Any]:
+        account = self.get_account()
+        return {
+            "accountNumber": account.get("account_number", "—"),
+            "liquidationValue": float(account.get("portfolio_value", 0)),
+            "equity": float(account.get("equity", 0)),
+            "cash": float(account.get("cash", 0)),
+            "buyingPower": float(account.get("buying_power", 0)),
+            "dayTradingBuyingPower": float(account.get("daytrading_buying_power", 0)),
+        }
+
     def get_positions(self) -> List[Dict[str, Any]]:
         return self._request("GET", "/v2/positions")
 
@@ -144,21 +155,12 @@ class AlpacaProvider(BaseProvider):
         Combines account summary and positions into a single portfolio object.
         Matches the structure expected by the frontend.
         """
-        account = self.get_account()
+        summary = self.get_account_summary()
         raw_positions = self.get_positions()
         try:
             raw_transactions = self.get_transactions()
         except Exception:
             raw_transactions = []
-
-        summary = {
-            "accountNumber": account.get("account_number", "—"),
-            "liquidationValue": float(account.get("portfolio_value", 0)),
-            "equity": float(account.get("equity", 0)),
-            "cash": float(account.get("cash", 0)),
-            "buyingPower": float(account.get("buying_power", 0)),
-            "dayTradingBuyingPower": float(account.get("daytrading_buying_power", 0)),
-        }
 
         # ✅ Normalize positions to a common structure for the frontend
         positions = []
