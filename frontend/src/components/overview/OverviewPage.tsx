@@ -249,14 +249,17 @@ export default function OverviewPage() {
           <CardHeader><CardTitle>News & Macro Highlights</CardTitle></CardHeader>
           <CardContent>
             {highlights?.length ? (
-              <ScrollArea className="h-64 pr-4">
+
+              <ScrollArea className="max-h-80 pr-4">
                 <div className="space-y-4 text-sm">
-                  {highlights.map(section => (
-                    <div key={section.title}>
-                      <h4 className="font-medium mb-1">{section.title}</h4>
+                  {highlights.map((section, idx) => (
+                    <div key={section.title} className="space-y-1">
+                      {idx > 0 && <Separator className="my-2" />}
+                      <h4 className="font-medium">{section.title}</h4>
                       <ul className="list-disc pl-4 space-y-1">
                         {section.items.map((item, i) => (
-                          <li key={i}>{item}</li>
+                          <li key={i} className="leading-relaxed">{item}</li>
+
                         ))}
                       </ul>
                     </div>
@@ -388,13 +391,27 @@ function parseHighlights(text: string): HighlightSection[] {
   return text
     .split(/\n\s*\n/)
     .map(block => {
-      const lines = block.split("\n").map(l => l.trim()).filter(Boolean);
-      if (!lines.length) return null;
-      const [title, ...items] = lines;
-      return {
-        title,
-        items: items.map(i => i.replace(/^[-*\u2022]\s*/, "")),
-      } as HighlightSection;
+
+      const rawLines = block.split("\n");
+      if (!rawLines.length) return null;
+      const [titleLine, ...rest] = rawLines;
+
+      const items: string[] = [];
+      let current = "";
+      rest.forEach(line => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        if (/^[-*\u2022]\s*/.test(trimmed)) {
+          if (current) items.push(current.trim());
+          current = trimmed.replace(/^[-*\u2022]\s*/, "");
+        } else {
+          current += (current ? " " : "") + trimmed;
+        }
+      });
+      if (current) items.push(current.trim());
+
+      return { title: titleLine.trim(), items } as HighlightSection;
+
     })
     .filter(Boolean) as HighlightSection[];
 }
