@@ -1,3 +1,4 @@
+# stockbot/env/portfolio_env.py
 from __future__ import annotations
 import numpy as np, gymnasium as gym
 from gymnasium import spaces
@@ -9,7 +10,8 @@ from .data_adapter import PanelSource
 from .orders import Order
 from .execution import ExecutionModel
 from .portfolio import Portfolio
-from .broker_adapters import SimBroker   # NOTE: corrected import
+from .broker_adapters import SimBroker  # NOTE: corrected import
+
 
 class PortfolioTradingEnv(gym.Env):
     """
@@ -36,7 +38,16 @@ class PortfolioTradingEnv(gym.Env):
             if missing:
                 raise RuntimeError(f"{s} missing features {missing}")
 
-        F = len(required)
+        # Defensive: verify enough rows (PanelSource also checks)
+        min_needed = self.lookback + 2  # window + at least one forward step
+        if len(self.src.index) < min_needed:
+            raise RuntimeError(
+                f"Env has only {len(self.src.index)} rows after features; "
+                f"need ≥ {min_needed} for lookback={self.lookback}."
+            )
+
+        self._cols = list(required)
+        F = len(self._cols)
         self.observation_space = spaces.Dict({
             "window": spaces.Box(low=-np.inf, high=np.inf, shape=(self.lookback, self.N, F), dtype=np.float32),
             "portfolio": spaces.Box(low=-np.inf, high=np.inf, shape=(3 + self.N,), dtype=np.float32)
@@ -52,8 +63,9 @@ class PortfolioTradingEnv(gym.Env):
         def _get_next():
             i = self._i
             prices = {s: tuple(self._ohlc(s, i)) for s in self.syms}
-            vols   = {s: float(self.src.panel[s]["volume"].iloc[i]) for s in self.syms}
+            vols = {s: float(self.src.panel[s]["volume"].iloc[i]) for s in self.syms}
             return prices, vols
+
         self.broker = SimBroker(self.exec, _get_next)
 
         self._equity0 = cfg.episode.start_cash
@@ -66,7 +78,7 @@ class PortfolioTradingEnv(gym.Env):
     def _ohlc(self, sym: str, i: int):
         df = self.src.panel[sym]
         return (float(df["open"].iloc[i]), float(df["high"].iloc[i]),
-                float(df["low"].iloc[i]),  float(df["close"].iloc[i]))
+                float(df["low"].iloc[i]), float(df["close"].iloc[i]))
 
     def _prices(self, i: int) -> Dict[str, float]:
         return {s: float(self.src.panel[s]["close"].iloc[i]) for s in self.syms}
@@ -74,22 +86,22 @@ class PortfolioTradingEnv(gym.Env):
     def _window_obs(self, i: int) -> np.ndarray:
         win = []
         for s in self.syms:
-            sl = self.src.panel[s].iloc[i-self.lookback:i]
-            arr = sl[["open","high","low","close","volume","logret"]].values
+            sl = self.src.panel[s].iloc[i - self.lookback:i]
+            arr = sl[self._cols].values
             win.append(arr)
-        return np.transpose(np.stack(win, axis=0), (1,0,2)).astype(np.float32)
+        return np.transpose(np.stack(win, axis=0), (1, 0, 2)).astype(np.float32)
 
-    def _portfolio_obs(self, prices: Dict[str,float]) -> np.ndarray:
+    def _portfolio_obs(self, prices: Dict[str, float]) -> np.ndarray:
         eq = self.port.value(prices)
-        cash_frac = float(np.clip(self.port.cash / max(eq,1e-9), -10, 10))
+        cash_frac = float(np.clip(self.port.cash / max(eq, 1e-9), -10, 10))
         gross = self.port.gross_exposure(prices, eq)
         dd = self.port.drawdown(eq)
         w = self.port.weights(prices)
-        weights = np.array([w.get(s,0.0) for s in self.syms], dtype=np.float32)
+        weights = np.array([w.get(s, 0.0) for s in self.syms], dtype=np.float32)
         return np.concatenate([[cash_frac, gross, dd], weights]).astype(np.float32)
 
     def _obs(self, i):
-        prices = self._prices(i-1)
+        prices = self._prices(i - 1)
         return {"window": self._window_obs(i), "portfolio": self._portfolio_obs(prices)}
 
     def _map_action_to_weights(self, a: np.ndarray) -> np.ndarray:
@@ -103,12 +115,38 @@ class PortfolioTradingEnv(gym.Env):
     # ---------- Gym API ----------
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
+
+        L = self.lookback
+        # leave at least one step after the starting point
+        last_valid_start = len(self.src.index) - 2
+        if last_valid_start < L:
+            raise RuntimeError(
+                f"Not enough bars to start: last_valid_start={last_valid_start}, lookback={L}. "
+                "Extend your date range or reduce lookback/indicator windows."
+            )
+
+        if getattr(self.cfg.episode, "randomize_start", False):
+            # horizon or max_steps limits how far forward we can start
+            cap = self.cfg.episode.horizon or self.cfg.episode.max_steps
+            if cap is None:
+                cap = last_valid_start - L
+            max_start = max(L, last_valid_start - cap)
+            # sample a starting index
+            self._i0 = int(self.np_random.integers(L, max(max_start, L) + 1))
+        else:
+            self._i0 = L
+
         self._i = self._i0
-        self.port = Portfolio(cash=self.cfg.episode.start_cash, margin=self.cfg.margin, fees=self.cfg.fees)
+        self.port = Portfolio(
+            cash=self.cfg.episode.start_cash,
+            margin=self.cfg.margin,
+            fees=self.cfg.fees
+        )
         self._equity = self._equity0
         self._equity_peak = self._equity
         self._ret_hist.clear()
         self._last_weights[:] = 0.0
+
         return self._obs(self._i), {"i": self._i, "config": asdict(self.cfg)}
 
     def step(self, action):
@@ -116,7 +154,7 @@ class PortfolioTradingEnv(gym.Env):
         target_w = self._map_action_to_weights(a)
 
         # ---- value at previous close (t-1)
-        prices_prev_close = self._prices(self._i - 1)   # CLOSE[t-1]
+        prices_prev_close = self._prices(self._i - 1)  # CLOSE[t-1]
         eq_prev_close = self.port.value(prices_prev_close)
 
         # ---- convert target weights -> target shares using prev close
@@ -126,7 +164,7 @@ class PortfolioTradingEnv(gym.Env):
             tgt_shares[sym] = float((target_w[k] * eq_prev_close) / max(px, 1e-9))
 
         cur_shares = {sym: (self.port.positions.get(sym).qty if sym in self.port.positions else 0.0)
-                    for sym in self.syms}
+                      for sym in self.syms}
 
         # ---- deltas -> orders (skip micro-rebalances via rebalance_eps)
         w_eps = float(getattr(self.cfg.episode, "rebalance_eps", 0.0))
@@ -161,7 +199,7 @@ class PortfolioTradingEnv(gym.Env):
         self.port.step_interest(dt_years=self._dt_years())
 
         # ---- value portfolio at CLOSE[t]
-        prices_close_t = self._prices(self._i - 1)      # CLOSE[t]
+        prices_close_t = self._prices(self._i - 1)  # CLOSE[t]
         eq_close_t = self.port.value(prices_close_t)
 
         # drawdown and metrics
@@ -177,13 +215,30 @@ class PortfolioTradingEnv(gym.Env):
         turnover = float(np.sum(np.abs(target_w - self._last_weights)))
         pen_dd = self.cfg.reward.w_drawdown * dd_after
         pen_to = self.cfg.reward.w_turnover * turnover
-        r = r_base - pen_dd - pen_to
+
+        ret_step = (eq_close_t - eq_prev_close) / max(eq_prev_close, 1e-9)
+        self._ret_hist.append(float(ret_step))
+        pen_vol = 0.0
+        if self.cfg.reward.w_vol > 0 and len(self._ret_hist) >= self.cfg.reward.vol_window:
+            vol = float(np.std(self._ret_hist[-self.cfg.reward.vol_window:]))
+            pen_vol = self.cfg.reward.w_vol * vol
+        gross = self.port.gross_exposure(prices_close_t, eq_close_t)
+        lev_cap = self.cfg.margin.max_gross_leverage
+        pen_lev = self.cfg.reward.w_leverage * max(0.0, gross - lev_cap)
+
+        r = r_base - pen_dd - pen_to - pen_vol - pen_lev
 
         self._last_weights = target_w
         terminated = self._i >= len(self.src.index) - 1
         truncated = False
-        if self.cfg.episode.max_steps is not None:
-            truncated = (self._i - self._i0) >= self.cfg.episode.max_steps
+        cap = self.cfg.episode.horizon or self.cfg.episode.max_steps
+        if cap is not None:
+            truncated = (self._i - self._i0) >= cap
+
+        stop_frac = getattr(self.cfg.reward, "stop_eq_frac", 0.0)
+        if stop_frac > 0 and eq_close_t < stop_frac * self._equity0:
+            terminated = True
+            r -= 1.0
 
         info = {
             "equity": eq_close_t,
@@ -192,10 +247,10 @@ class PortfolioTradingEnv(gym.Env):
             "r_base": float(r_base),
             "pen_turnover": float(pen_to),
             "pen_drawdown": float(pen_dd),
+            "pen_vol": float(pen_vol),
+            "pen_leverage": float(pen_lev),
         }
         return self._obs(self._i), float(r), bool(terminated), bool(truncated), info
 
-
-
     def _dt_years(self):
-        return 1.0/252.0 if self.cfg.interval == "1d" else 1.0/365.0
+        return 1.0 / 252.0 if self.cfg.interval == "1d" else 1.0 / 365.0

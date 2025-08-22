@@ -1,4 +1,5 @@
 import axios from "axios";
+import FormData from "form-data";
 
 const STOCKBOT_URL = process.env.STOCKBOT_URL;
 
@@ -17,9 +18,13 @@ export async function startTrainProxy(req, res) {
     const { data } = await axios.post(`${STOCKBOT_URL}/api/stockbot/train`, req.body);
     return res.json(data);
   } catch (e) {
-    return res.status(400).json({ error: errMsg(e) });
+    const status = e.response?.status || 500;
+    const body = e.response?.data || { error: e.message || 'Unknown error' };
+    return res.status(status).json(body);   // <- forward real detail
   }
 }
+
+
 
 /** POST /api/stockbot/backtest */
 export async function startBacktestProxy(req, res) {
@@ -44,7 +49,9 @@ export async function listRunsProxy(_req, res) {
 /** GET /api/stockbot/runs/:id */
 export async function getRunProxy(req, res) {
   try {
-    const { data } = await axios.get(`${STOCKBOT_URL}/api/stockbot/runs/${req.params.id}`);
+    const { data } = await axios.get(
+      `${STOCKBOT_URL}/api/stockbot/runs/${encodeURIComponent(req.params.id)}`
+    );
     return res.json(data);
   } catch (e) {
     return res.status(400).json({ error: errMsg(e) });
@@ -54,7 +61,9 @@ export async function getRunProxy(req, res) {
 /** GET /api/stockbot/runs/:id/artifacts */
 export async function getRunArtifactsProxy(req, res) {
   try {
-    const { data } = await axios.get(`${STOCKBOT_URL}/api/stockbot/runs/${req.params.id}/artifacts`);
+    const { data } = await axios.get(
+      `${STOCKBOT_URL}/api/stockbot/runs/${encodeURIComponent(req.params.id)}/artifacts`
+    );
     return res.json(data);
   } catch (e) {
     return res.status(400).json({ error: errMsg(e) });
@@ -64,7 +73,9 @@ export async function getRunArtifactsProxy(req, res) {
 /** GET /api/stockbot/runs/:id/files/:name -> stream file */
 export async function getRunArtifactFileProxy(req, res) {
   try {
-    const url = `${STOCKBOT_URL}/api/stockbot/runs/${req.params.id}/files/${req.params.name}`;
+    const url = `${STOCKBOT_URL}/api/stockbot/runs/${encodeURIComponent(
+      req.params.id
+    )}/files/${encodeURIComponent(req.params.name)}`;
     const resp = await axios.get(url, { responseType: "stream" });
     if (resp.headers["content-type"]) res.setHeader("content-type", resp.headers["content-type"]);
     if (resp.headers["content-disposition"]) res.setHeader("content-disposition", resp.headers["content-disposition"]);
@@ -75,6 +86,22 @@ export async function getRunArtifactFileProxy(req, res) {
 }
 
 /** GET /api/stockbot/runs/:id/bundle -> stream zip */
+export async function getRunBundleProxy(req, res) {
+  try {
+    const url = `${STOCKBOT_URL}/api/stockbot/runs/${encodeURIComponent(
+      req.params.id
+    )}/bundle`;
+    const resp = await axios.get(url, {
+      responseType: "stream",
+      params: req.query,
+    });
+    if (resp.headers["content-type"]) res.setHeader("content-type", resp.headers["content-type"]);
+    if (resp.headers["content-disposition"]) res.setHeader("content-disposition", resp.headers["content-disposition"]);
+    resp.data.pipe(res);
+  } catch (e) {
+    return res.status(400).json({ error: errMsg(e) });
+  }
+}
 
 
 export async function uploadPolicyProxy(req, res) {
