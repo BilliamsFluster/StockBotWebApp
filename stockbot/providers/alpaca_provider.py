@@ -120,7 +120,7 @@ class AlpacaProvider(BaseProvider):
         Matches the structure expected by the frontend.
         """
         account = self.get_account()
-        positions = self.get_positions()
+        raw_positions = self.get_positions()
 
         summary = {
             "accountNumber": account.get("account_number", "—"),
@@ -131,8 +131,23 @@ class AlpacaProvider(BaseProvider):
             "dayTradingBuyingPower": float(account.get("daytrading_buying_power", 0)),
         }
 
+        # ✅ Normalize positions to a common structure for the frontend
+        positions = []
+        for pos in raw_positions:
+            try:
+                positions.append({
+                    "symbol": pos.get("symbol", ""),
+                    "qty": float(pos.get("qty", 0)),
+                    "price": float(pos.get("avg_entry_price", 0)),
+                    "marketValue": float(pos.get("market_value", 0)),
+                    "dayPL": float(pos.get("unrealized_intraday_pl", 0)),
+                    "totalPL": float(pos.get("unrealized_pl", 0)),
+                })
+            except Exception:
+                continue
+
         return {
             "summary": summary,
             "positions": positions,
-            "transactions": []  # Can integrate Alpaca transactions later
+            "transactions": []  # Alpaca transactions not integrated yet
         }

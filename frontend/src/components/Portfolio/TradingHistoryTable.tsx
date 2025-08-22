@@ -15,8 +15,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-
-type SchwabTransaction = any;
+import { Transaction } from "@/types/portfolio";
 
 type Trade = {
   id: string | number;
@@ -29,37 +28,25 @@ type Trade = {
 };
 
 type Props = {
-  transactions: SchwabTransaction[];
+  transactions: Transaction[];
 };
 
 const TradingHistoryTable: React.FC<Props> = ({ transactions }) => {
   const trades: Trade[] = useMemo(() => {
-    if (!Array.isArray(transactions)) return [];
-
     return transactions
       .filter((tx) => tx.type === 'TRADE')
-      .map((tx, index) => {
-        const transfer = tx?.transferItems?.find(
-          (item: any) => item?.instrument?.assetType === 'EQUITY'
-        );
-
-        const symbol = transfer?.instrument?.symbol ?? '—';
-        const quantity = transfer?.amount ?? 0;
-        const amount = tx.netAmount ?? 0;
-        const action: Trade['action'] = amount < 0 ? 'BUY' : 'SELL';
-        const price = transfer?.price ?? undefined;
-
+      .map((tx) => {
+        const action: Trade['action'] = tx.amount < 0 ? 'BUY' : 'SELL';
         return {
-          id: tx.activityId ?? index,
-          date: tx.tradeDate || tx.time || new Date().toISOString(),
-          symbol,
+          id: tx.id,
+          date: tx.date,
+          symbol: tx.symbol,
           action,
-          quantity: Math.abs(quantity),
-          amount: Math.abs(amount),
-          price,
+          quantity: Math.abs(tx.quantity),
+          amount: Math.abs(tx.amount),
+          price: tx.price,
         };
-      })
-      .filter((trade) => trade.symbol !== '—');
+      });
   }, [transactions]);
 
   if (trades.length === 0) {

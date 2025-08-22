@@ -18,26 +18,21 @@ import {
 
 const COLORS = ['#818cf8', '#4ade80', '#facc15', '#fb7185', '#38bdf8', '#a78bfa'];
 
+import { Position } from "@/types/portfolio";
+
 type Props = {
   summary: { equity: number };
-  positions: {
-    symbol: string;
-    marketValue?: number;
-    value?: number;
-  }[];
+  positions: Position[];
 };
 
 const HoldingPieChart: React.FC<Props> = ({ summary, positions }) => {
   const totalEquity = summary?.equity || 0;
 
-  let chartData = positions.map((pos) => {
-    const marketValue = pos.marketValue ?? pos.value ?? 0;
-    return {
-      symbol: pos.symbol,
-      value: marketValue,
-      percent: totalEquity > 0 ? (marketValue / totalEquity) * 100 : 0,
-    };
-  });
+  let chartData = positions.map((pos) => ({
+    symbol: pos.symbol,
+    value: pos.marketValue,
+    percent: totalEquity > 0 ? (pos.marketValue / totalEquity) * 100 : 0,
+  }));
 
   const investedTotal = chartData.reduce((sum, p) => sum + p.value, 0);
   const cashValue = totalEquity - investedTotal;
