@@ -9,16 +9,7 @@ import {
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-
-// --- Type Definition ---
-export type Position = {
-  symbol: string;
-  qty: number;
-  price: number;   // may be undefined at runtime from API; we'll guard below
-  value: number;
-  dayPL: number;
-  totalPL: number;
-};
+import { Position } from "@/types/portfolio";
 
 // --- Format helpers ---
 const fmtCurrency = (n?: number | null) =>
@@ -99,7 +90,7 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
             <TableCell className="font-medium">{pos.symbol}</TableCell>
             <TableCell className="text-right">{fmtNumber(pos.qty, 0)}</TableCell>
             <TableCell className="text-right">{fmtNumber(pos.price, 2)}</TableCell>
-            <TableCell className="text-right">{fmtCurrency(pos.value)}</TableCell>
+            <TableCell className="text-right">{fmtCurrency(pos.marketValue)}</TableCell>
             <PnLCell value={pos.dayPL} />
             <PnLCell value={pos.totalPL} />
           </TableRow>

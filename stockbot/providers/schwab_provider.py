@@ -153,13 +153,63 @@ class SchwabProvider(BaseProvider):
     def get_portfolio_data(self) -> Dict[str, Any]:
         """Returns a consistent portfolio structure for stockbot."""
         summary = self.get_account_summary()
-        positions = self.get_positions()
+        raw_positions = self.get_positions()
         try:
-            transactions = self.get_transactions()
+            raw_transactions = self.get_transactions()
         except Exception:
-            transactions = []
+            raw_transactions = []
+
+        # ✅ Normalize positions
+        positions = []
+        for pos in raw_positions:
+            instrument = pos.get("instrument", {})
+            symbol = instrument.get("symbol", "")
+            qty = float(pos.get("longQuantity", 0)) - float(pos.get("shortQuantity", 0))
+            price = (
+                pos.get("averagePrice")
+                or pos.get("averageLongPrice")
+                or pos.get("averageShortPrice")
+                or 0
+            )
+            try:
+                positions.append({
+                    "symbol": symbol,
+                    "qty": float(qty),
+                    "price": float(price),
+                    "marketValue": float(pos.get("marketValue", 0)),
+                    "dayPL": float(pos.get("currentDayProfitLoss", 0)),
+                    "totalPL": float(
+                        pos.get("longOpenProfitLoss", 0)
+                        or pos.get("shortOpenProfitLoss", 0)
+                    ),
+                })
+            except Exception:
+                continue
+
+        # ✅ Normalize transactions
+        transactions = []
+        for tx in raw_transactions:
+            transfer_items = tx.get("transferItems", [])
+            first = transfer_items[0] if transfer_items else {}
+            instrument = first.get("instrument", {})
+            symbol = instrument.get("symbol", "").replace("CURRENCY_", "")
+            quantity = float(first.get("amount", 0))
+            price = first.get("price")
+            try:
+                transactions.append({
+                    "id": tx.get("activityId"),
+                    "date": tx.get("tradeDate") or tx.get("time"),
+                    "symbol": symbol,
+                    "type": tx.get("type"),
+                    "quantity": quantity,
+                    "amount": float(tx.get("netAmount", 0)),
+                    "price": price,
+                })
+            except Exception:
+                continue
+
         return {
             "summary": summary,
             "positions": positions,
-            "transactions": transactions
+            "transactions": transactions,
         }
