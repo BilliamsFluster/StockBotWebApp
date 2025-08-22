@@ -3,7 +3,6 @@ import React, { useMemo, useState, useEffect } from "react";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -91,6 +90,11 @@ export default function OverviewPage() {
       }
     })();
   }, []);
+
+  const marketHighlights = highlights?.find(s => /market/i.test(s.title));
+  const relevantEvents = highlights?.find(s => /relevant/i.test(s.title));
+  const holdingsEvents = highlights?.find(s => /(account|holding)/i.test(s.title));
+  const calendarEvents = highlights?.find(s => /calendar/i.test(s.title));
 
   const indices: IdxRow[] = [
     {name:"S&P 500 (SPY)", chg:+0.32},
@@ -242,39 +246,18 @@ export default function OverviewPage() {
         </Card>
       </section>
 
-      {/* Row 2: News & Macro + Market Highlights */}
+      {/* Row 2: Highlights & Market Overview */}
       <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        {/* News & Macro */}
-        <Card className="ink-card">
-          <CardHeader><CardTitle>News & Macro Highlights</CardTitle></CardHeader>
-          <CardContent>
-            {highlights?.length ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-1 gap-6">
+          <HighlightCard title="Market Highlights" items={marketHighlights?.items} />
+          <HighlightCard title="Relevant Events" items={relevantEvents?.items} />
+          <HighlightCard title="My Holdings" items={holdingsEvents?.items} />
+          <CalendarCard title="Economic Calendar" items={calendarEvents?.items} />
+        </div>
 
-              <ScrollArea className="max-h-80 pr-4">
-                <div className="space-y-4 text-sm">
-                  {highlights.map((section, idx) => (
-                    <div key={section.title} className="space-y-1">
-                      {idx > 0 && <Separator className="my-2" />}
-                      <h4 className="font-medium">{section.title}</h4>
-                      <ul className="list-disc pl-4 space-y-1">
-                        {section.items.map((item, i) => (
-                          <li key={i} className="leading-relaxed">{item}</li>
-
-                        ))}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
-              </ScrollArea>
-            ) : (
-              <div className="text-sm text-muted-foreground">Loading highlights...</div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Market Highlights */}
+        {/* Market Overview */}
         <Card className="ink-card xl:col-span-2">
-          <CardHeader><CardTitle>Market Highlights</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Market Snapshot</CardTitle></CardHeader>
           <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
               <h3 className="text-xs text-muted-foreground mb-2">Indices</h3>
@@ -342,6 +325,57 @@ export default function OverviewPage() {
 }
 
 /** ---------- Reusable UI Components (Styled with Theme Variables) ---------- */
+function HighlightCard({ title, items }: { title: string; items?: string[] }) {
+  return (
+    <Card className="ink-card">
+      <CardHeader><CardTitle>{title}</CardTitle></CardHeader>
+      <CardContent>
+        {items && items.length ? (
+          <ScrollArea className="max-h-40 pr-4">
+            <ul className="space-y-2 text-sm">
+              {items.map((item, i) => (
+                <li key={i} className="leading-relaxed">{item}</li>
+              ))}
+            </ul>
+          </ScrollArea>
+        ) : (
+          <div className="text-sm text-muted-foreground">No data available</div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function CalendarCard({ title, items }: { title: string; items?: string[] }) {
+  const events = (items ?? []).map(item => {
+    const [date, ...rest] = item.split(/\s+-\s+/);
+    return rest.length ? { date, desc: rest.join(" - ") } : { date: "", desc: item };
+  });
+  return (
+    <Card className="ink-card">
+      <CardHeader><CardTitle>{title}</CardTitle></CardHeader>
+      <CardContent>
+        {events.length ? (
+          <ScrollArea className="max-h-40 pr-2">
+            <Table>
+              <TableBody>
+                {events.map((ev, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="font-medium whitespace-nowrap">{ev.date}</TableCell>
+                    <TableCell>{ev.desc}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </ScrollArea>
+        ) : (
+          <div className="text-sm text-muted-foreground">No upcoming events</div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function Stat({label, value, isPositive, loading}:{label:string; value?:string; isPositive?:boolean; loading?:boolean}) {
   return (
     <div className="bg-muted/40 rounded-lg p-3">
