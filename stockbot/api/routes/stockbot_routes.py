@@ -11,6 +11,7 @@ from api.controllers.stockbot_controller import (
     save_policy_upload,
     bundle_zip,   # <- expose bundle
 )
+from api.controllers.insights_controller import InsightsRequest, generate_insights
 
 router = APIRouter()
 
@@ -45,3 +46,7 @@ def get_run_bundle(run_id: str, include_model: bool = True):
 @router.post("/policies")
 async def upload_policy(file: UploadFile = File(...)):
     return await save_policy_upload(file)
+
+@router.post("/insights")
+def post_insights(req: InsightsRequest):
+    return generate_insights(req)
