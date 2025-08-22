@@ -13,6 +13,8 @@ import {
   TableBody,
   TableCell,
   TableRow,
+  TableHead,
+  TableHeader,
 } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -324,18 +326,36 @@ export default function OverviewPage() {
 
 /** ---------- Reusable UI Components (Styled with Theme Variables) ---------- */
 function HighlightCard({ title, items }: { title: string; items?: string[] }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const maxHeight = expanded ? "max-h-80" : "max-h-40";
   return (
     <Card className="ink-card">
-      <CardHeader><CardTitle>{title}</CardTitle></CardHeader>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+      </CardHeader>
       <CardContent>
         {items && items.length ? (
-          <ScrollArea className="max-h-40 pr-4">
-            <ul className="space-y-2 text-sm">
-              {items.map((item, i) => (
-                <li key={i} className="leading-relaxed">{item}</li>
-              ))}
-            </ul>
-          </ScrollArea>
+          <div>
+            <ScrollArea className={`${maxHeight} pr-4`}>
+              <ul className="space-y-2 text-sm list-disc pl-4">
+                {items.map((item, i) => (
+                  <li key={i} className="leading-relaxed">
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </ScrollArea>
+            {items.length > 4 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-2"
+                onClick={() => setExpanded(x => !x)}
+              >
+                {expanded ? "Show Less" : "Show More"}
+              </Button>
+            )}
+          </div>
         ) : (
           <div className="text-sm text-muted-foreground">No data available</div>
         )}
@@ -346,21 +366,47 @@ function HighlightCard({ title, items }: { title: string; items?: string[] }) {
 
 function CalendarCard({ title, items }: { title: string; items?: string[] }) {
   const events = (items ?? []).map(item => {
-    const [date, ...rest] = item.split(/\s+-\s+/);
-    return rest.length ? { date, desc: rest.join(" - ") } : { date: "", desc: item };
+    const [date, event, actual, expected, impact] = item
+      .split("|")
+      .map(s => s.trim());
+    return { date, event, actual, expected, impact };
   });
   return (
     <Card className="ink-card">
-      <CardHeader><CardTitle>{title}</CardTitle></CardHeader>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+      </CardHeader>
       <CardContent>
         {events.length ? (
-          <ScrollArea className="max-h-40 pr-2">
+          <ScrollArea className="max-h-60 pr-2">
             <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Event</TableHead>
+                  <TableHead className="text-right">Actual</TableHead>
+                  <TableHead className="text-right">Expected</TableHead>
+                  <TableHead>Impact</TableHead>
+                </TableRow>
+              </TableHeader>
               <TableBody>
                 {events.map((ev, i) => (
                   <TableRow key={i}>
                     <TableCell className="font-medium whitespace-nowrap">{ev.date}</TableCell>
-                    <TableCell>{ev.desc}</TableCell>
+                    <TableCell>{ev.event}</TableCell>
+                    <TableCell className="text-right">{ev.actual}</TableCell>
+                    <TableCell className="text-right">{ev.expected}</TableCell>
+                    <TableCell
+                      className={
+                        ev.impact === "High"
+                          ? "text-red-400 font-semibold"
+                          : ev.impact === "Medium"
+                          ? "text-yellow-400"
+                          : "text-muted-foreground"
+                      }
+                    >
+                      {ev.impact}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

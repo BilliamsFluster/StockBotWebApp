@@ -6,6 +6,7 @@ import hashlib
 import time
 from datetime import datetime, timedelta
 import feedparser
+import os
 
 seen_articles = set()
 cache = {}
@@ -39,36 +40,36 @@ def fetch_rss_fallback():
 
 
 def fetch_economic_calendar():
-    """Fetch upcoming economic events.
+    """Fetch upcoming economic events with details.
 
-    Attempts to pull data from Financial Modeling Prep's API. If the network
-    request fails, a static list of sample events is returned so the UI still
-    displays content.
+    Uses Financial Modeling Prep's API and returns a list of pipe-delimited
+    strings so the frontend can easily split the values. Each item follows the
+    pattern ``date|event|actual|expected|impact``. A static fallback is returned
+    if the request fails so the UI still displays content.
     """
-    try:
-        from datetime import datetime, timedelta
 
-        start = datetime.now().strftime("%Y-%m-%d")
-        end = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+    try:
+        start = datetime.utcnow().strftime("%Y-%m-%d")
+        end = (datetime.utcnow() + timedelta(days=7)).strftime("%Y-%m-%d")
+        api_key = os.getenv("FMP_API_KEY", "demo")
         url = (
-            f"https://financialmodelingprep.com/api/v3/economic_calendar?from={start}&to={end}&apikey=demo"
+            "https://financialmodelingprep.com/api/v3/economic_calendar"
+            f"?from={start}&to={end}&apikey={api_key}"
         )
         r = requests.get(url, timeout=10)
-        data = r.json()[:5]
+        data = r.json()
         events = []
-        for ev in data:
-            date = ev.get("date", "")
-            event = ev.get("event", "")
+        for ev in data[:10]:
+            date = ev.get("date")
+            event = ev.get("event")
             actual = ev.get("actual")
-            forecast = ev.get("forecast")
+            expected = ev.get("consensus") or ev.get("forecast")
+            impact = ev.get("impact")
             if not date or not event:
                 continue
-            desc = f"{date} - {event}"
-            if actual:
-                desc += f" {actual}"
-            if forecast:
-                desc += f" (forecast {forecast})"
-            events.append(f"- {desc}")
+            events.append(
+                f"- {date}|{event}|{actual or 'N/A'}|{expected or 'N/A'}|{impact or 'N/A'}"
+            )
         if events:
             return events
     except Exception:
@@ -76,8 +77,8 @@ def fetch_economic_calendar():
 
     # Static fallback when API is unreachable
     return [
-        "- 2024-05-02 - Non-Farm Payrolls Release",
-        "- 2024-05-03 - Unemployment Rate Announcement",
+        "- 2024-05-02|Non-Farm Payrolls|N/A|N/A|High",
+        "- 2024-05-03|Unemployment Rate|N/A|N/A|Medium",
     ]
 
 def fetch_financial_snippets():
