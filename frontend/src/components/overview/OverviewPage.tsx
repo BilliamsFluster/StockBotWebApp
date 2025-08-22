@@ -13,8 +13,6 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableHead,
-  TableHeader,
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -26,6 +24,7 @@ import { OnboardingTeaser } from "@/components/OnboardingTeaser";
 import { useOnboarding } from "@/context/OnboardingContext";
 import { getUserPreferences } from "@/api/client";
 import { usePortfolioData } from "@/hooks/usePortfolioData";
+import { getMarketHighlights } from "@/api/stockbot";
 
 // --- Type Definitions ---
 type Bench = "SPY" | "QQQ" | "Custom Factor";
@@ -78,18 +77,18 @@ export default function OverviewPage() {
   const perf = { sharpe:1.45, sortino:2.10, maxDD:-11.3 };
   const benchmarks: Bench[] = ["SPY", "QQQ", "Custom Factor"];
 
-  const alerts = [
-    { t:"10:57", text:"AAPL Unusual Volume: 2.4× 30-day avg" },
-    { t:"10:54", text:"NVDA IV spike +7% (1h)" },
-  ];
-  const econ = [
-    {t:"08:30", event:"CPI (YoY)", exp:"3.2%", act:"3.1%", imp:"High"},
-    {t:"10:00", event:"Consumer Sentiment", exp:"72.0", act:"—",   imp:"Med"},
-  ];
-  const earnings = [
-    {t:"After", sym:"MSFT", note:"Earnings today"},
-    {t:"After", sym:"TSLA", note:"Earnings today"},
-  ];
+  const [highlights, setHighlights] = useState<string>("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { highlights } = await getMarketHighlights();
+        setHighlights(highlights);
+      } catch (e) {
+        console.error("Failed to load highlights", e);
+      }
+    })();
+  }, []);
 
   const indices: IdxRow[] = [
     {name:"S&P 500 (SPY)", chg:+0.32},
@@ -247,32 +246,11 @@ export default function OverviewPage() {
         <Card className="ink-card">
           <CardHeader><CardTitle>News & Macro Highlights</CardTitle></CardHeader>
           <CardContent>
-            <div className="space-y-2 text-sm">
-              {alerts.map((a,i)=>(
-                <div key={i} className="flex items-center gap-2">
-                  <Badge variant="destructive" className="text-xs">Alert</Badge>
-                  <span>{a.t} • {a.text}</span>
-                </div>
-              ))}
-            </div>
-            <Separator className="my-4" />
-            <h3 className="text-xs text-muted-foreground mb-2">Economic Releases</h3>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Time</TableHead><TableHead>Event</TableHead><TableHead>Exp</TableHead><TableHead>Act</TableHead><TableHead>Imp</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {econ.map((e,i)=>(
-                  <TableRow key={i}><TableCell>{e.t}</TableCell><TableCell>{e.event}</TableCell><TableCell>{e.exp}</TableCell><TableCell>{e.act}</TableCell><TableCell>{e.imp}</TableCell></TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            <h3 className="text-xs text-muted-foreground mt-4 mb-2">Earnings Calendar</h3>
-            <div className="space-y-1 text-sm">
-              {earnings.map((e,i)=>(<div key={i}>{e.sym} — {e.note}</div>))}
-            </div>
+            {highlights ? (
+              <pre className="whitespace-pre-wrap text-sm">{highlights}</pre>
+            ) : (
+              <div className="text-sm text-muted-foreground">Loading highlights...</div>
+            )}
           </CardContent>
         </Card>
 

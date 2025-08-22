@@ -39,3 +39,10 @@ export async function getAiInsights() {
   return data as { insights: string[] };
 }
 
+export async function getMarketHighlights() {
+  const { data } = await axios.get(buildUrl("/api/stockbot/highlights"), {
+    withCredentials: true,
+  });
+  return data as { highlights: string };
+}
+
