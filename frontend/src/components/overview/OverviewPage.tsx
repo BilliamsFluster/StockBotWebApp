@@ -249,6 +249,7 @@ export default function OverviewPage() {
           <CardHeader><CardTitle>News & Macro Highlights</CardTitle></CardHeader>
           <CardContent>
             {highlights?.length ? (
+
               <ScrollArea className="max-h-80 pr-4">
                 <div className="space-y-4 text-sm">
                   {highlights.map((section, idx) => (
@@ -258,6 +259,7 @@ export default function OverviewPage() {
                       <ul className="list-disc pl-4 space-y-1">
                         {section.items.map((item, i) => (
                           <li key={i} className="leading-relaxed">{item}</li>
+
                         ))}
                       </ul>
                     </div>
@@ -389,6 +391,7 @@ function parseHighlights(text: string): HighlightSection[] {
   return text
     .split(/\n\s*\n/)
     .map(block => {
+
       const rawLines = block.split("\n");
       if (!rawLines.length) return null;
       const [titleLine, ...rest] = rawLines;
@@ -408,6 +411,7 @@ function parseHighlights(text: string): HighlightSection[] {
       if (current) items.push(current.trim());
 
       return { title: titleLine.trim(), items } as HighlightSection;
+
     })
     .filter(Boolean) as HighlightSection[];
 }
