@@ -18,7 +18,7 @@ from jarvis.huggingFace_agent import HuggingFaceAgent
 # -----------------------------
 _mm = MemoryManager(storage_dir="data/memory")
 
-hugging_face_agent = HuggingFaceAgent(
+'''hugging_face_agent = HuggingFaceAgent(
     model="Qwen/Qwen3-4B-Instruct-2507",
     use_local=True,
     memory_manager=_mm,
@@ -37,7 +37,7 @@ hugging_face_agent = HuggingFaceAgent(
     # keep failover OFF unless you provide a fallback model
     ttft_failover_seconds=None,
     fallback_model_name=None,
-)
+)'''
 
 '''hugging_face_agent = HuggingFaceAgent(
     model="meta-llama/Meta-Llama-3-8B-Instruct",
@@ -48,8 +48,8 @@ hugging_face_agent = HuggingFaceAgent(
     temperature=0.6,
 )'''
 
-#_agent = OllamaAgent("llama3:8b", _mm)
-_service = JarvisService(llm_agent=hugging_face_agent)
+_agent = OllamaAgent("llama3:8b", _mm)
+_service = JarvisService(llm_agent=_agent)
 
 def get_jarvis_service() -> JarvisService:
     return _service
