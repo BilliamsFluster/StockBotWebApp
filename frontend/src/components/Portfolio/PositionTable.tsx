@@ -9,22 +9,28 @@ import {
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { Position } from "@/types/portfolio";
 
-// --- Type Definition ---
-export type Position = {
-  symbol: string;
-  qty: number;
-  price: number;
-  value: number;
-  dayPL: number;
-  totalPL: number;
-};
+// --- Format helpers ---
+const fmtCurrency = (n?: number | null) =>
+  Number.isFinite(n as number)
+    ? new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n as number)
+    : "—";
+
+const fmtNumber = (n?: number | null, digits = 2) =>
+  Number.isFinite(n as number) ? (n as number).toFixed(digits) : "—";
 
 // --- Helper Components ---
-function PnLCell({ value }: { value: number }) {
+function PnLCell({ value }: { value?: number | null }) {
+  const isNum = Number.isFinite(value as number);
+  const color = !isNum
+    ? "text-muted-foreground"
+    : (value as number) >= 0
+      ? "text-green-400"
+      : "text-red-400";
   return (
-    <TableCell className={cn("text-right font-medium", value >= 0 ? "text-green-400" : "text-red-400")}>
-      {value.toLocaleString(undefined, { style: 'currency', currency: 'USD' })}
+    <TableCell className={cn("text-right font-medium", color)}>
+      {fmtCurrency(value as number)}
     </TableCell>
   );
 }
@@ -82,9 +88,9 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
         {positions.map((pos) => (
           <TableRow key={pos.symbol}>
             <TableCell className="font-medium">{pos.symbol}</TableCell>
-            <TableCell className="text-right">{pos.qty}</TableCell>
-            <TableCell className="text-right">{pos.price.toFixed(2)}</TableCell>
-            <TableCell className="text-right">{pos.value.toLocaleString(undefined, { style: 'currency', currency: 'USD' })}</TableCell>
+            <TableCell className="text-right">{fmtNumber(pos.qty, 0)}</TableCell>
+            <TableCell className="text-right">{fmtNumber(pos.price, 2)}</TableCell>
+            <TableCell className="text-right">{fmtCurrency(pos.marketValue)}</TableCell>
             <PnLCell value={pos.dayPL} />
             <PnLCell value={pos.totalPL} />
           </TableRow>

@@ -48,6 +48,10 @@ class BaseProvider(ABC):
         :return: list of OHLC+volume dicts for symbol between start/end
         """
 
+    @abstractmethod
+    def get_account_summary(self) -> Dict[str, Any]:
+        """Return a high-level account summary such as equity, cash, etc."""
+
     def _full_url(self, path: str) -> str:
         return f"{self.base_url}/{path.lstrip('/')}"
 

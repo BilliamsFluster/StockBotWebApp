@@ -3,7 +3,6 @@ import React, { useMemo, useState, useEffect } from "react";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -13,44 +12,90 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableRow,
   TableHead,
   TableHeader,
-  TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { OnboardingTeaser } from "@/components/OnboardingTeaser";
 import { useOnboarding } from "@/context/OnboardingContext";
+import { getUserPreferences } from "@/api/client";
+import { usePortfolioData } from "@/hooks/usePortfolioData";
+import { getMarketHighlights } from "@/api/stockbot";
 
 // --- Type Definitions ---
 type Bench = "SPY" | "QQQ" | "Custom Factor";
 type IdxRow = { name: string; chg: number };
 type Mover = { sym: string; name: string; chg: number; vol: string };
+type HighlightSection = { title: string; items: string[] };
 
 export default function OverviewPage() {
   const { setShowOnboarding } = useOnboarding();
-  /** ------- MOCK DATA (replace with live) ------- */
-  const portfolio = {
-    netLiq: 127420, realized: 18920, unrealized: 1245, marginUtil: 0.31, buyingPower: 232000, excessLiq: 75000,
-    ccy: [{ccy:"USD", wt:0.92},{ccy:"EUR", wt:0.05},{ccy:"JPY", wt:0.03}],
-  };
+
+  // Track which broker is active so we can conditionally fetch portfolio data
+  const [activeBroker, setActiveBroker] = useState<string | null>(null);
+  const [checkingBroker, setCheckingBroker] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const prefs = await getUserPreferences();
+        setActiveBroker(prefs?.activeBroker || null);
+      } catch (e) {
+        console.error("Error checking active broker:", e);
+        setActiveBroker(null);
+      } finally {
+        setCheckingBroker(false);
+      }
+    })();
+  }, []);
+
+  // Load live portfolio data only when a broker is active
+  const { data, isLoading } = usePortfolioData(Boolean(activeBroker));
+  const summary = data?.portfolio?.summary;
+  const positions = data?.portfolio?.positions ?? [];
+  const transactions = data?.portfolio?.transactions ?? [];
+
+  const realizedPL = useMemo(() => {
+    const start = new Date(new Date().getFullYear(), 0, 1);
+    return transactions
+      .filter(tx => tx.type === "TRADE" && new Date(tx.date) >= start)
+      .reduce((acc, tx) => acc + (tx.amount || 0), 0);
+  }, [transactions]);
+
+  const unrealizedPL = useMemo(() => {
+    return positions.reduce((acc, p) => acc + (p.dayPL || 0), 0);
+  }, [positions]);
+
+  const cashAllocation = useMemo(() => {
+    if (!summary || !summary.equity) return "0%";
+    return ((summary.cash / summary.equity) * 100).toFixed(0) + "%";
+  }, [summary]);
+
   const perf = { sharpe:1.45, sortino:2.10, maxDD:-11.3 };
   const benchmarks: Bench[] = ["SPY", "QQQ", "Custom Factor"];
 
-  const alerts = [
-    { t:"10:57", text:"AAPL Unusual Volume: 2.4× 30-day avg" },
-    { t:"10:54", text:"NVDA IV spike +7% (1h)" },
-  ];
-  const econ = [
-    {t:"08:30", event:"CPI (YoY)", exp:"3.2%", act:"3.1%", imp:"High"},
-    {t:"10:00", event:"Consumer Sentiment", exp:"72.0", act:"—",   imp:"Med"},
-  ];
-  const earnings = [
-    {t:"After", sym:"MSFT", note:"Earnings today"},
-    {t:"After", sym:"TSLA", note:"Earnings today"},
-  ];
+  const [highlights, setHighlights] = useState<HighlightSection[] | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { highlights } = await getMarketHighlights();
+        setHighlights(parseHighlights(highlights));
+      } catch (e) {
+        console.error("Failed to load highlights", e);
+      }
+    })();
+  }, []);
+
+  const marketHighlights = highlights?.find(s => /market/i.test(s.title));
+  const relevantEvents = highlights?.find(s => /relevant/i.test(s.title));
+  const calendarEvents = highlights?.find(s => /calendar/i.test(s.title));
 
   const indices: IdxRow[] = [
     {name:"S&P 500 (SPY)", chg:+0.32},
@@ -86,7 +131,6 @@ export default function OverviewPage() {
     setActiveBenches(prev => prev.includes(b) ? prev.filter(x=>x!==b) : [...prev, b]);
 
   /** ------- COMPUTED ------- */
-  const marginUtilPct = useMemo(()=> (portfolio.marginUtil*100).toFixed(0)+"%", [portfolio.marginUtil]);
 
   // The content is now wrapped in a single div, not an extra Layout component.
   // This prevents the "double nav" issue.
@@ -118,28 +162,50 @@ export default function OverviewPage() {
         <Card className="ink-card xl:col-span-2">
           <CardHeader><CardTitle>Real-time Portfolio Snapshot</CardTitle></CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-              <Stat label="Net Liq" value={fmtCash(portfolio.netLiq)} />
-              <Stat label="Buying Power" value={fmtCash(portfolio.buyingPower)} />
-              <Stat label="Excess Liquidity" value={fmtCash(portfolio.excessLiq)} />
-              <Stat label="Realized P/L (YTD)" value={fmtCash(portfolio.realized)} isPositive />
-              <Stat label="Unrealized P/L (1D)" value={fmtCash(portfolio.unrealized)} isPositive />
-              <Stat label="Margin Utilization" value={marginUtilPct} />
-            </div>
-            <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div>
-                <h3 className="text-xs text-muted-foreground mb-2">Currency Exposure</h3>
-                <div className="flex flex-wrap gap-2">
-                  {portfolio.ccy.map(c => (
-                    <Badge key={c.ccy} variant="secondary">{c.ccy} {Math.round(c.wt*100)}%</Badge>
-                  ))}
+            {checkingBroker || isLoading ? (
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                <Stat label="Net Liq" loading />
+                <Stat label="Buying Power" loading />
+                <Stat label="Excess Liquidity" loading />
+                <Stat label="Realized P/L (YTD)" loading />
+                <Stat label="Unrealized P/L (1D)" loading />
+                <Stat label="Cash Allocation" loading />
+              </div>
+            ) : !activeBroker ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                  <Stat label="Net Liq" loading />
+                  <Stat label="Buying Power" loading />
+                  <Stat label="Excess Liquidity" loading />
+                  <Stat label="Realized P/L (YTD)" loading />
+                  <Stat label="Unrealized P/L (1D)" loading />
+                  <Stat label="Cash Allocation" loading />
                 </div>
+                <p className="text-sm text-muted-foreground">
+                  No active broker connected. Set one in settings to view your portfolio.
+                </p>
+                <Button asChild size="sm" className="w-fit">
+                  <a href="/settings">Go to Settings</a>
+                </Button>
               </div>
-              <div>
-                <h3 className="text-xs text-muted-foreground mb-2">Equity Curve (mock)</h3>
-                <EquityArea />
+            ) : (
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                <Stat label="Net Liq" value={fmtCash(summary?.liquidationValue ?? 0)} />
+                <Stat label="Buying Power" value={fmtCash(summary?.buyingPower ?? 0)} />
+                <Stat label="Excess Liquidity" value={fmtCash(summary?.cash ?? 0)} />
+                <Stat
+                  label="Realized P/L (YTD)"
+                  value={fmtCash(realizedPL)}
+                  isPositive={realizedPL >= 0}
+                />
+                <Stat
+                  label="Unrealized P/L (1D)"
+                  value={fmtCash(unrealizedPL)}
+                  isPositive={unrealizedPL >= 0}
+                />
+                <Stat label="Cash Allocation" value={cashAllocation} />
               </div>
-            </div>
+            )}
           </CardContent>
         </Card>
 
@@ -181,44 +247,17 @@ export default function OverviewPage() {
         </Card>
       </section>
 
-      {/* Row 2: News & Macro + Market Highlights */}
+      {/* Row 2: Highlights & Market Overview */}
       <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        {/* News & Macro */}
-        <Card className="ink-card">
-          <CardHeader><CardTitle>News & Macro Highlights</CardTitle></CardHeader>
-          <CardContent>
-            <div className="space-y-2 text-sm">
-              {alerts.map((a,i)=>(
-                <div key={i} className="flex items-center gap-2">
-                  <Badge variant="destructive" className="text-xs">Alert</Badge>
-                  <span>{a.t} • {a.text}</span>
-                </div>
-              ))}
-            </div>
-            <Separator className="my-4" />
-            <h3 className="text-xs text-muted-foreground mb-2">Economic Releases</h3>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Time</TableHead><TableHead>Event</TableHead><TableHead>Exp</TableHead><TableHead>Act</TableHead><TableHead>Imp</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {econ.map((e,i)=>(
-                  <TableRow key={i}><TableCell>{e.t}</TableCell><TableCell>{e.event}</TableCell><TableCell>{e.exp}</TableCell><TableCell>{e.act}</TableCell><TableCell>{e.imp}</TableCell></TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            <h3 className="text-xs text-muted-foreground mt-4 mb-2">Earnings Calendar</h3>
-            <div className="space-y-1 text-sm">
-              {earnings.map((e,i)=>(<div key={i}>{e.sym} — {e.note}</div>))}
-            </div>
-          </CardContent>
-        </Card>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-1 gap-6">
+          <HighlightCard title="Market Highlights" items={marketHighlights?.items} />
+          <HighlightCard title="Relevant Events" items={relevantEvents?.items} />
+          <CalendarCard title="Economic Calendar" items={calendarEvents?.items} />
+        </div>
 
-        {/* Market Highlights */}
+        {/* Market Overview */}
         <Card className="ink-card xl:col-span-2">
-          <CardHeader><CardTitle>Market Highlights</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Market Snapshot</CardTitle></CardHeader>
           <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
               <h3 className="text-xs text-muted-foreground mb-2">Indices</h3>
@@ -286,11 +325,110 @@ export default function OverviewPage() {
 }
 
 /** ---------- Reusable UI Components (Styled with Theme Variables) ---------- */
-function Stat({label, value, isPositive}:{label:string; value:string; isPositive?:boolean}) {
+function HighlightCard({ title, items }: { title: string; items?: string[] }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const maxHeight = expanded ? "max-h-80" : "max-h-40";
+  return (
+    <Card className="ink-card">
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {items && items.length ? (
+          <div>
+            <ScrollArea className={`${maxHeight} pr-4`}>
+              <ul className="space-y-2 text-sm list-disc pl-4">
+                {items.map((item, i) => (
+                  <li key={i} className="leading-relaxed">
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </ScrollArea>
+            {items.length > 4 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-2"
+                onClick={() => setExpanded(x => !x)}
+              >
+                {expanded ? "Show Less" : "Show More"}
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div className="text-sm text-muted-foreground">No data available</div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function CalendarCard({ title, items }: { title: string; items?: string[] }) {
+  const events = (items ?? []).map(item => {
+    const [date, event, actual, expected, impact] = item
+      .split("|")
+      .map(s => s.trim());
+    return { date, event, actual, expected, impact };
+  });
+  return (
+    <Card className="ink-card">
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {events.length ? (
+          <ScrollArea className="max-h-60 pr-2">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Event</TableHead>
+                  <TableHead className="text-right">Actual</TableHead>
+                  <TableHead className="text-right">Expected</TableHead>
+                  <TableHead>Impact</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {events.map((ev, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="font-medium whitespace-nowrap">{ev.date}</TableCell>
+                    <TableCell>{ev.event}</TableCell>
+                    <TableCell className="text-right">{ev.actual}</TableCell>
+                    <TableCell className="text-right">{ev.expected}</TableCell>
+                    <TableCell
+                      className={
+                        ev.impact === "High"
+                          ? "text-red-400 font-semibold"
+                          : ev.impact === "Medium"
+                          ? "text-yellow-400"
+                          : "text-muted-foreground"
+                      }
+                    >
+                      {ev.impact}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </ScrollArea>
+        ) : (
+          <div className="text-sm text-muted-foreground">No upcoming events</div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function Stat({label, value, isPositive, loading}:{label:string; value?:string; isPositive?:boolean; loading?:boolean}) {
   return (
     <div className="bg-muted/40 rounded-lg p-3">
       <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={`text-lg font-semibold text-card-foreground ${isPositive ? "text-green-400" : ""}`}>{value}</div>
+      {loading ? (
+        <Skeleton className="h-5 w-20 mt-1" />
+      ) : (
+        <div className={`text-lg font-semibold text-card-foreground ${isPositive ? "text-green-400" : ""}`}>{value ?? "—"}</div>
+      )}
     </div>
   );
 }
@@ -325,4 +463,33 @@ function EquityArea({tone}:{tone?:"blue"|"purple"}) {
 /** ---------- Utils ---------- */
 function fmtCash(n:number){
   return n.toLocaleString(undefined,{style:"currency",currency:"USD",maximumFractionDigits:0});
+}
+
+function parseHighlights(text: string): HighlightSection[] {
+  return text
+    .split(/\n\s*\n/)
+    .map(block => {
+
+      const rawLines = block.split("\n");
+      if (!rawLines.length) return null;
+      const [titleLine, ...rest] = rawLines;
+
+      const items: string[] = [];
+      let current = "";
+      rest.forEach(line => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        if (/^[-*\u2022]\s*/.test(trimmed)) {
+          if (current) items.push(current.trim());
+          current = trimmed.replace(/^[-*\u2022]\s*/, "");
+        } else {
+          current += (current ? " " : "") + trimmed;
+        }
+      });
+      if (current) items.push(current.trim());
+
+      return { title: titleLine.trim(), items } as HighlightSection;
+
+    })
+    .filter(Boolean) as HighlightSection[];
 }

@@ -11,9 +11,13 @@ async function updateSchwabTokens(user, updates) {
   const decrypted = user.getDecryptedTokens();
   const { app_key, app_secret } = decrypted.schwab_tokens;
 
+  // Trim any stray whitespace from stored credentials
+  const trimmedKey = app_key?.trim();
+  const trimmedSecret = app_secret?.trim();
+
   user.schwab_tokens = {
-    app_key,
-    app_secret,
+    app_key: trimmedKey,
+    app_secret: trimmedSecret,
     access_token: updates.access_token || decrypted.schwab_tokens.access_token,
     refresh_token: updates.refresh_token || decrypted.schwab_tokens.refresh_token,
     expires_at: updates.expires_at || decrypted.schwab_tokens.expires_at
@@ -51,7 +55,8 @@ export async function refreshSchwabAccessTokenInternal(userId) {
   }
 
   const redirectUri = 'https://127.0.0.1';
-  const encodedAuth = base64.encode(`${app_key}:${app_secret}`);
+  const authString = `${app_key?.trim()}:${app_secret?.trim()}`;
+  const encodedAuth = base64.encode(authString);
 
   try {
     const res = await axios.post(
@@ -96,7 +101,8 @@ export async function exchangeCodeForTokensInternal(code, userId) {
   const { app_key, app_secret } = decrypted.schwab_tokens;
 
   const redirectUri = 'https://127.0.0.1';
-  const encodedAuth = base64.encode(`${app_key}:${app_secret}`);
+  const authString = `${app_key?.trim()}:${app_secret?.trim()}`;
+  const encodedAuth = base64.encode(authString);
 
   try {
     const res = await axios.post(

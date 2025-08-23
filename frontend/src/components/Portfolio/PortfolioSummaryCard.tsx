@@ -37,21 +37,13 @@ interface PortfolioSummaryProps {
     liquidationValue: number;
     equity: number;
     cash: number;
+    buyingPower: number;
+    dayTradingBuyingPower?: number;
   };
   isLoading?: boolean;
 }
 
 const PortfolioSummaryCard: React.FC<PortfolioSummaryProps> = ({ summary, isLoading = false }) => {
-  // Mock data - replace with props
-  const data = {
-    netLiq: 127420,
-    dayPL: 1245,
-    ytdPL: 18920,
-    buyingPower: 232000,
-    beta: 1.45,
-    sharpe: 1.2,
-  };
-
   return (
     <Card className="ink-card">
       <CardHeader>
@@ -61,31 +53,37 @@ const PortfolioSummaryCard: React.FC<PortfolioSummaryProps> = ({ summary, isLoad
       <CardContent>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
           <Stat
+            label="Account #"
+            value={summary.accountNumber}
+            isLoading={isLoading}
+          />
+          <Stat
             label="Net Liquidity"
-            value={data.netLiq.toLocaleString()}
-            unit="USD"
+            value={summary.liquidationValue.toLocaleString(undefined, { style: "currency", currency: "USD" })}
             isLoading={isLoading}
           />
           <Stat
-            label="Day's P/L"
-            value={data.dayPL.toLocaleString()}
-            unit="USD"
+            label="Equity"
+            value={summary.equity.toLocaleString(undefined, { style: "currency", currency: "USD" })}
             isLoading={isLoading}
           />
           <Stat
-            label="YTD P/L"
-            value={data.ytdPL.toLocaleString()}
-            unit="USD"
+            label="Cash"
+            value={summary.cash.toLocaleString(undefined, { style: "currency", currency: "USD" })}
             isLoading={isLoading}
           />
           <Stat
             label="Buying Power"
-            value={data.buyingPower.toLocaleString()}
-            unit="USD"
+            value={summary.buyingPower.toLocaleString(undefined, { style: "currency", currency: "USD" })}
             isLoading={isLoading}
           />
-          <Stat label="SPY Beta" value={data.beta} isLoading={isLoading} />
-          <Stat label="Sharpe Ratio" value={data.sharpe} isLoading={isLoading} />
+          {summary.dayTradingBuyingPower !== undefined && (
+            <Stat
+              label="Day Trading BP"
+              value={summary.dayTradingBuyingPower.toLocaleString(undefined, { style: "currency", currency: "USD" })}
+              isLoading={isLoading}
+            />
+          )}
         </div>
       </CardContent>
     </Card>

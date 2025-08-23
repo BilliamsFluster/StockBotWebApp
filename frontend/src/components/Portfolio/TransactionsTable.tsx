@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import {
   Table,
   TableBody,
@@ -16,38 +16,14 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-
-export type Transaction = {
-  id: string | number;
-  date: string | Date;
-  symbol: string;
-  type: string;
-  quantity: number;
-  amount: number;
-};
-
-type SchwabTransaction = any; // Replace with stricter typing if needed
+import { Transaction } from "@/types/portfolio";
 
 type Props = {
-  transactions: SchwabTransaction[]; // Accepts raw Schwab format
+  transactions: Transaction[];
 };
 
 const TransactionsTable: React.FC<Props> = ({ transactions }) => {
-  const parsedTransactions: Transaction[] = useMemo(() => {
-    if (!Array.isArray(transactions)) return [];
-
-    return transactions.map((tx, index) => ({
-      id: tx.activityId ?? index,
-      date: tx.tradeDate || tx.time || new Date().toISOString(),
-      symbol:
-        tx?.transferItems?.[0]?.instrument?.symbol?.replace('CURRENCY_', '') ?? 'N/A',
-      type: tx.type ?? 'UNKNOWN',
-      quantity: Number(tx?.transferItems?.[0]?.amount ?? 0), // ✅ Ensure numeric
-      amount: Number(tx.netAmount ?? 0), // ✅ Ensure numeric
-    }));
-  }, [transactions]);
-
-  if (parsedTransactions.length === 0) {
+  if (!transactions.length) {
     return (
       <div className="rounded-xl backdrop-blur-lg bg-black/20 p-4 shadow-xl border border-purple-400/20">
         <h2 className="text-sm font-semibold text-white mb-2">Recent Transactions</h2>
@@ -72,7 +48,7 @@ const TransactionsTable: React.FC<Props> = ({ transactions }) => {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {parsedTransactions.slice(0, 5).map((tx) => (
+            {transactions.slice(0, 5).map((tx) => (
               <TableRow key={tx.id}>
                 <TableCell>{new Date(tx.date).toLocaleDateString()}</TableCell>
                 <TableCell>

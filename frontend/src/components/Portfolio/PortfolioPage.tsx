@@ -4,6 +4,7 @@ import * as React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { usePortfolioData } from "@/hooks/usePortfolioData";
 import { getUserPreferences } from "@/api/client";
+import type { Position, Transaction } from "@/types/portfolio";
 
 /** shadcn/ui */
 import {
@@ -78,8 +79,8 @@ export default function PortfolioPage() {
   const [checkingBroker, setCheckingBroker] = useState(true);
 
   const summary: Summary = data?.portfolio?.summary ?? DEFAULT_SUMMARY;
-  const positions = data?.portfolio?.positions ?? [];
-  const transactions = data?.portfolio?.transactions ?? [];
+  const positions: Position[] = data?.portfolio?.positions ?? [];
+  const transactions: Transaction[] = data?.portfolio?.transactions ?? [];
 
   /** Check active broker once */
   useEffect(() => {

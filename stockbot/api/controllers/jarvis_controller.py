@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json, re
+import os
 from typing import Any, Dict, List, Optional, Literal
 
 from fastapi import Depends, WebSocket
@@ -10,13 +11,45 @@ from jarvis.ws_handler import handle_voice_ws
 from jarvis.jarvis_service import JarvisService
 from jarvis.ollama_agent import OllamaAgent
 from jarvis.memory_manager import MemoryManager
+from jarvis.huggingFace_agent import HuggingFaceAgent
 
 # -----------------------------
 # Singletons (simple DI)
 # -----------------------------
 _mm = MemoryManager(storage_dir="data/memory")
-_agent = OllamaAgent("llama3:8b", _mm)
-_service = JarvisService(llm_agent=_agent)
+
+hugging_face_agent = HuggingFaceAgent(
+    model="Qwen/Qwen3-4B-Instruct-2507",
+    use_local=True,
+    memory_manager=_mm,
+    local_cache_root=r"D:\huggingface\transformers",
+
+    # latency tuning
+    default_max_new_tokens=56,      # short voice replies
+    prefill_token_budget=512,       # trim context aggressively
+    temperature=0.6,
+    top_p=0.9,
+    repetition_penalty=1.05,
+
+    # CPU-specific
+    cpu_num_threads= max(1, (os.cpu_count() or 8) - 1),
+
+    # keep failover OFF unless you provide a fallback model
+    ttft_failover_seconds=None,
+    fallback_model_name=None,
+)
+
+'''hugging_face_agent = HuggingFaceAgent(
+    model="meta-llama/Meta-Llama-3-8B-Instruct",
+    use_local=False,
+    api_key= "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",
+    memory_manager=_mm,
+    default_max_new_tokens=64,
+    temperature=0.6,
+)'''
+
+#_agent = OllamaAgent("llama3:8b", _mm)
+_service = JarvisService(llm_agent=hugging_face_agent)
 
 def get_jarvis_service() -> JarvisService:
     return _service

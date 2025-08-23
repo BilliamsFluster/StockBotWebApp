@@ -84,6 +84,17 @@ class AlpacaProvider(BaseProvider):
         print(self.api_key)
         return self._request("GET", "/v2/account")
 
+    def get_account_summary(self) -> Dict[str, Any]:
+        account = self.get_account()
+        return {
+            "accountNumber": account.get("account_number", "—"),
+            "liquidationValue": float(account.get("portfolio_value", 0)),
+            "equity": float(account.get("equity", 0)),
+            "cash": float(account.get("cash", 0)),
+            "buyingPower": float(account.get("buying_power", 0)),
+            "dayTradingBuyingPower": float(account.get("daytrading_buying_power", 0)),
+        }
+
     def get_positions(self) -> List[Dict[str, Any]]:
         return self._request("GET", "/v2/positions")
 
@@ -113,26 +124,101 @@ class AlpacaProvider(BaseProvider):
     def cancel_order(self, order_id: str) -> None:
         self._request("DELETE", f"/v2/orders/{order_id}")
 
+    # --- Account activities / transactions ---
+    def get_transactions(
+        self,
+        lookback_days: int = 365,
+        activity_types: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Retrieve recent account activities.
+
+        The Alpaca `/v2/account/activities` endpoint returns fills, dividends,
+        transfers, etc. This helper fetches up to 100 activities within a
+        configurable lookback window and optionally filters by type.
+        """
+
+        start = datetime.utcnow() - timedelta(days=lookback_days)
+        params: Dict[str, Any] = {
+            "after": start.strftime("%Y-%m-%d"),
+            "page_size": 100,
+            "direction": "desc",
+        }
+        if activity_types:
+            params["activity_types"] = ",".join(activity_types)
+
+        data = self._request("GET", "/v2/account/activities", params=params)
+        return data if isinstance(data, list) else []
+
     # --- Unified Portfolio Method for Frontend ---
     def get_portfolio_data(self) -> dict:
         """
         Combines account summary and positions into a single portfolio object.
         Matches the structure expected by the frontend.
         """
-        account = self.get_account()
-        positions = self.get_positions()
+        summary = self.get_account_summary()
+        raw_positions = self.get_positions()
+        try:
+            raw_transactions = self.get_transactions()
+        except Exception:
+            raw_transactions = []
 
-        summary = {
-            "accountNumber": account.get("account_number", "—"),
-            "liquidationValue": float(account.get("portfolio_value", 0)),
-            "equity": float(account.get("equity", 0)),
-            "cash": float(account.get("cash", 0)),
-            "buyingPower": float(account.get("buying_power", 0)),
-            "dayTradingBuyingPower": float(account.get("daytrading_buying_power", 0)),
-        }
+        # ✅ Normalize positions to a common structure for the frontend
+        positions = []
+        for pos in raw_positions:
+            try:
+                positions.append({
+                    "symbol": pos.get("symbol", ""),
+                    "qty": float(pos.get("qty", 0)),
+                    "price": float(pos.get("avg_entry_price", 0)),
+                    "marketValue": float(pos.get("market_value", 0)),
+                    "dayPL": float(pos.get("unrealized_intraday_pl", 0)),
+                    "totalPL": float(pos.get("unrealized_pl", 0)),
+                })
+            except Exception:
+                continue
+
+        # ✅ Normalize account activities into transactions
+        transactions: List[Dict[str, Any]] = []
+        for act in raw_transactions:
+            try:
+                activity_type = act.get("activity_type", "").upper()
+                symbol = act.get("symbol") or "USD"
+
+                if activity_type == "FILL":
+                    qty = float(act.get("qty", 0))
+                    side = act.get("side", "").lower()
+                    price_val = act.get("price")
+                    price = float(price_val) if price_val is not None else None
+                    quantity = qty if side == "buy" else -qty
+                    amount = qty * (price or 0)
+                    if side == "buy":
+                        amount *= -1
+                    tx_price = price
+                else:
+                    amount = float(act.get("net_amount", 0))
+                    quantity = float(act.get("qty", amount))
+                    tx_price = (
+                        float(act.get("price", 0))
+                        if act.get("price") is not None
+                        else 0
+                    )
+
+                transactions.append(
+                    {
+                        "id": act.get("id"),
+                        "date": act.get("transaction_time") or act.get("date"),
+                        "symbol": symbol,
+                        "type": "TRADE" if activity_type == "FILL" else activity_type,
+                        "quantity": quantity,
+                        "amount": amount,
+                        "price": tx_price,
+                    }
+                )
+            except Exception:
+                continue
 
         return {
             "summary": summary,
             "positions": positions,
-            "transactions": []  # Can integrate Alpaca transactions later
+            "transactions": transactions,
         }

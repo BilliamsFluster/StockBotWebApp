@@ -1,6 +1,6 @@
 "use client";
 import React from 'react';
-import { Pie, PieChart } from "recharts";
+import { Pie, PieChart, Cell } from "recharts";
 import {
   Card,
   CardContent,
@@ -18,26 +18,23 @@ import {
 
 const COLORS = ['#818cf8', '#4ade80', '#facc15', '#fb7185', '#38bdf8', '#a78bfa'];
 
+import { Position } from "@/types/portfolio";
+
 type Props = {
   summary: { equity: number };
-  positions: {
-    symbol: string;
-    marketValue?: number;
-    value?: number;
-  }[];
+  positions: Position[];
 };
 
 const HoldingPieChart: React.FC<Props> = ({ summary, positions }) => {
   const totalEquity = summary?.equity || 0;
 
-  let chartData = positions.map((pos) => {
-    const marketValue = pos.marketValue ?? pos.value ?? 0;
-    return {
-      symbol: pos.symbol,
-      value: marketValue,
-      percent: totalEquity > 0 ? (marketValue / totalEquity) * 100 : 0,
-    };
-  });
+  // Map positions to chart data with color assignment
+  let chartData = positions.map((pos, idx) => ({
+    symbol: pos.symbol,
+    value: pos.marketValue,
+    percent: totalEquity > 0 ? (pos.marketValue / totalEquity) * 100 : 0,
+    color: COLORS[idx % COLORS.length],
+  }));
 
   const investedTotal = chartData.reduce((sum, p) => sum + p.value, 0);
   const cashValue = totalEquity - investedTotal;
@@ -47,6 +44,7 @@ const HoldingPieChart: React.FC<Props> = ({ summary, positions }) => {
       symbol: 'CASH',
       value: cashValue,
       percent: (cashValue / totalEquity) * 100,
+      color: COLORS[chartData.length % COLORS.length],
     });
   }
 
@@ -58,14 +56,13 @@ const HoldingPieChart: React.FC<Props> = ({ summary, positions }) => {
     );
   }
 
-  const chartConfig = {
-    value: { label: "Value" },
-    aapl: { label: "AAPL", color: "hsl(var(--chart-1))" },
-    nvda: { label: "NVDA", color: "hsl(var(--chart-2))" },
-    tsla: { label: "TSLA", color: "hsl(var(--chart-3))" },
-    msft: { label: "MSFT", color: "hsl(var(--chart-4))" },
-    other: { label: "Other", color: "hsl(var(--muted))" },
-  };
+  // Build chart config for legend & CSS variables
+  const chartConfig = Object.fromEntries(
+    chartData.map((d) => [
+      d.symbol.toLowerCase(),
+      { label: d.symbol, color: d.color },
+    ])
+  );
 
   return (
     <Card className="ink-card flex flex-col">
@@ -89,7 +86,14 @@ const HoldingPieChart: React.FC<Props> = ({ summary, positions }) => {
               nameKey="symbol"
               innerRadius={60}
               strokeWidth={5}
-            />
+            >
+              {chartData.map((entry) => (
+                <Cell
+                  key={entry.symbol}
+                  fill={`var(--color-${entry.symbol.toLowerCase()})`}
+                />
+              ))}
+            </Pie>
             <ChartLegend
               content={<ChartLegendContent nameKey="symbol" />}
               className="-translate-y-2 flex-wrap gap-2 [&>*]:basis-1/4 [&>*]:justify-center"
