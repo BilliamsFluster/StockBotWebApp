@@ -26,9 +26,7 @@ import brokerRoutes from "./routes/brokerRoutes.js";
 import stockbotRoutes from "./routes/stockbotRoutes.js";
 
 dotenv.config();
-if (!process.env.JWT_SECRET || !process.env.REFRESH_SECRET) {
-  throw new Error("JWT_SECRET and REFRESH_SECRET must be set");
-}
+
 connectDB();
 
 const app = express();
@@ -38,6 +36,10 @@ const PORT = process.env.BACKEND_PORT;
 const CERT_PATH = process.env.SSL_CERT;
 const KEY_PATH = process.env.SSL_KEY;
 const CA_PATH = process.env.SSL_CA;
+
+if (!process.env.JWT_SECRET) {
+  throw new Error("JWT_SECRET and REFRESH_SECRET must be set");
+}
 
 app.use(pinoHttp({ logger }));
 
