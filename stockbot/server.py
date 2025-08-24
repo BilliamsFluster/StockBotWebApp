@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import os
 from fastapi.staticfiles import StaticFiles
 from api.routes.jarvis_routes import router as jarvis_router
 from api.routes.broker_routes import router as broker_router
@@ -12,9 +13,15 @@ from providers.provider_manager import ProviderManager
 app = FastAPI()
 Pro = ProviderManager()
 
+allowed = os.getenv("ALLOWED_ORIGINS")
+if not allowed and os.getenv("NODE_ENV") == "production":
+    raise RuntimeError("ALLOWED_ORIGINS must be set in production")
+
+origins = [o.strip() for o in allowed.split(",")] if allowed else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # tighten in prod
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

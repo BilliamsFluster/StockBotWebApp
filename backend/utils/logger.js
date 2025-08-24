@@ -1,11 +1,7 @@
-const isProd = process.env.NODE_ENV === 'production';
+import pino from 'pino';
 
-export const log = (...args) => {
-  if (!isProd) {
-    console.log(...args);
-  }
-};
+const logger = pino({
+  level: process.env.LOG_LEVEL || 'info',
+});
 
-export const error = (...args) => {
-  console.error(...args);
-};
+export default logger;
