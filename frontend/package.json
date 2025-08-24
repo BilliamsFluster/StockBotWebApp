@@ -6,7 +6,8 @@
     "dev": "infisical run -- node dev-https.js",
     "build": "cross-env NODE_ENV=production next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "jest"
   },
   "dependencies": {
     "@lobehub/tts": "^2.0.1",
