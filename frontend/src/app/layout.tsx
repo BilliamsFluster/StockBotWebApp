@@ -18,7 +18,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className="dark" data-accent="violet">
       <body className={inter.className}>
         {/* These divs render the blobs. */}
         <div className="blob blob-accent"></div>
