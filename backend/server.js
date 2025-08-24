@@ -2,6 +2,7 @@
 import express from "express";
 import expressWs from "express-ws";
 import https from "https";
+import http from "http";
 import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
@@ -31,20 +32,6 @@ const CERT_PATH = process.env.SSL_CERT;
 const KEY_PATH = process.env.SSL_KEY;
 const CA_PATH = process.env.SSL_CA;
 
-const sslOptions = {
-  key: fs.readFileSync(path.resolve(KEY_PATH)),
-  cert: fs.readFileSync(path.resolve(CERT_PATH)),
-  ca: fs.existsSync(path.resolve(CA_PATH))
-    ? fs.readFileSync(path.resolve(CA_PATH))
-    : undefined,
-};
-
-// ✅ Create the HTTPS server first
-const server = https.createServer(sslOptions, app);
-
-// ✅ Attach WebSocket support to the HTTPS server
-expressWs(app, server);
-
 app.use((req, res, next) => {
   console.log(`📡 ${req.method} ${req.url} - Origin: ${req.headers.origin || "no origin"}`);
   next();
@@ -67,10 +54,43 @@ app.use("/api/alpaca", alpacaRoutes);
 app.use("/api/broker", brokerRoutes);
 app.use("/api/stockbot", stockbotRoutes);
 
-// ✅ Jarvis routes (pass the WS-enabled app)
-app.use("/api/jarvis", createJarvisRoutes(app));
+// The Jarvis routes depend on WebSocket support and are added after the server is created.
 
-// Start server
-server.listen(PORT, () => {
-  console.log(`✅ Backend (HTTPS+WS) running at ${BACKEND_URL}`);
-});
+async function startServer() {
+  try {
+    const [key, cert, ca] = await Promise.all([
+      fs.promises.readFile(path.resolve(KEY_PATH)),
+      fs.promises.readFile(path.resolve(CERT_PATH)),
+      CA_PATH
+        ? fs.promises.readFile(path.resolve(CA_PATH)).catch(() => undefined)
+        : Promise.resolve(undefined),
+    ]);
+
+    const sslOptions = { key, cert, ca };
+    const server = https.createServer(sslOptions, app);
+    expressWs(app, server);
+
+    app.use("/api/jarvis", createJarvisRoutes(app));
+
+    server.listen(PORT, () => {
+      console.log(`✅ Backend (HTTPS+WS) running at ${BACKEND_URL}`);
+    });
+  } catch (err) {
+    console.error(`❌ Failed to load SSL certificates: ${err.message}`);
+    if (process.env.NODE_ENV !== "production") {
+      console.warn("⚠️ Falling back to HTTP server in development.");
+      const server = http.createServer(app);
+      expressWs(app, server);
+
+      app.use("/api/jarvis", createJarvisRoutes(app));
+
+      server.listen(PORT, () => {
+        console.log(`✅ Backend (HTTP+WS) running at ${BACKEND_URL}`);
+      });
+    } else {
+      process.exit(1);
+    }
+  }
+}
+
+startServer();
