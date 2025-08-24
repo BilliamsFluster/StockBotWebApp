@@ -1,4 +1,5 @@
 import User from '../models/User.js';
+import { body, validationResult } from 'express-validator';
 
 export const getUserProfile = async (req, res) => {
   try {
@@ -11,7 +12,16 @@ export const getUserProfile = async (req, res) => {
   }
 };
 
+export const updateProfileValidation = [
+  body('username').optional().trim().notEmpty().escape(),
+  body('email').optional().isEmail().withMessage('Valid email is required').normalizeEmail(),
+];
+
 export const updateUserProfile = async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
   try {
     const { username, email } = req.body;
 
@@ -27,7 +37,18 @@ export const updateUserProfile = async (req, res) => {
   }
 };
 
+export const updatePreferencesValidation = [
+  body('model').optional().isString(),
+  body('format').optional().isString(),
+  body('voiceEnabled').optional().isBoolean(),
+  body('activeBroker').optional().isIn(['schwab', 'alpaca']),
+];
+
 export const updatePreferences = async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
   const { model, format, voiceEnabled, activeBroker } = req.body;
   const user = await User.findById(req.user._id);
 
