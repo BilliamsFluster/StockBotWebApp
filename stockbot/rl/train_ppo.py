@@ -78,7 +78,16 @@ def main():
     ap.add_argument("--seed",        type=int, default=42)
     # NEW flags
     ap.add_argument("--normalize",   action="store_true", help="Enable observation normalization")
-    ap.add_argument("--policy",      type=str, default="mlp", choices=["mlp","window_cnn"])
+    ap.add_argument("--policy",      type=str, default="mlp", choices=["mlp","window_cnn","window_lstm"])
+    ap.add_argument("--n-steps",     type=int, default=1024)
+    ap.add_argument("--learning-rate", type=float, default=3e-4)
+    ap.add_argument("--gamma",       type=float, default=0.99)
+    ap.add_argument("--gae-lambda",  type=float, default=0.95)
+    ap.add_argument("--clip-range",  type=float, default=0.2)
+    ap.add_argument("--entropy-coef", type=float, default=0.0)
+    ap.add_argument("--max-grad-norm", type=float, default=0.5)
+    ap.add_argument("--dropout",     type=float, default=0.0,
+                    help="Dropout rate for policy networks where applicable")
     args = ap.parse_args()
 
     cfg = EnvConfig.from_yaml(args.config)
@@ -115,12 +124,27 @@ def main():
             features_extractor_kwargs={"out_dim": 256},
             net_arch=[dict(pi=[128, 64], vf=[128, 64])]
         )
+    elif args.policy == "window_lstm":
+        from stockbot.rl.policy import WindowLSTMExtractor
+        policy_kwargs = dict(
+            features_extractor_class=WindowLSTMExtractor,
+            features_extractor_kwargs={
+                "out_dim": 256,
+                "hidden_size": 128,
+                "num_layers": 1,
+                "dropout": args.dropout,
+            },
+            net_arch=[dict(pi=[128, 64], vf=[128, 64])]
+        )
 
     # PPO model
     model = PPO("MultiInputPolicy", train_env,
-                n_steps=1024, batch_size=1024, gae_lambda=0.95,
-                gamma=0.99, learning_rate=3e-4, ent_coef=0.0,
-                vf_coef=0.5, clip_range=0.2, verbose=1, seed=args.seed,
+                n_steps=args.n_steps, batch_size=args.n_steps,
+                gae_lambda=args.gae_lambda, gamma=args.gamma,
+                learning_rate=args.learning_rate, ent_coef=args.entropy_coef,
+                vf_coef=0.5, clip_range=args.clip_range,
+                max_grad_norm=args.max_grad_norm,
+                verbose=1, seed=args.seed,
                 policy_kwargs=policy_kwargs)
     model.set_logger(new_logger)
 
