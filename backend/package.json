@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "infisical run -- npm run start:dev",
     "start:dev": "nodemon server.js",
-    "test": "jest"
+    "test": "vitest run"
 
   },
   "dependencies": {
@@ -27,6 +27,7 @@
   "devDependencies": {
     "@infisical/cli": "^0.41.96",
     "cross-env": "^7.0.3",
-    "nodemon": "^3.1.0"
+    "nodemon": "^3.1.0",
+    "vitest": "^2.1.1"
   }
 }
