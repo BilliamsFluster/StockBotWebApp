@@ -6,6 +6,7 @@ import { FaUserCircle } from 'react-icons/fa';
 import ProfilePanel from '@/components/ProfilePanel';
 import JarvisPanel from '@/components/Jarvis/JarvisPanel';
 import { useWarmPortfolioData } from '@/hooks/useWarmPortfolioData';
+import { useProfile } from '@/api/user';
 
 
 export default function Chatbot() {
@@ -22,7 +23,8 @@ export default function Chatbot() {
   const [darkMode, setDarkMode]         = useState(true);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [profileOpen, setProfileOpen]   = useState(false);
-  const [username, setUsername]         = useState('User');
+  const { data: profile } = useProfile();
+  const username = profile?.username || 'Guest';
 
   useEffect(() => {
     // Animations
@@ -36,20 +38,6 @@ export default function Chatbot() {
     gsap.to(blob2Ref.current, { x: -50, y: 30, duration: 12, repeat: -1, yoyo: true, ease: 'sine.inOut' });
     gsap.to(blob3Ref.current, { x: 40, y: 40, duration: 8, repeat: -1, yoyo: true, ease: 'sine.inOut' });
 
-    // Secure cookie-based profile fetch
-    fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/users/profile`, {
-      credentials: 'include', // send HTTP-only cookie
-    })
-      .then((r) => {
-        if (!r.ok) throw new Error('Not authenticated');
-        return r.json();
-      })
-      .then((data) => {
-        if (data.username) setUsername(data.username);
-      })
-      .catch(() => {
-        setUsername('Guest');
-      });
   }, []);
 
   useEffect(() => {

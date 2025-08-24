@@ -3,7 +3,10 @@ import api from '@/api/client';
 
 export interface UserProfile {
   username: string;
-  // other fields can be added here as needed
+  email?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  preferences?: Record<string, any>;
 }
 
 async function fetchProfile(): Promise<UserProfile> {
