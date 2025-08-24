@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
@@ -41,6 +40,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { logout } from "@/api/client";
+import { useProfile } from "@/api/users";
 import { useAuth } from "@/context/AuthContext";
 
 // ---- props ----
@@ -83,23 +83,12 @@ export default function Sidebar({ isMobileOpen, setMobileOpen, isExpanded, setEx
     }
   };
 
-  const [username, setUsername] = useState("User");
-
-  useEffect(() => {
-    fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/users/profile`, {
-      credentials: "include",
-    })
-      .then((r) => {
-        if (!r.ok) throw new Error("Not authenticated");
-        return r.json();
-      })
-      .then((data) => {
-        if (data.username) setUsername(data.username);
-      })
-      .catch(() => {
-        setUsername("Guest");
-      });
-  }, []);
+  const {
+    data: profile,
+    isLoading: profileLoading,
+    isError: profileError,
+  } = useProfile();
+  const username = profile?.username || "Guest";
 
   return (
     <>
@@ -118,6 +107,8 @@ export default function Sidebar({ isMobileOpen, setMobileOpen, isExpanded, setEx
           setExpanded={setExpanded}
           onLinkClick={handleLinkClick}
           username={username}
+          profileLoading={profileLoading}
+          profileError={profileError}
         />
       </aside>
 
@@ -137,6 +128,8 @@ export default function Sidebar({ isMobileOpen, setMobileOpen, isExpanded, setEx
             onLinkClick={() => setMobileOpen(false)}
             isMobile
             username={username}
+            profileLoading={profileLoading}
+            profileError={profileError}
           />
         </SheetContent>
       </Sheet>
@@ -153,6 +146,8 @@ function SidebarInner({
   onLinkClick,
   isMobile,
   username,
+  profileLoading,
+  profileError,
 }: {
   pathname: string;
   expanded: boolean;
@@ -160,6 +155,8 @@ function SidebarInner({
   onLinkClick: () => void;
   isMobile?: boolean;
   username: string;
+  profileLoading: boolean;
+  profileError: boolean;
 }) {
   const router = useRouter();
   const { setUser } = useAuth();
@@ -292,8 +289,17 @@ function SidebarInner({
                 </div>
                 {expanded && (
                   <div className="flex flex-col">
-                    <span className="text-sm font-medium text-foreground">{username}</span>
-                    <span className="text-xs text-muted-foreground">@{username.toLowerCase()}</span>
+                    {profileLoading ? (
+                      <span className="text-sm text-muted-foreground">Loading...</span>
+                    ) : (
+                      <>
+                        <span className="text-sm font-medium text-foreground">{username}</span>
+                        <span className="text-xs text-muted-foreground">@{username.toLowerCase()}</span>
+                        {profileError && (
+                          <span className="text-xs text-destructive">Error loading profile</span>
+                        )}
+                      </>
+                    )}
                   </div>
                 )}
               </Button>
