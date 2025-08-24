@@ -10,7 +10,7 @@ console.log(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api`);
 
 // ✅ Auth endpoints (no token header required anymore)
 export const checkAuth = () =>
-  api.get("/auth/refresh"); // will use cookie
+  api.post("/auth/refresh"); // will use cookie
 
 export const signup = (data) =>
   api.post("/auth/register", data);
