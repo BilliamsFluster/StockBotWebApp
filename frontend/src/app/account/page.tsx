@@ -1,11 +1,10 @@
  'use client';
 
- import { useEffect, useState } from 'react';
- import { getUserPreferences } from '@/api/client';
  import LogoutButton from '@/components/LogoutButton';
  import { usePortfolioData } from '@/hooks/usePortfolioData';
  import { useSchwabStatus } from '@/hooks/useSchwabStatus';
  import { useAlpacaStatus } from '@/hooks/useAlpacaStatus';
+ import { useProfile } from '@/api/user';
 
  /**
   * AccountPage shows high‑level information about the logged‑in user and their
@@ -17,36 +16,11 @@
   * real account values from the active broker.
   */
  export default function AccountPage() {
-   const [user, setUser] = useState<any>(null);
-   const [preferences, setPreferences] = useState<any>(null);
-   const [email, setEmail] = useState<string | null>(null);
-   const [createdAt, setCreatedAt] = useState<string | null>(null);
-   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
-
-   // Pull the latest user preferences on mount
-   useEffect(() => {
-     getUserPreferences().then(({ data }) => {
-       setUser(data);
-       console.log(data);
-     });
-
-     fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/users/profile`, {
-       credentials: 'include', // send HTTP-only cookie
-     })
-       .then((r) => {
-         if (!r.ok) throw new Error('Not authenticated');
-         return r.json();
-       })
-       .then((data) => {
-         if (data.preferences) setPreferences(data.preferences);
-         if (data.email) setEmail(data.email);
-         if (data.createdAt) setCreatedAt(data.createdAt);
-         if (data.updatedAt) setUpdatedAt(data.updatedAt);
-       })
-       .catch(() => {
-         setPreferences('--');
-       });
-   }, []);
+   const { data: user } = useProfile();
+   const preferences = user?.preferences;
+   const email = user?.email;
+   const createdAt = user?.createdAt;
+   const updatedAt = user?.updatedAt;
    
 
    // Load a fresh snapshot of the portfolio summary.  This hook will call the

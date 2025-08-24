@@ -40,7 +40,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { logout } from "@/api/client";
-import { useProfile } from "@/api/users";
+import { useProfile } from "@/api/user";
 import { useAuth } from "@/context/AuthContext";
 
 // ---- props ----

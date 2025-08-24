@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { askJarvis } from '@/api/jarvisApi';
 import {
   getBrowserVoices,
@@ -9,7 +9,8 @@ import {
   primeAudio,
   startVoiceAssistant,
 } from '@/api/speechAssistant';
-import { getUserPreferences, setUserPreferences } from '@/api/client';
+import { setUserPreferences } from '@/api/client';
+import { useProfile } from '@/api/user';
 
 import ChatWindow from './ChatWindow';
 import InputFooter from './InputFooter';
@@ -22,7 +23,7 @@ const JarvisPanel: React.FC = () => {
   const [responseLog, setResponseLog] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const [user, setUser] = useState<any>(null);
+  const { data: user } = useProfile();
 
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [browserVoices, setBrowserVoices] = useState<SpeechSynthesisVoice[]>([]);
@@ -46,37 +47,24 @@ const JarvisPanel: React.FC = () => {
     });
   }, []);
 
-  /** Load user + preferences from backend via cookie */
-  const loadPrefs = useCallback(async () => {
-    try {
-      const { data } = await getUserPreferences(); // should call backend with withCredentials: true
-      if (!data) return;
-
-      setUser(data);
-
-      const prefs = data.preferences || {};
-      if (prefs.voiceEnabled !== undefined) setVoiceEnabled(prefs.voiceEnabled);
-      if (prefs.nativeVoiceIndex !== undefined) setNativeVoiceIndex(prefs.nativeVoiceIndex);
-      if (prefs.cloudVoiceIndex !== undefined) setCloudVoiceIndex(prefs.cloudVoiceIndex);
-
-      if (prefs.model) {
-        setModel(prefs.model);
-        setUserPreferences({ model: prefs.model });
-      }
-
-      if (prefs.format) {
-        setFormat(prefs.format);
-        setUserPreferences({ format: prefs.format });
-      }
-    } catch (err) {
-      console.error('Error loading preferences:', err);
-    }
-  }, []);
-
-  /** On mount, fetch user + preferences securely */
+  /** Apply user preferences when profile loads */
   useEffect(() => {
-    loadPrefs();
-  }, [loadPrefs]);
+    if (!user) return;
+    const prefs = user.preferences || {};
+    if (prefs.voiceEnabled !== undefined) setVoiceEnabled(prefs.voiceEnabled);
+    if (prefs.nativeVoiceIndex !== undefined) setNativeVoiceIndex(prefs.nativeVoiceIndex);
+    if (prefs.cloudVoiceIndex !== undefined) setCloudVoiceIndex(prefs.cloudVoiceIndex);
+
+    if (prefs.model) {
+      setModel(prefs.model);
+      setUserPreferences({ model: prefs.model });
+    }
+
+    if (prefs.format) {
+      setFormat(prefs.format);
+      setUserPreferences({ format: prefs.format });
+    }
+  }, [user]);
 
   /** Prepare audio + autofocus */
   useEffect(() => {
