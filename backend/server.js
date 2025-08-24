@@ -8,9 +8,13 @@ import path from "path";
 import dotenv from "dotenv";
 import cors from "cors";
 import cookieParser from "cookie-parser";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import pinoHttp from "pino-http";
 
 import corsOptions from "./config/corsOptions.js";
 import connectDB from "./config/db.js";
+import logger from "./utils/logger.js";
 
 // Routes
 import authRoutes from "./routes/authRoutes.js";
@@ -22,6 +26,7 @@ import brokerRoutes from "./routes/brokerRoutes.js";
 import stockbotRoutes from "./routes/stockbotRoutes.js";
 
 dotenv.config();
+
 connectDB();
 
 const app = express();
@@ -32,14 +37,17 @@ const CERT_PATH = process.env.SSL_CERT;
 const KEY_PATH = process.env.SSL_KEY;
 const CA_PATH = process.env.SSL_CA;
 
-app.use((req, res, next) => {
-  console.log(`📡 ${req.method} ${req.url} - Origin: ${req.headers.origin || "no origin"}`);
-  next();
-});
+if (!process.env.JWT_SECRET) {
+  throw new Error("JWT_SECRET and REFRESH_SECRET must be set");
+}
+
+app.use(pinoHttp({ logger }));
 
 app.use(cors(corsOptions));
 app.use(cookieParser());
 app.use(express.json());
+app.use(helmet());
+app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 100 }));
 
 // Root route
 app.get("/", (req, res) => {
@@ -73,19 +81,19 @@ async function startServer() {
     app.use("/api/jarvis", createJarvisRoutes(app));
 
     server.listen(PORT, () => {
-      console.log(`✅ Backend (HTTPS+WS) running at ${BACKEND_URL}`);
+      logger.info(`✅ Backend (HTTPS+WS) running at ${BACKEND_URL}`);
     });
   } catch (err) {
-    console.error(`❌ Failed to load SSL certificates: ${err.message}`);
+    logger.error(`❌ Failed to load SSL certificates: ${err.message}`);
     if (process.env.NODE_ENV !== "production") {
-      console.warn("⚠️ Falling back to HTTP server in development.");
+      logger.warn("⚠️ Falling back to HTTP server in development.");
       const server = http.createServer(app);
       expressWs(app, server);
 
       app.use("/api/jarvis", createJarvisRoutes(app));
 
       server.listen(PORT, () => {
-        console.log(`✅ Backend (HTTP+WS) running at ${BACKEND_URL}`);
+        logger.info(`✅ Backend (HTTP+WS) running at ${BACKEND_URL}`);
       });
     } else {
       process.exit(1);

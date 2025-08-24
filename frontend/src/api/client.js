@@ -6,7 +6,9 @@ const api = axios.create({
   baseURL: `${process.env.NEXT_PUBLIC_BACKEND_URL}/api`,
   withCredentials: true // ✅ Always send/receive cookies
 });
-console.log(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api`);
+if (process.env.NODE_ENV !== 'production') {
+  console.debug('API base URL:', `${process.env.NEXT_PUBLIC_BACKEND_URL}/api`);
+}
 
 // ✅ Auth endpoints (no token header required anymore)
 export const checkAuth = () =>

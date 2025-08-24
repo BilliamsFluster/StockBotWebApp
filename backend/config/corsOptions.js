@@ -1,5 +1,5 @@
 // backend/config/corsOptions.js
-import { log, error } from "../utils/logger.js";
+import logger from "../utils/logger.js";
 
 // Build the allowed origins list from environment variables. Supports comma-separated values
 // and filters out any falsy entries to avoid adding "undefined".
@@ -8,20 +8,20 @@ const allowedOrigins = (process.env.FRONTEND_URLS || process.env.FRONTEND_URL ||
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-log("📦 corsOptions loaded");
+  logger.info("📦 corsOptions loaded");
 
 const corsOptions = {
   origin: (origin, callback) => {
-    log("🔍 CORS DEBUG:");
-    log("   Incoming Origin:", origin);
-    log("   Allowed Origins:", allowedOrigins);
+      logger.debug("🔍 CORS DEBUG:");
+      logger.debug("   Incoming Origin:", origin);
+      logger.debug("   Allowed Origins:", allowedOrigins);
 
     // Allow requests with no origin (Postman, curl, etc.)
     if (!origin || allowedOrigins.includes(origin)) {
-      log("   ✅ Allowed by CORS");
+        logger.debug("   ✅ Allowed by CORS");
       callback(null, true);
     } else {
-      error("   ❌ Blocked by CORS", origin);
+        logger.warn({ origin }, "   ❌ Blocked by CORS");
       callback(new Error("Not allowed by CORS"));
     }
   },
