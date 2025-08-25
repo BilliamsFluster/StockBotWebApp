@@ -59,7 +59,6 @@ class FeesModel(BaseModel):
 
 class MarginModel(BaseModel):
     max_gross_leverage: float = 1.0
-    
     maintenance_margin: float = 0.25
     cash_borrow_apr: float = 0.05
     intraday_only: bool = False
@@ -78,6 +77,11 @@ class EpisodeModel(BaseModel):
     rebalance_eps: float = 0.0
     randomize_start: bool = False
     horizon: Optional[int] = None
+
+    # NEW knobs for action mapping/turnover control
+    max_step_change: float = 0.10          # per-step weight/position cap (0.10 -> 10%)
+    invest_max: float = 1.00               # max fraction of equity to deploy (portfolio env)
+    mapping_mode: Literal["simplex_cash", "tanh_leverage"] = "simplex_cash"
 
 class FeatureModel(BaseModel):
     use_custom_pipeline: bool = True
@@ -99,7 +103,7 @@ class TrainRequest(BaseModel):
     # training flags
     config_path: str = "stockbot/env/env.example.yaml"
     normalize: bool = True
-    policy: Literal["mlp", "window_cnn"] = "window_cnn"
+    policy: Literal["mlp", "window_cnn", "window_lstm"] = "window_cnn"
     timesteps: int = 150_000
     seed: int = 42
     out_tag: Optional[str] = None
@@ -134,6 +138,7 @@ class BacktestRequest(BaseModel):
     out_tag: Optional[str] = None
     out_dir: Optional[str] = None  # optional; if omitted -> RUNS_DIR/<tag>
     run_id: Optional[str] = None
+    normalize: bool = True  # NEW: eval-side normalization toggle
 
 class RunRecord(BaseModel):
     id: str
@@ -221,7 +226,6 @@ def _load_yaml(path: str | Path) -> Dict[str, Any]:
         return yaml.safe_load(p.read_text()) or {}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to parse YAML: {e}")
-
 
 def _dump_yaml(d: Dict[str, Any], path: Path) -> None:
     try:
@@ -347,7 +351,7 @@ async def start_train_job(req: TrainRequest, bg: BackgroundTasks):
     # build args targeting the SNAPSHOT (not the original)
     args = [
         "-m", "stockbot.rl.train_ppo",
-        "--config", str(snapshot_path.resolve()),   # <— ensure absolute path
+        "--config", str(snapshot_path.resolve()),   # <— absolute path
         "--out", str(Path(out_dir).resolve()),
         "--timesteps", str(req.timesteps),
         "--seed", str(req.seed),
@@ -462,6 +466,8 @@ async def start_backtest_job(req: BacktestRequest, bg: BackgroundTasks):
         "--end", str(end),
         "--symbols", *[str(s) for s in symbols],
     ]
+    if req.normalize:
+        args.append("--normalize")
     bg.add_task(_run_subprocess_sync, args, rec)
     return JSONResponse({"job_id": run_id})
 

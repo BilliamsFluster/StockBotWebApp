@@ -20,7 +20,9 @@ class PortfolioTradingEnv(gym.Env):
       - window: (lookback, N, F)
       - portfolio: [cash_frac, leverage, drawdown] + weights (N)
     Action:
-      - Box(N): unconstrained; mapped to target weights with leverage cap
+      - Default "simplex_cash": Box(N+1) logits -> invest fraction (sigmoid) * softmax allocation
+        * Per-step turnover capped by episode.max_step_change
+      - Fallback "tanh_leverage": Box(N) -> tanh weights with gross leverage cap
     """
     metadata = {"render_modes": []}
 
@@ -52,7 +54,17 @@ class PortfolioTradingEnv(gym.Env):
             "window": spaces.Box(low=-np.inf, high=np.inf, shape=(self.lookback, self.N, F), dtype=np.float32),
             "portfolio": spaces.Box(low=-np.inf, high=np.inf, shape=(3 + self.N,), dtype=np.float32)
         })
-        self.action_space = spaces.Box(low=-3.0, high=3.0, shape=(self.N,), dtype=np.float32)
+
+        # --- Mapping/turnover knobs (driven via episode.* or env.*)
+        self.mapping_mode = getattr(self.cfg.episode, "mapping_mode", getattr(self.cfg, "mapping_mode", "simplex_cash"))
+        self.max_step_change = float(getattr(self.cfg.episode, "max_step_change", 0.10))
+        self.invest_max = float(getattr(self.cfg.episode, "invest_max", 1.00))
+
+        if self.mapping_mode == "simplex_cash":
+            # N asset logits + 1 gate logit (cash/invest fraction)
+            self.action_space = spaces.Box(low=-6.0, high=6.0, shape=(self.N + 1,), dtype=np.float32)
+        else:
+            self.action_space = spaces.Box(low=-3.0, high=3.0, shape=(self.N,), dtype=np.float32)
 
         self.exec = ExecutionModel(cfg.exec, cfg.fees)
         self.port = Portfolio(cash=cfg.episode.start_cash, margin=self.cfg.margin, fees=self.cfg.fees)
@@ -73,6 +85,7 @@ class PortfolioTradingEnv(gym.Env):
         self._equity_peak = self._equity
         self._ret_hist: List[float] = []
         self._last_weights = np.zeros(self.N, dtype=np.float32)
+        self._w_prev_map = None  # for turnover capping in mapping
 
     # ---------- helpers ----------
     def _ohlc(self, sym: str, i: int):
@@ -104,10 +117,37 @@ class PortfolioTradingEnv(gym.Env):
         prices = self._prices(i - 1)
         return {"window": self._window_obs(i), "portfolio": self._portfolio_obs(prices)}
 
+    # ---------- action mapping ----------
     def _map_action_to_weights(self, a: np.ndarray) -> np.ndarray:
+        a = np.asarray(a, dtype=np.float32).reshape(-1)
+
+        if self.mapping_mode == "simplex_cash":
+            # last logit gates how much to invest; others choose allocation
+            asset_logits = a[:-1]
+            gate_logit   = a[-1]
+
+            # invest fraction in [0, invest_max]
+            invest_frac = float(1.0 / (1.0 + np.exp(-gate_logit))) * self.invest_max  # sigmoid * cap
+
+            # softmax over assets -> nonnegative weights sum to 1
+            shifted = asset_logits - asset_logits.max()
+            exp = np.exp(shifted)
+            alloc = exp / (exp.sum() + 1e-9)  # shape (N,)
+
+            w = invest_frac * alloc  # sum(w) <= invest_max, remainder stays cash
+
+            # turnover cap: elementwise clamp change vs previous target
+            w_prev = self._w_prev_map
+            if w_prev is not None and w_prev.shape == w.shape:
+                delta = np.clip(w - w_prev, -self.max_step_change, self.max_step_change)
+                w = w_prev + delta
+            self._w_prev_map = w
+            return w.astype(np.float32)
+
+        # fallback: original long/short mapping with leverage cap
         x = np.tanh(a)  # [-1,1]
         gross = np.sum(np.abs(x)) + 1e-9
-        cap = self.cfg.margin.max_gross_leverage
+        cap = float(self.cfg.margin.max_gross_leverage)
         if gross > cap:
             x *= (cap / gross)
         return x.astype(np.float32)
@@ -131,7 +171,6 @@ class PortfolioTradingEnv(gym.Env):
             if cap is None:
                 cap = last_valid_start - L
             max_start = max(L, last_valid_start - cap)
-            # sample a starting index
             self._i0 = int(self.np_random.integers(L, max(max_start, L) + 1))
         else:
             self._i0 = L
@@ -146,6 +185,7 @@ class PortfolioTradingEnv(gym.Env):
         self._equity_peak = self._equity
         self._ret_hist.clear()
         self._last_weights[:] = 0.0
+        self._w_prev_map = None
 
         return self._obs(self._i), {"i": self._i, "config": asdict(self.cfg)}
 
@@ -206,12 +246,13 @@ class PortfolioTradingEnv(gym.Env):
         self.port.update_peak(eq_close_t)
         dd_after = self.port.drawdown(eq_close_t)
 
-        # ---- reward: close[t-1] -> close[t] (includes interest now)
+        # ---- reward base (delta NAV or log NAV)
         if self.cfg.reward.mode == "delta_nav":
             r_base = (eq_close_t - eq_prev_close) / max(self._equity0, 1e-9)
         else:
             r_base = np.log(max(eq_close_t, 1e-9)) - np.log(max(eq_prev_close, 1e-9))
 
+        # penalties
         turnover = float(np.sum(np.abs(target_w - self._last_weights)))
         pen_dd = self.cfg.reward.w_drawdown * dd_after
         pen_to = self.cfg.reward.w_turnover * turnover
