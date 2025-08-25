@@ -1,12 +1,17 @@
+# stockbot/env/trading_env.py
 from __future__ import annotations
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 from dataclasses import asdict
-from .config import EpisodeConfig, FeeModel, FeatureConfig, EnvConfig
+from .config import EpisodeConfig, FeeModel, FeatureConfig
 from .data_adapter import BarWindowSource
 
 class StockTradingEnv(gym.Env):
+    """
+    Single-asset env with position target in [-1, +1] (short/flat/long).
+    Adds optional per-step change cap and light reward penalties for turnover and drawdown.
+    """
     metadata = {"render_modes": []}
 
     def __init__(self, data: BarWindowSource,
@@ -50,6 +55,12 @@ class StockTradingEnv(gym.Env):
         self._last_price = None
         self._max_steps = episode.max_steps
 
+        # NEW: shaping/turnover knobs
+        self.w_turnover = float(getattr(self.episode, "w_turnover", 0.0))
+        self.w_drawdown = float(getattr(self.episode, "w_drawdown", 0.0))
+        self.max_step_change = float(getattr(self.episode, "max_step_change", 1.0))  # allow full flips by default
+        self._pos_prev_for_pen = 0.0
+
     # ---------- helpers ----------
     def _price(self, idx) -> float:
         return float(self.src.df["close"].iloc[idx])
@@ -67,7 +78,7 @@ class StockTradingEnv(gym.Env):
         return np.array([
             float(np.clip(self._pos, -1, 1)),
             float(np.clip(self._cash / max(self._cash0,1e-9), 0, 1)),
-            float(np.clip(equity / max(self._cash0,1e-9), 0, 10)),
+            float(np.clip((equity / max(self._cash0,1e-9)), 0, 10)),
             float(np.clip(unreal, -1, 1)),
             float(np.clip(dd, 0, 1))
         ], dtype=np.float32)
@@ -84,6 +95,7 @@ class StockTradingEnv(gym.Env):
         self._equity_peak = self._cash
         self._pos = 0.0
         self._shares = 0.0
+        self._pos_prev_for_pen = 0.0
         self._last_price = self._price(self._i-1)
         return self._obs(self._i), {"i": self._i, "config": asdict(self.episode)}
 
@@ -92,6 +104,10 @@ class StockTradingEnv(gym.Env):
             target = {-1: -1.0, 0: 0.0, 1: 1.0}[int(action)-1]
         else:
             target = float(np.clip(action, -1, 1))
+
+        # limit per-step change to avoid flip-flop churn
+        target = float(np.clip(target, self._pos - self.max_step_change, self._pos + self.max_step_change))
+        target = float(np.clip(target, -1.0, 1.0))
 
         price = self._price(self._i)
         equity = self._cash + self._shares * price
@@ -112,7 +128,15 @@ class StockTradingEnv(gym.Env):
         self._i += 1
         self._last_price = self._price(self._i-1)
         new_equity = self._cash + self._shares * self._last_price
-        reward = (new_equity - equity) / max(self._cash0, 1e-9)
+
+        base = (new_equity - equity) / max(self._cash0, 1e-9)
+
+        # penalties: drawdown & turnover (position change)
+        dd = 0.0 if self._equity_peak <= 0 else 1.0 - new_equity / self._equity_peak
+        turnover_t = abs(self._pos - self._pos_prev_for_pen)
+        reward = base - self.w_turnover * turnover_t - self.w_drawdown * dd
+
+        self._pos_prev_for_pen = self._pos
 
         terminated = self._i >= len(self.src.df) - 1
         truncated = False if self._max_steps is None else (self._i - self._i0) >= self._max_steps

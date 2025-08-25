@@ -4,12 +4,7 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import {
-  Table,
-  TableHeader,
-  TableRow,
-  TableHead,
-  TableBody,
-  TableCell,
+  Table, TableHeader, TableRow, TableHead, TableBody, TableCell,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { parseCSVText, drawdownFromEquity } from "./lib/csv";
@@ -17,37 +12,73 @@ import { formatPct, formatUSD, formatSigned } from "./lib/formats";
 import { Metrics } from "./lib/types";
 
 import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  ResponsiveContainer,
-  AreaChart,
-  Area,
-  BarChart,
-  Bar,
+  LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
+  ResponsiveContainer, AreaChart, Area, BarChart, Bar,
 } from "recharts";
+
+type EquityRow = { ts: number; equity: number };
+type DrawdownRow = { ts: number; dd: number };
+type TradeRow = {
+  symbol?: string; side?: string; qty?: number;
+  entry_ts?: number; exit_ts?: number; net_pnl?: number;
+};
+type OrderRow = { ts?: number; symbol?: string; qty?: number; price?: number; commission?: number };
 
 export default function RunDetail() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
-  const [equity, setEquity] = useState<any[]>([]);
-  const [drawdown, setDrawdown] = useState<any[]>([]);
-  const [trades, setTrades] = useState<any[]>([]);
-  const [orders, setOrders] = useState<any[]>([]);
+  const [equity, setEquity] = useState<EquityRow[]>([]);
+  const [drawdown, setDrawdown] = useState<DrawdownRow[]>([]);
+  const [trades, setTrades] = useState<TradeRow[]>([]);
+  const [orders, setOrders] = useState<OrderRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
 
   const resetAll = useCallback(() => {
-    setMetrics(null);
-    setEquity([]);
-    setDrawdown([]);
-    setTrades([]);
-    setOrders([]);
+    setMetrics(null); setEquity([]); setDrawdown([]); setTrades([]); setOrders([]);
   }, []);
 
-  // ---------- File helpers ----------
+  // ----- Coercion helpers -----
+  const toNum = (v: any) => {
+    if (v == null) return undefined;
+    const clean = String(v).replace(/\$/g, "").replace(/,/g, "");
+    const n = Number(clean);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const toEpoch = (v: any) => {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+    const d = Date.parse(String(v));
+    return Number.isFinite(d) ? d : undefined;
+  };
+
+  // ----- Nice axis formatting (EQUITY stays unchanged) -----
+  const formatUSDShort = (v: number) => {
+    if (!Number.isFinite(v)) return "—";
+    const abs = Math.abs(v);
+    if (abs >= 1e9) return `$${(v / 1e9).toFixed(2)}B`;
+    if (abs >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
+    if (abs >= 1e3) return `$${(v / 1e3).toFixed(0)}k`;
+    return `$${v.toFixed(0)}`;
+  };
+
+  const yDomain = useMemo<[number, number]>(() => {
+    if (!equity.length) return [0, 1];
+    let min = Infinity, max = -Infinity;
+    for (const p of equity) {
+      if (Number.isFinite(p.equity)) {
+        if (p.equity < min) min = p.equity;
+        if (p.equity > max) max = p.equity;
+      }
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 1];
+    const pad = Math.max((max - min) * 0.05, Math.max(1, max) * 0.01);
+    return [min - pad, max + pad];
+  }, [equity]);
+
+  // ---------- ONLY DRAWNDOWN LOGIC CHANGED BELOW ----------
+
+  // File helpers (unchanged)
   const readAsText = (file: File) =>
     new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
@@ -59,135 +90,177 @@ export default function RunDetail() {
   const looksLikeMetrics = (txt: string) => {
     try {
       const j = JSON.parse(txt);
-      // Heuristic: any of these keys strongly imply metrics.json
-      return (
-        typeof j === "object" &&
-        (("total_return" in j && "sharpe" in j) ||
-          "max_drawdown" in j ||
-          "num_trades" in j)
+      return typeof j === "object" && (
+        (("total_return" in j && "sharpe" in j) || "max_drawdown" in j || "num_trades" in j)
       );
-    } catch {
-      return false;
-    }
+    } catch { return false; }
   };
 
   const headerOfCSV = (txt: string) => txt.split(/\r?\n/, 1)[0] ?? "";
-
   const classifyCSV = (txt: string): "equity" | "trades" | "orders" | "unknown" => {
     const h = headerOfCSV(txt).toLowerCase();
-    // Common headers
     if (h.includes("equity") && h.includes("ts")) return "equity";
     if (h.includes("net_pnl") && h.includes("symbol")) return "trades";
     if (h.includes("commission") && h.includes("price") && h.includes("symbol")) return "orders";
-    // Fallback heuristics
     if (h.includes("dd") && h.includes("equity")) return "equity";
     return "unknown";
   };
 
-  const ingestFiles = useCallback(
-    async (files: FileList | File[]) => {
-      setLoading(true);
-      try {
-        let nextMetrics: Metrics | null = null;
-        let nextEquity: any[] | null = null;
-        let nextTrades: any[] | null = null;
-        let nextOrders: any[] | null = null;
+  const ingestFiles = useCallback(async (files: FileList | File[]) => {
+    setLoading(true);
+    try {
+      let nextMetrics: Metrics | null = null;
+      let nextEquity: EquityRow[] | null = null;
+      let nextTrades: TradeRow[] | null = null;
+      let nextOrders: OrderRow[] | null = null;
 
-        const arr = Array.from(files);
-        for (const f of arr) {
-          const name = f.name.toLowerCase();
-          const txt = await readAsText(f);
+      const arr = Array.from(files);
+      for (const f of arr) {
+        const name = f.name.toLowerCase();
+        const txt = await readAsText(f);
 
-          // JSON – try metrics
-          if (name.endsWith(".json") || name.includes("metrics")) {
-            if (looksLikeMetrics(txt)) {
-              try {
-                nextMetrics = JSON.parse(txt) as Metrics;
-                continue;
-              } catch {
-                /* ignore bad JSON */
+        if (name.endsWith(".json") || name.includes("metrics")) {
+          if (looksLikeMetrics(txt)) {
+            try { nextMetrics = JSON.parse(txt) as Metrics; } catch {}
+          }
+          continue;
+        }
+
+        if (name.endsWith(".csv")) {
+          let kind: "equity" | "trades" | "orders" | "unknown" =
+            name.includes("equity") ? "equity" :
+            name.includes("trades") ? "trades" :
+            name.includes("orders") ? "orders" : classifyCSV(txt);
+
+          const rows = parseCSVText(txt);
+
+          if (kind === "equity") {
+            const norm: EquityRow[] = rows
+              .map((r: any) => ({ ts: toEpoch(r.ts)!, equity: toNum(r.equity)! }))
+              .filter(r => r.ts != null && r.equity != null)
+              .sort((a, b) => a.ts - b.ts);
+            nextEquity = norm;
+
+            // --- Drawdown normalization ---
+            // 1) compute raw
+            let dd = drawdownFromEquity(norm as any).map((d: any) => ({
+              ts: toEpoch(d.ts)!, dd: toNum(d.dd)!,
+            })) as DrawdownRow[];
+
+            dd = dd.filter(d => d.ts != null && d.dd != null);
+            if (dd.length) {
+              const maxAbs = Math.max(...dd.map(d => Math.abs(d.dd)));
+              const hasPos = dd.some(d => d.dd > 0);
+              const hasNeg = dd.some(d => d.dd < 0);
+
+              // If values look like percents (e.g., 12 for 12%), scale to fraction.
+              const scale = maxAbs > 1.5 ? 1/100 : 1;
+
+              // Force drawdown to be ≤ 0 (0 at peaks, negative when down).
+              dd = dd.map(d => {
+                let v = d.dd * scale;
+                if (!hasNeg && hasPos) v = -Math.abs(v);
+                return { ts: d.ts, dd: v };
+              });
+            }
+            setDrawdown(dd);
+            // --- end drawdown normalization ---
+          } else if (kind === "trades") {
+            nextTrades = rows.map((r: any) => ({
+              symbol: r.symbol, side: r.side, qty: toNum(r.qty),
+              entry_ts: toEpoch(r.entry_ts), exit_ts: toEpoch(r.exit_ts),
+              net_pnl: toNum(r.net_pnl),
+            }));
+          } else if (kind === "orders") {
+            nextOrders = rows.map((r: any) => ({
+              ts: toEpoch(r.ts), symbol: r.symbol, qty: toNum(r.qty),
+              price: toNum(r.price), commission: toNum(r.commission),
+            }));
+          } else {
+            const header = Object.keys(rows?.[0] ?? {}).map(s => s.toLowerCase());
+            if (header.includes("equity") && header.includes("ts")) {
+              const norm: EquityRow[] = rows
+                .map((r: any) => ({ ts: toEpoch(r.ts)!, equity: toNum(r.equity)! }))
+                .filter(r => r.ts != null && r.equity != null)
+                .sort((a, b) => a.ts - b.ts);
+              nextEquity = norm;
+
+              // same normalization as above
+              let dd = drawdownFromEquity(norm as any).map((d: any) => ({
+                ts: toEpoch(d.ts)!, dd: toNum(d.dd)!,
+              })) as DrawdownRow[];
+              dd = dd.filter(d => d.ts != null && d.dd != null);
+              if (dd.length) {
+                const maxAbs = Math.max(...dd.map(d => Math.abs(d.dd)));
+                const hasPos = dd.some(d => d.dd > 0);
+                const hasNeg = dd.some(d => d.dd < 0);
+                const scale = maxAbs > 1.5 ? 1/100 : 1;
+                dd = dd.map(d => {
+                  let v = d.dd * scale;
+                  if (!hasNeg && hasPos) v = -Math.abs(v);
+                  return { ts: d.ts, dd: v };
+                });
               }
-            }
-            // If it's JSON but not metrics, ignore quietly
-            continue;
-          }
-
-          // CSV – try to classify by filename first
-          if (name.endsWith(".csv")) {
-            let kind: "equity" | "trades" | "orders" | "unknown" = "unknown";
-            if (name.includes("equity")) kind = "equity";
-            else if (name.includes("trades")) kind = "trades";
-            else if (name.includes("orders")) kind = "orders";
-            else kind = classifyCSV(txt);
-
-            const rows = parseCSVText(txt);
-
-            if (kind === "equity") {
-              nextEquity = rows;
-            } else if (kind === "trades") {
-              nextTrades = rows;
-            } else if (kind === "orders") {
-              nextOrders = rows;
-            } else {
-              // last resort: auto-detect by columns
-              const header = Object.keys(rows?.[0] ?? {}).map((s) => s.toLowerCase());
-              if (header.includes("equity") && header.includes("ts")) nextEquity = rows;
-              else if (header.includes("net_pnl") && header.includes("symbol")) nextTrades = rows;
-              else if (header.includes("commission") && header.includes("price")) nextOrders = rows;
+              setDrawdown(dd);
+            } else if (header.includes("net_pnl") && header.includes("symbol")) {
+              nextTrades = rows.map((r: any) => ({
+                symbol: r.symbol, side: r.side, qty: toNum(r.qty),
+                entry_ts: toEpoch(r.entry_ts), exit_ts: toEpoch(r.exit_ts),
+                net_pnl: toNum(r.net_pnl),
+              }));
+            } else if (header.includes("commission") && header.includes("price") && header.includes("symbol")) {
+              nextOrders = rows.map((r: any) => ({
+                ts: toEpoch(r.ts), symbol: r.symbol, qty: toNum(r.qty),
+                price: toNum(r.price), commission: toNum(r.commission),
+              }));
             }
           }
         }
-
-        if (nextMetrics) setMetrics(nextMetrics);
-        if (nextEquity) {
-          setEquity(nextEquity);
-          setDrawdown(drawdownFromEquity(nextEquity));
-        }
-        if (nextTrades) setTrades(nextTrades);
-        if (nextOrders) setOrders(nextOrders);
-      } finally {
-        setLoading(false);
       }
-    },
-    []
-  );
 
-  // ---------- Upload handlers ----------
+      if (nextMetrics) setMetrics(nextMetrics);
+      if (nextEquity) setEquity(nextEquity);
+      if (nextTrades) setTrades(nextTrades);
+      if (nextOrders) setOrders(nextOrders);
+    } finally { setLoading(false); }
+  }, []);
+
+  // Drawdown domain: clamp to [min(dd)-pad, 0]
+  const ddDomain = useMemo<[number, number]>(() => {
+    if (!drawdown.length) return [-1, 0];
+    let min = 0;
+    for (const d of drawdown) {
+      if (Number.isFinite(d.dd)) min = Math.min(min, d.dd);
+    }
+    const pad = Math.max(0.01, Math.abs(min) * 0.05);
+    return [min - pad, 0];
+  }, [drawdown]);
+
+  // ----- Upload handlers (unchanged) -----
   const onFileInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files?.length) return;
     await ingestFiles(e.target.files);
-    // allow re-uploading the same files later
     e.target.value = "";
   };
 
   const onDrop = async (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setDragActive(false);
-
+    e.preventDefault(); setDragActive(false);
     const items: DataTransferItemList = e.dataTransfer.items || [];
     const files = e.dataTransfer.files;
 
-    // If a folder is dropped (Chromium), extract all files recursively (shallow best-effort).
-    // Otherwise, just pass the file list through.
     if (items && items.length && "webkitGetAsEntry" in items[0]) {
       const promises: Promise<File>[] = [];
       for (const it of Array.from(items)) {
         // @ts-ignore chromium
-        const entry = it.webkitGetAsEntry?.();
-        if (!entry) continue;
-
+        const entry = it.webkitGetAsEntry?.(); if (!entry) continue;
         const walk = (ent: any, path = "") => {
           if (ent.isFile) {
-            promises.push(
-              new Promise<File>((resolve) => {
-                ent.file((file: File) => resolve(new File([file], path + file.name)));
-              })
-            );
+            promises.push(new Promise<File>((resolve) => {
+              ent.file((file: File) => resolve(new File([file], path + file.name)));
+            }));
           } else if (ent.isDirectory) {
             const reader = ent.createReader();
-            reader.readEntries((ents: any[]) => {
-              ents.forEach((child) => walk(child, path + ent.name + "/"));
-            });
+            reader.readEntries((ents: any[]) => ents.forEach((c) => walk(c, path + ent.name + "/")));
           }
         };
         walk(entry);
@@ -199,24 +272,29 @@ export default function RunDetail() {
     }
   };
 
-  const onDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    if (!dragActive) setDragActive(true);
-  };
-
+  const onDragOver = (e: React.DragEvent<HTMLDivElement>) => { e.preventDefault(); if (!dragActive) setDragActive(true); };
   const onDragLeave = () => setDragActive(false);
 
-  // ---------- Derived ----------
+  // ----- Derived (unchanged) -----
   const symbolPnl = useMemo(() => {
     const agg: Record<string, number> = {};
     for (const t of trades) {
       const s = String(t.symbol ?? "");
       const v = Number(t.net_pnl ?? 0);
       if (!s) continue;
-      agg[s] = (agg[s] ?? 0) + (isFinite(v) ? v : 0);
+      agg[s] = (agg[s] ?? 0) + (Number.isFinite(v) ? v : 0);
     }
     return Object.entries(agg).map(([symbol, net]) => ({ symbol, net }));
   }, [trades]);
+
+  const equityKey = useMemo(
+    () => (equity.length ? `${equity[0].ts}-${equity[equity.length - 1].ts}-${equity.length}` : "empty"),
+    [equity]
+  );
+  const ddKey = useMemo(
+    () => (drawdown.length ? `${drawdown[0].ts}-${drawdown[drawdown.length - 1].ts}-${drawdown.length}` : "empty"),
+    [drawdown]
+  );
 
   return (
     <div className="space-y-6">
@@ -224,44 +302,24 @@ export default function RunDetail() {
         <div className="flex flex-wrap items-center gap-3">
           <div className="text-lg font-semibold">Run Detail</div>
           <div className="flex-1" />
-          <Button variant="outline" size="sm" onClick={resetAll}>
-            Reset
-          </Button>
+          <Button variant="outline" size="sm" onClick={resetAll}>Reset</Button>
           <label>
-            <input
-              type="file"
-              multiple
-              accept=".csv,application/json"
-              onChange={onFileInput}
-              className="hidden"
-              id="upload-artifacts"
-            />
+            <input type="file" multiple accept=".csv,application/json" onChange={onFileInput} className="hidden" id="upload-artifacts"/>
             <Button asChild size="sm">
-              <span>
-                <label htmlFor="upload-artifacts" className="cursor-pointer">
-                  Upload Files…
-                </label>
-              </span>
+              <span><label htmlFor="upload-artifacts" className="cursor-pointer">Upload Files…</label></span>
             </Button>
           </label>
         </div>
 
         <div
-          onDrop={onDrop}
-          onDragOver={onDragOver}
-          onDragLeave={onDragLeave}
-          className={[
-            "mt-2 rounded-xl border-2 border-dashed p-6 text-center transition",
-            dragActive ? "border-primary bg-muted/40" : "border-muted-foreground/30",
-          ].join(" ")}
+          onDrop={onDrop} onDragOver={onDragOver} onDragLeave={onDragLeave}
+          className={["mt-2 rounded-xl border-2 border-dashed p-6 text-center transition",
+            dragActive ? "border-primary bg-muted/40" : "border-muted-foreground/30"].join(" ")}
         >
           <div className="text-sm text-muted-foreground">
-            Drop your <code>metrics.json</code>, <code>equity.csv</code>,{" "}
-            <code>trades.csv</code>, and <code>orders.csv</code> here — or click “Upload Files…”
+            Drop your <code>metrics.json</code>, <code>equity.csv</code>, <code>trades.csv</code>, and <code>orders.csv</code> here — or click “Upload Files…”
           </div>
-          <div className="text-xs text-muted-foreground mt-1">
-            Tip: you can also drop an entire folder from your file explorer.
-          </div>
+          <div className="text-xs text-muted-foreground mt-1">Tip: you can also drop an entire folder from your file explorer.</div>
           {loading && <div className="mt-2 text-sm">Loading…</div>}
         </div>
 
@@ -279,30 +337,54 @@ export default function RunDetail() {
       </Card>
 
       <div className="grid lg:grid-cols-2 gap-6">
+        {/* EQUITY (unchanged) */}
         <Card className="p-4 space-y-2">
           <div className="font-semibold">Equity Curve</div>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={equity}>
+              <LineChart data={equity} key={equityKey}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="ts" hide />
-                <YAxis />
-                <Tooltip />
+                <XAxis
+                  dataKey="ts" type="number" scale="time"
+                  domain={["dataMin", "dataMax"]} tickFormatter={(t) => new Date(Number(t)).toLocaleDateString()} hide
+                />
+                <YAxis
+                  dataKey="equity"
+                  domain={yDomain}
+                  tickCount={6}
+                  allowDecimals
+                  tickFormatter={(v: number) => formatUSDShort(v)}
+                />
+                <Tooltip
+                  labelFormatter={(t) => new Date(Number(t)).toLocaleString()}
+                  formatter={(v: any) => formatUSD(Number(v))}
+                />
                 <Line type="monotone" dataKey="equity" dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
         </Card>
 
+        {/* DRAWDOWN (fixed) */}
         <Card className="p-4 space-y-2">
           <div className="font-semibold">Drawdown</div>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={drawdown}>
+              <AreaChart data={drawdown} key={ddKey}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="ts" hide />
-                <YAxis tickFormatter={(v) => `${(Number(v) * 100).toFixed(0)}%`} />
-                <Tooltip formatter={(v: any) => `${(Number(v) * 100).toFixed(2)}%`} />
+                <XAxis
+                  dataKey="ts" type="number" scale="time"
+                  domain={["dataMin", "dataMax"]} tickFormatter={(t) => new Date(Number(t)).toLocaleDateString()} hide
+                />
+                <YAxis
+                  domain={ddDomain}
+                  tickCount={6}
+                  tickFormatter={(v) => `${(Number(v) * 100).toFixed(0)}%`}
+                />
+                <Tooltip
+                  formatter={(v: any) => `${(Number(v) * 100).toFixed(2)}%`}
+                  labelFormatter={(t) => new Date(Number(t)).toLocaleString()}
+                />
                 <Area type="monotone" dataKey="dd" fillOpacity={0.3} />
               </AreaChart>
             </ResponsiveContainer>
@@ -328,42 +410,22 @@ export default function RunDetail() {
               <TableBody>
                 {trades
                   .slice()
-                  .sort(
-                    (a, b) =>
-                      Math.abs(Number(b.net_pnl || 0)) -
-                      Math.abs(Number(a.net_pnl || 0))
-                  )
+                  .sort((a, b) => Math.abs(Number(b.net_pnl || 0)) - Math.abs(Number(a.net_pnl || 0)))
                   .slice(0, 10)
                   .map((t, i) => (
                     <TableRow key={i}>
                       <TableCell>{t.symbol ?? "—"}</TableCell>
                       <TableCell>{t.side ?? "—"}</TableCell>
-                      <TableCell>
-                        {isFinite(Number(t.qty))
-                          ? Number(t.qty).toFixed(2)
-                          : "—"}
-                      </TableCell>
-                      <TableCell>
-                        {t.entry_ts ? new Date(t.entry_ts).toLocaleDateString() : "—"}
-                      </TableCell>
-                      <TableCell>
-                        {t.exit_ts ? new Date(t.exit_ts).toLocaleDateString() : "—"}
-                      </TableCell>
-                      <TableCell
-                        className={
-                          Number(t.net_pnl) >= 0 ? "text-green-600" : "text-red-600"
-                        }
-                      >
+                      <TableCell>{Number.isFinite(Number(t.qty)) ? Number(t.qty).toFixed(2) : "—"}</TableCell>
+                      <TableCell>{t.entry_ts ? new Date(t.entry_ts).toLocaleDateString() : "—"}</TableCell>
+                      <TableCell>{t.exit_ts ? new Date(t.exit_ts).toLocaleDateString() : "—"}</TableCell>
+                      <TableCell className={Number(t.net_pnl) >= 0 ? "text-green-600" : "text-red-600"}>
                         {formatUSD(Number(t.net_pnl || 0))}
                       </TableCell>
                     </TableRow>
                   ))}
                 {trades.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={6} className="text-muted-foreground italic">
-                      No trades loaded.
-                    </TableCell>
-                  </TableRow>
+                  <TableRow><TableCell colSpan={6} className="text-muted-foreground italic">No trades loaded.</TableCell></TableRow>
                 )}
               </TableBody>
             </Table>
@@ -377,7 +439,7 @@ export default function RunDetail() {
               <BarChart data={symbolPnl}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="symbol" />
-                <YAxis />
+                <YAxis tickFormatter={(v: number) => formatUSDShort(v)} />
                 <Tooltip formatter={(v: any) => formatUSD(Number(v))} />
                 <Bar dataKey="net" />
               </BarChart>
@@ -402,23 +464,15 @@ export default function RunDetail() {
             <TableBody>
               {orders.slice(-20).map((o, i) => (
                 <TableRow key={i}>
-                  <TableCell>
-                    {o.ts ? new Date(o.ts).toLocaleString() : "—"}
-                  </TableCell>
+                  <TableCell>{o.ts ? new Date(o.ts).toLocaleString() : "—"}</TableCell>
                   <TableCell>{o.symbol ?? "—"}</TableCell>
-                  <TableCell>
-                    {isFinite(Number(o.qty)) ? Number(o.qty).toFixed(4) : "—"}
-                  </TableCell>
+                  <TableCell>{Number.isFinite(Number(o.qty)) ? Number(o.qty).toFixed(4) : "—"}</TableCell>
                   <TableCell>{formatUSD(Number(o.price || 0))}</TableCell>
                   <TableCell>{formatUSD(Number(o.commission || 0))}</TableCell>
                 </TableRow>
               ))}
               {orders.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={5} className="text-muted-foreground italic">
-                    No orders loaded.
-                  </TableCell>
-                </TableRow>
+                <TableRow><TableCell colSpan={5} className="text-muted-foreground italic">No orders loaded.</TableCell></TableRow>
               )}
             </TableBody>
           </Table>
@@ -428,8 +482,7 @@ export default function RunDetail() {
   );
 }
 
-// Lightweight local KPI component (kept here to avoid changing your imports)
-// If you already have components/shared/Kpi, remove this and import that instead.
+// Lightweight KPI
 function Kpi({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="rounded-xl border p-3">
