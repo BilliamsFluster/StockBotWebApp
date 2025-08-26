@@ -1,15 +1,5 @@
 import axios from "axios";
-
-const BASE = process.env.NEXT_PUBLIC_BACKEND_URL;
-
-const join = (base: string | undefined | null, path: string) => {
-  const b = (base ?? "").replace(/\/+$/, "");
-  const p = (path ?? "").replace(/^\/+/, "");
-  return b ? `${b}/${p}` : `/${p}`;
-};
-
-const buildUrl = (u: string) =>
-  /^https?:\/\//i.test(u) || /^\/\//.test(u) ? u : BASE ? join(BASE, u) : u;
+import { buildUrl, fetchJSON } from "@/api/http";
 
 export async function uploadPolicy(file: File) {
   const form = new FormData();
@@ -33,16 +23,9 @@ export async function downloadRunBundle(runId: string, includeModel = true): Pro
 }
 
 export async function getAiInsights() {
-  const { data } = await axios.get(buildUrl("/api/stockbot/insights"), {
-    withCredentials: true,
-  });
-  return data as { insights: string[] };
+  return fetchJSON<{ insights: string[] }>("/api/stockbot/insights");
 }
 
 export async function getMarketHighlights() {
-  const { data } = await axios.get(buildUrl("/api/stockbot/highlights"), {
-    withCredentials: true,
-  });
-  return data as { highlights: string };
+  return fetchJSON<{ highlights: string }>("/api/stockbot/highlights");
 }
-

@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { fetchJSON } from "./lib/api";
+import { fetchJSON } from "@/api/http";
 import { RunSummary } from "./lib/types";
 import StatusChip from "./shared/StatusChip";
 import {
