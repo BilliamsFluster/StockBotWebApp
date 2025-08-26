@@ -108,7 +108,8 @@ uvicorn server:app --reload --host 0.0.0.0 --port 5002
 
 ### Environment Variables (Infisical)
 
-The application uses Infisical for secure environment management. You'll need to configure the following variables:
+The application uses Infisical for secure environment management. You'll need to configure the following variables in Infisical:
+
 
 #### Backend (.env)
 Variables below are stored in Infisical and loaded by modules in [`backend/config`](backend/config).
@@ -170,6 +171,7 @@ DATABASE_URL=sqlite:///./stockbot.db
 ALPHA_VANTAGE_API_KEY=your-alpha-vantage-key
 ```
 
+
 ### SSL Certificates Setup
 
 The frontend runs on HTTPS for secure broker integrations. Generate certificates:
@@ -186,6 +188,8 @@ mkcert localhost 127.0.0.1 ::1
 # Rename files
 mv localhost+2.pem cert.crt
 mv localhost+2-key.pem cert.key
+
+#place files inside frontend/certs and backend/certs
 ```
 
 ### Broker API Setup
