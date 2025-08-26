@@ -1,9 +1,7 @@
-// utils/http.ts
 import axios, { AxiosError } from "axios";
 
 /** Prefer NEXT_PUBLIC_BACKEND_URL; fall back to relative paths if unset */
-const BACKEND_BASE =
-  process.env.NEXT_PUBLIC_BACKEND_URL;
+export const BACKEND_BASE = process.env.NEXT_PUBLIC_BACKEND_URL;
 
 /** Absolute if starts with http(s) or protocol-relative (//host) */
 const isAbsolute = (u: string) => /^https?:\/\//i.test(u) || /^\/\//.test(u);
@@ -16,7 +14,8 @@ const join = (base: string | undefined | null, path: string) => {
 };
 
 /** If BACKEND_BASE is empty, return a relative URL so same-origin works */
-const buildUrl = (u: string) => (isAbsolute(u) ? u : (BACKEND_BASE ? join(BACKEND_BASE, u) : u));
+export const buildUrl = (u: string) =>
+  isAbsolute(u) ? u : BACKEND_BASE ? join(BACKEND_BASE, u) : u;
 
 function toReadableError(err: unknown): Error {
   if (axios.isAxiosError(err)) {
@@ -32,7 +31,6 @@ function toReadableError(err: unknown): Error {
 export async function fetchJSON<T = any>(url: string): Promise<T> {
   try {
     const full = buildUrl(url);
-    // console.debug("[http] GET", full);
     const { data } = await axios.get<T>(full, {
       withCredentials: true,
       headers: { "Cache-Control": "no-store" },
@@ -46,7 +44,6 @@ export async function fetchJSON<T = any>(url: string): Promise<T> {
 export async function postJSON<T = any>(url: string, body: any): Promise<T> {
   try {
     const full = buildUrl(url);
-    // console.debug("[http] POST", full, body);
     const { data } = await axios.post<T>(full, body, {
       withCredentials: true,
       headers: { "Content-Type": "application/json" },
@@ -56,3 +53,4 @@ export async function postJSON<T = any>(url: string, body: any): Promise<T> {
     throw toReadableError(err);
   }
 }
+

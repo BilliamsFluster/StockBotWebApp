@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { saveSchwabCredentials, checkSchwabCredentials } from '@/api/schwab';
-import axios from 'axios';
+import { postJSON } from '@/api/http';
 
 interface Props {
   onConnected: () => void;
@@ -75,11 +75,7 @@ export default function SchwabAuth({ onConnected }: Props) {
         return;
       }
 
-      await axios.post(
-        `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/schwab/authorize`,
-        { code },
-        { withCredentials: true }
-      );
+      await postJSON('/api/schwab/authorize', { code });
 
       setStatus('success');
       setMessage('Success! Tokens stored.');

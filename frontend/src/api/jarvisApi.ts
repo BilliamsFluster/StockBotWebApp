@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { fetchJSON, postJSON } from '@/api/http';
 
 
 type UserPreferences = {
@@ -22,57 +22,26 @@ export type DomAction =
   | { op: "scroll"; to?: "top" | "bottom"; y?: number };
 
 export async function planPageEdit(goal: string): Promise<{ actions: DomAction[] }> {
-  const res = await axios.post(
-    `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/edit/plan`,
-    { goal },
-    { withCredentials: true, headers: { "Content-Type": "application/json" } }
-  );
-  return res.data;
+  return postJSON('/api/jarvis/edit/plan', { goal });
 }
 
 // Submit text prompt to Jarvis
 export const askJarvis = async (prompt: string, user: User) => {
   const model = user?.preferences?.model || 'llama3';
   const format = user?.preferences?.format || 'markdown';
-
-  const res = await axios.post(
-    `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/ask`,
-    { prompt, model, format },
-    {
-      withCredentials: true, // send cookie
-      headers: { 'Content-Type': 'application/json' },
-    }
-  );
-
-  return res.data;
+  return postJSON('/api/jarvis/ask', { prompt, model, format });
 };
 
-
-// Base config for authenticated requests
-const getAuthConfig = () => {
-  return {
-    withCredentials: true, // send cookie
-    headers: { 'Content-Type': 'application/json' },
-  };
-};
 
 export async function getSchwabPortfolioData() {
-  
-  const response = await axios.get(
-    `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/portfolio`,
-    getAuthConfig()
-  );
-  return response.data;
+  return fetchJSON('/api/jarvis/portfolio');
 }
 
 export async function fetchAvailableModels(): Promise<string[]> {
   try {
-    const response = await axios.get(
-      `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/jarvis/models`,
-      getAuthConfig()
-    );
-    console.log(response.data);
-    return response.data;
+    const data = await fetchJSON<string[]>('/api/jarvis/models');
+    console.log(data);
+    return data;
   } catch (error) {
     console.error('Error fetching models:', error);
     return [];

@@ -1,17 +1,14 @@
 import { useEffect, useState } from 'react';
-import axios from 'axios';
+import { fetchJSON } from '@/api/http';
 
 export function useSchwabStatus() {
   const [connected, setConnected] = useState<boolean | null>(null);
 
   useEffect(() => {
-    axios
-      .get(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/schwab/account`, {
-        withCredentials: true, // Send secure cookie automatically
-      })
+    fetchJSON<{ connected: boolean }>(`/api/schwab/account`)
       .then((res) => {
-        console.log('[Schwab] Response:', res.data);
-        setConnected(res?.data?.connected === true);
+        console.log('[Schwab] Response:', res);
+        setConnected(res?.connected === true);
       })
       .catch((err) => {
         console.error('[Schwab] Error:', err);

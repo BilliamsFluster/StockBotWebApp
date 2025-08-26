@@ -1,6 +1,6 @@
 // /hooks/useAlpacaStatus.ts
 import { useEffect, useState } from 'react';
-import axios from 'axios';
+import { fetchJSON } from '@/api/http';
 
 export function useAlpacaStatus() {
   const [status, setStatus] = useState<boolean | null>(null);
@@ -8,11 +8,10 @@ export function useAlpacaStatus() {
   useEffect(() => {
     const checkStatus = async () => {
       try {
-        const res = await axios.get<{ connected: boolean }>(
-          `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/alpaca/account`,
-          { withCredentials: true }
+        const res = await fetchJSON<{ connected: boolean }>(
+          `/api/alpaca/account`
         );
-        setStatus(res.data.connected);
+        setStatus(res.connected);
       } catch {
         setStatus(false);
       }

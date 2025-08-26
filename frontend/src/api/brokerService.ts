@@ -1,10 +1,6 @@
 // services/brokerService.ts
-import axios from 'axios';
 import { setUserPreferences } from '@/api/client';
-
-
-// Set the base API URL for brokers
-const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL;
+import { fetchJSON, postJSON } from '@/api/http';
 
 export const setActiveBroker = async (broker: string) => {
   return setUserPreferences({ activeBroker: broker });
@@ -12,56 +8,25 @@ export const setActiveBroker = async (broker: string) => {
 
 
 export async function disconnectBroker(broker: string) {
-  return axios.post(
-    `${API_BASE}/api/${broker}/disconnect`,
-    {},
-    { withCredentials: true }
-  );
+  return postJSON(`/api/${broker}/disconnect`, {});
 }
 
 export async function getActiveApiPortfolioData() {
   try {
-    const res = await axios.get(
-        `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/broker/portfolio`,
-        { 
-            withCredentials: true,
-            headers: { 'Content-Type': 'application/json' },
-            timeout: 10000, // ✅ 10 second timeout to prevent hanging requests
-        }
-    );
-    
-   
-    return res.data;
+    return await fetchJSON(`/api/broker/portfolio`);
   } catch (error: any) {
     console.error('❌ Error fetching active broker portfolio:', error);
-    
-    // ✅ Re-throw with more specific error info
-    if (error.response?.status === 500) {
-      throw new Error('Server error: Unable to fetch portfolio data. Check if active broker is connected.');
-    } else if (error.response?.status === 400) {
-      throw new Error('No active broker set. Please select and connect a broker first.');
-    } else {
-      throw new Error('Failed to fetch portfolio data');
-    }
+    throw new Error('Failed to fetch portfolio data');
   }
 }
 
 // Add this function to check actual broker connection status
 export async function checkBrokerConnectionStatus(brokerId: string) {
   try {
-    const response = await axios.get(
-      `${API_BASE}/api/${brokerId}/status`,
-      { 
-        withCredentials: true,
-        headers: { 'Content-Type': 'application/json' }
-       }
-    );
-    
-    // Return the status from the API response
-    return response.data.status || 'disconnected';
+    const res = await fetchJSON<{ status?: string }>(`/api/${brokerId}/status`);
+    return res.status || 'disconnected';
   } catch (error) {
     console.error(`Failed to check connection status for ${brokerId}:`, error);
-    // If we can't check status, assume disconnected
     return 'disconnected';
   }
 }
