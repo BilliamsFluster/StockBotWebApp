@@ -111,6 +111,67 @@ uvicorn server:app --reload --host 0.0.0.0 --port 5002
 The application uses Infisical for secure environment management. You'll need to configure the following variables in Infisical:
 
 
+#### Backend (.env)
+Variables below are stored in Infisical and loaded by modules in [`backend/config`](backend/config).
+
+```bash
+# URLs & Ports
+BACKEND_URL=https://localhost:5001        # Public URL for logging and callbacks
+BACKEND_PORT=5001                         # Port the Express server listens on
+STOCKBOT_URL=http://localhost:5002        # Python StockBot service
+FRONTEND_URL=https://localhost:3000       # Single allowed CORS origin
+FRONTEND_URLS=https://localhost:3000      # Comma-separated list of allowed origins
+
+# Database
+MONGO_URI=mongodb://localhost:27017/stockbot  # MongoDB connection string
+
+# Auth & Security
+JWT_SECRET=change-me                     # JWT signing secret
+REFRESH_SECRET=change-me-too             # Refresh token secret
+MASTER_ENCRYPTION_KEY=your-master-key    # Encrypts stored broker tokens
+LOG_LEVEL=info                           # pino logger level
+
+# Schwab OAuth
+SCHWAB_APP_KEY=your-schwab-app-key       # Schwab developer app key
+SCHWAB_APP_SECRET=your-schwab-app-secret # Schwab developer app secret
+SCHWAB_REDIRECT_URI=https://127.0.0.1    # OAuth redirect URI
+
+# SSL (required in production)
+SSL_CERT=./certs/cert.crt                # Path to SSL certificate
+SSL_KEY=./certs/cert.key                 # Path to SSL private key
+SSL_CA=./certs/ca.crt                    # Optional CA bundle
+```
+
+#### Frontend (.env)
+```bash
+# API Endpoints
+NEXT_PUBLIC_BACKEND_URL=https://localhost:5001
+NEXT_PUBLIC_STOCKBOT_URL=http://localhost:5002
+
+# SSL Certificates (for HTTPS development)
+SSL_CERT=./certs/cert.crt
+SSL_KEY=./certs/cert.key
+SSL_CA=./certs/ca.crt
+
+# Frontend Configuration
+FRONTEND_PORT=3000
+FRONTEND_HOST=0.0.0.0
+```
+
+#### StockBot (.env)
+```bash
+# AI Configuration
+OLLAMA_BASE_URL=http://localhost:11434
+HUGGINGFACE_API_TOKEN=your-huggingface-token
+
+# Database
+DATABASE_URL=sqlite:///./stockbot.db
+
+# External APIs
+ALPHA_VANTAGE_API_KEY=your-alpha-vantage-key
+```
+
+
 ### SSL Certificates Setup
 
 The frontend runs on HTTPS for secure broker integrations. Generate certificates:
@@ -257,7 +318,7 @@ setup_venv.bat  # Windows
 
 **Database Connection**
 - Ensure MongoDB is running
-- Check `MONGODB_URI` in Infisical configuration
+ - Check `MONGO_URI` in Infisical configuration
 - Verify network connectivity
 
 ### Logs and Debugging
