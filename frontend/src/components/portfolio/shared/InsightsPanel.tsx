@@ -1,4 +1,4 @@
-// src/components/Portfolio/InsightsPanel.tsx
+// src/components/portfolio/shared/InsightsPanel.tsx
 import React, { useEffect, useState } from "react";
 import { Lightbulb } from "lucide-react";
 import {
