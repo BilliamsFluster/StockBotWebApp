@@ -1,5 +1,5 @@
 "use client";
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Card,
   CardContent,
@@ -20,40 +20,25 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
-import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { OnboardingTeaser } from "@/components/OnboardingTeaser";
 import { useOnboarding } from "@/context/OnboardingContext";
-import { getUserPreferences } from "@/api/client";
 import { usePortfolioData } from "@/hooks/usePortfolioData";
-import { getMarketHighlights } from "@/api/stockbot";
+import { Stat } from "./shared/Stat";
+import { Metric } from "./shared/Metric";
+import { EquityArea } from "./shared/EquityArea";
+import { useActiveBroker } from "./hooks/useActiveBroker";
+import { useOnboardingStatus } from "./hooks/useOnboardingStatus";
+import { useMarketHighlights } from "./hooks/useMarketHighlights";
+import { fmtCash } from "./lib";
 
 // --- Type Definitions ---
 type Bench = "SPY" | "QQQ" | "Custom Factor";
 type IdxRow = { name: string; chg: number };
 type Mover = { sym: string; name: string; chg: number; vol: string };
-type HighlightSection = { title: string; items: string[] };
-
 export default function OverviewPage() {
   const { setShowOnboarding } = useOnboarding();
-
-  // Track which broker is active so we can conditionally fetch portfolio data
-  const [activeBroker, setActiveBroker] = useState<string | null>(null);
-  const [checkingBroker, setCheckingBroker] = useState(true);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const prefs = await getUserPreferences();
-        setActiveBroker(prefs?.activeBroker || null);
-      } catch (e) {
-        console.error("Error checking active broker:", e);
-        setActiveBroker(null);
-      } finally {
-        setCheckingBroker(false);
-      }
-    })();
-  }, []);
+  const { activeBroker, checkingBroker } = useActiveBroker();
 
   // Load live portfolio data only when a broker is active
   const { data, isLoading } = usePortfolioData(Boolean(activeBroker));
@@ -80,22 +65,7 @@ export default function OverviewPage() {
   const perf = { sharpe:1.45, sortino:2.10, maxDD:-11.3 };
   const benchmarks: Bench[] = ["SPY", "QQQ", "Custom Factor"];
 
-  const [highlights, setHighlights] = useState<HighlightSection[] | null>(null);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const { highlights } = await getMarketHighlights();
-        setHighlights(parseHighlights(highlights));
-      } catch (e) {
-        console.error("Failed to load highlights", e);
-      }
-    })();
-  }, []);
-
-  const marketHighlights = highlights?.find(s => /market/i.test(s.title));
-  const relevantEvents = highlights?.find(s => /relevant/i.test(s.title));
-  const calendarEvents = highlights?.find(s => /calendar/i.test(s.title));
+  const { marketHighlights, relevantEvents, calendarEvents } = useMarketHighlights();
 
   const indices: IdxRow[] = [
     {name:"S&P 500 (SPY)", chg:+0.32},
@@ -119,13 +89,7 @@ export default function OverviewPage() {
   /** ------- UI STATE ------- */
   const [frame, setFrame] = useState<"1D"|"1W"|"1M"|"YTD"|"1Y">("YTD");
   const [activeBenches, setActiveBenches] = useState<Bench[]>(["SPY"]);
-  const [isOnboardingDone, setIsOnboardingDone] = useState(true);
-
-  useEffect(() => {
-    // This check runs on the client, where localStorage is available.
-    const done = localStorage.getItem('onboarding_done_v1') === 'true';
-    setIsOnboardingDone(done);
-  }, []);
+  const isOnboardingDone = useOnboardingStatus();
 
   const toggleBench = (b:Bench) =>
     setActiveBenches(prev => prev.includes(b) ? prev.filter(x=>x!==b) : [...prev, b]);
@@ -418,78 +382,4 @@ function CalendarCard({ title, items }: { title: string; items?: string[] }) {
       </CardContent>
     </Card>
   );
-}
-
-function Stat({label, value, isPositive, loading}:{label:string; value?:string; isPositive?:boolean; loading?:boolean}) {
-  return (
-    <div className="bg-muted/40 rounded-lg p-3">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      {loading ? (
-        <Skeleton className="h-5 w-20 mt-1" />
-      ) : (
-        <div className={`text-lg font-semibold text-card-foreground ${isPositive ? "text-green-400" : ""}`}>{value ?? "—"}</div>
-      )}
-    </div>
-  );
-}
-
-function Metric({label, value}:{label:string; value:string}) {
-  return (
-    <div className="bg-muted/40 rounded-lg p-2">
-      <div className="text-muted-foreground">{label}</div>
-      <div className="font-mono text-card-foreground">{value}</div>
-    </div>
-  );
-}
-
-function EquityArea({tone}:{tone?:"blue"|"purple"}) {
-  const c = tone==="blue" ? "#3b82f6" : "#8b5cf6"; // blue-500, violet-500
-  return (
-    <div className="h-32 rounded-lg bg-muted/40 flex items-center justify-center">
-      <svg viewBox="0 0 100 40" className="w-full h-full p-2" style={{color:c}}>
-        <defs>
-          <linearGradient id={`g-eq-${tone??"default"}`} x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="currentColor" stopOpacity=".4" />
-            <stop offset="100%" stopColor="currentColor" stopOpacity=".05" />
-          </linearGradient>
-        </defs>
-        <path d="M0,30 L10,28 L20,32 L30,24 L40,26 L50,18 L60,22 L70,15 L80,16 L90,8 L100,12 L100,40 L0,40 Z" fill={`url(#g-eq-${tone??"default"})`} />
-        <polyline fill="none" stroke="currentColor" strokeWidth="1.5" points="0,30 10,28 20,32 30,24 40,26 50,18 60,22 70,15 80,16 90,8 100,12" />
-      </svg>
-    </div>
-  );
-}
-
-/** ---------- Utils ---------- */
-function fmtCash(n:number){
-  return n.toLocaleString(undefined,{style:"currency",currency:"USD",maximumFractionDigits:0});
-}
-
-function parseHighlights(text: string): HighlightSection[] {
-  return text
-    .split(/\n\s*\n/)
-    .map(block => {
-
-      const rawLines = block.split("\n");
-      if (!rawLines.length) return null;
-      const [titleLine, ...rest] = rawLines;
-
-      const items: string[] = [];
-      let current = "";
-      rest.forEach(line => {
-        const trimmed = line.trim();
-        if (!trimmed) return;
-        if (/^[-*\u2022]\s*/.test(trimmed)) {
-          if (current) items.push(current.trim());
-          current = trimmed.replace(/^[-*\u2022]\s*/, "");
-        } else {
-          current += (current ? " " : "") + trimmed;
-        }
-      });
-      if (current) items.push(current.trim());
-
-      return { title: titleLine.trim(), items } as HighlightSection;
-
-    })
-    .filter(Boolean) as HighlightSection[];
 }
