@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { Badge } from "@/components/ui/badge";
 
 /** icons */
 import {
@@ -22,14 +21,19 @@ import {
 } from "lucide-react";
 
 /** your local components */
-import PortfolioSummaryCard from "./PortfolioSummaryCard";
-import PositionTable from "./PositionTable";
-import HoldingPieChart from "./HoldingPieChart";
-import GainLossBarChart from "./GainLossBarChart";
-import InsightsPanel from "./InsightsPanel";
-import TransactionsTable from "./TransactionsTable";
-import TradingHistoryTable from "./TradingHistoryTable";
-import AccountBalanceGraph from "./AccountBalanceGraph";
+import PortfolioSummaryCard from "./shared/PortfolioSummaryCard";
+import PositionTable from "./shared/PositionTable";
+import HoldingPieChart from "./shared/HoldingPieChart";
+import GainLossBarChart from "./shared/GainLossBarChart";
+import InsightsPanel from "./shared/InsightsPanel";
+import TransactionsTable from "./shared/TransactionsTable";
+import TradingHistoryTable from "./shared/TradingHistoryTable";
+import AccountBalanceGraph from "./shared/AccountBalanceGraph";
+import Header from "./shared/Header";
+import { ChartSkeleton } from "./shared/ChartSkeleton";
+import { TableSkeleton } from "./shared/TableSkeleton";
+import { ListSkeleton } from "./shared/ListSkeleton";
+import { fmtCurrency } from "./lib";
 
 /* -------------------- types & constants -------------------- */
 type Summary = {
@@ -171,7 +175,7 @@ export default function PortfolioPage() {
                 {isLoading ? (
                   <Skeleton className="h-6 w-24 bg-white/10" />
                 ) : (
-                  currency(typeof summary[field] === "number" ? summary[field] : 0)
+                  fmtCurrency(typeof summary[field] === "number" ? summary[field] : 0)
                 )}
               </div>
             </CardContent>
@@ -298,53 +302,4 @@ export default function PortfolioPage() {
 
 /* -------------------- small pieces -------------------- */
 
-function Header({ title, timestamp, activeBroker }: { title: string; timestamp: string; activeBroker?: string }) {
-  return (
-    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-      <div className="flex items-center gap-3">
-        <h1 className="text-2xl md:text-3xl font-semibold bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 via-violet-400 to-fuchsia-400">
-          {title}
-        </h1>
-        {activeBroker && <Badge variant="outline">Active: {activeBroker}</Badge>}
-      </div>
-      <div className="text-sm text-muted-foreground">{timestamp}</div>
-    </div>
-  );
-}
-
-function currency(n: number) {
-  return n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-}
-
-/** Pretty skeletons for charts/tables/lists */
-function ChartSkeleton() {
-  return (
-    <div className="space-y-3">
-      <Skeleton className="h-36 w-full bg-white/10" />
-      <div className="flex gap-2">
-        <Skeleton className="h-3 w-24 bg-white/10" />
-        <Skeleton className="h-3 w-16 bg-white/10" />
-      </div>
-    </div>
-  );
-}
-function TableSkeleton() {
-  return (
-    <div className="space-y-2">
-      <Skeleton className="h-8 w-full bg-white/10" />
-      {[0,1,2,3,4].map((i)=> <Skeleton key={i} className="h-6 w-full bg-white/10" />)}
-    </div>
-  );
-}
-function ListSkeleton({ rows=3 }: { rows?: number }) {
-  return (
-    <div className="space-y-2">
-      {Array.from({length: rows}).map((_,i)=>(
-        <div key={i} className="flex items-center gap-2">
-          <Skeleton className="h-3 w-3 rounded-full bg-white/10" />
-          <Skeleton className="h-4 w-3/4 bg-white/10" />
-        </div>
-      ))}
-    </div>
-  );
-}
+// Header and skeleton components are defined in ./shared
