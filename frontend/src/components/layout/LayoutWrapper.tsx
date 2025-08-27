@@ -14,7 +14,7 @@ import JarvisWidget from '@/components/Jarvis/JarvisWidget';
 import Sidebar from '@/components/Sidebar';
 import { Menu } from 'lucide-react';
 import clsx from 'clsx';
-import { OnboardingDialog } from '@/components/OnboardingDialogue';
+import { OnboardingDialog } from '@/components/overview/OnboardingDialogue';
 
 function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
