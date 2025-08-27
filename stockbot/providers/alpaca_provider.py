@@ -17,7 +17,7 @@ class AlpacaProvider(BaseProvider):
         app_key: str,
         app_secret: str,
         mode: str = "paper",  # "paper" or "live"
-        timeout: float = 5.0
+        timeout: float = 15.0
     ):
         # Pick base trading API based on mode
         if mode == "live":
