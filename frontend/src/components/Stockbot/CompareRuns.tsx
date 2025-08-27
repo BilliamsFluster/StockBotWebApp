@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { fetchJSON } from "@/api/http";
+import api from "@/api/client";
 import { RunSummary, Metrics, RunArtifacts } from "./lib/types";
 import { formatPct, formatSigned } from "./lib/formats";
 
@@ -14,16 +14,16 @@ export default function CompareRuns() {
   const [rows, setRows] = useState<any[]>([]);
 
   const loadRuns = async () => {
-    const data = await fetchJSON<RunSummary[]>("/api/stockbot/runs");
+    const { data } = await api.get<RunSummary[]>("/stockbot/runs");
     setRuns(data ?? []);
   };
 
   const loadSelected = async () => {
     const out: any[] = [];
     for (const id of selected) {
-      const art = await fetchJSON<RunArtifacts>(`/api/stockbot/runs/${id}/artifacts`);
+      const { data: art } = await api.get<RunArtifacts>(`/stockbot/runs/${id}/artifacts`);
       if (!art?.metrics) continue;
-      const m = await fetchJSON<Metrics>(art.metrics);
+      const { data: m } = await api.get<Metrics>(art.metrics, { baseURL: '' });
       out.push({ id, ...m });
     }
     setRows(out);

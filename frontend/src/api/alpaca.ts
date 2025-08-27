@@ -1,4 +1,4 @@
-import { fetchJSON, postJSON } from '@/api/http';
+import api from '@/api/client';
 
 export interface ConnectAlpacaPayload {
   app_key: string;
@@ -11,9 +11,11 @@ export interface ConnectAlpacaPayload {
  * The backend should validate credentials before saving them.
  */
 export async function connectAlpaca(payload: ConnectAlpacaPayload) {
-  return postJSON('/api/alpaca/connect', payload);
+  const { data } = await api.post('/alpaca/connect', payload);
+  return data;
 }
 
 export const checkAlpacaCredentials = async () => {
-  return fetchJSON('/api/alpaca/status');
+  const { data } = await api.get('/alpaca/status');
+  return data;
 };

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { fetchJSON, postJSON } from "@/api/http";
+import api from "@/api/client";
 import { addRecentRun } from "./lib/runs";
 import type { JobStatusResponse, RunArtifacts } from "./lib/types";
 
@@ -177,12 +177,12 @@ export default function NewTraining({
     let timer: any;
     const tick = async () => {
       try {
-        const st = await fetchJSON<JobStatusResponse>(`/api/stockbot/runs/${jobId}`);
+        const { data: st } = await api.get<JobStatusResponse>(`/stockbot/runs/${jobId}`);
         setStatus(st);
         if (TERMINAL.includes(st.status)) {
           setProgress(st.status === "SUCCEEDED" ? "Run complete." : `Run ${st.status.toLowerCase()}.`);
           try {
-            const a = await fetchJSON<RunArtifacts>(`/api/stockbot/runs/${jobId}/artifacts`);
+            const { data: a } = await api.get<RunArtifacts>(`/stockbot/runs/${jobId}/artifacts`);
             setArtifacts(a);
           } catch {}
           return;
@@ -275,7 +275,7 @@ export default function NewTraining({
         out_tag: outTag,
       };
 
-      const resp = await postJSON<{ job_id: string }>("/api/stockbot/train", payload);
+      const { data: resp } = await api.post<{ job_id: string }>("/stockbot/train", payload);
       if (!resp?.job_id) throw new Error("No job_id returned");
       setJobId(resp.job_id);
       setProgress("Job started. Polling status…");
