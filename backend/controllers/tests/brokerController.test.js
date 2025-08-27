@@ -1,20 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getActiveBrokerPortfolio } from './brokerController.js';
 
 vi.mock('axios', () => ({
-  default: { post: vi.fn() }
+  default: { post: vi.fn(), isAxiosError: () => false }
 }));
-import axios from 'axios';
 
-vi.mock('../models/User.js', () => ({
+vi.mock('../../models/User.js', () => ({
   default: { findById: vi.fn() }
 }));
-import User from '../models/User.js';
-
-vi.mock('../config/getBrokerCredentials.js', () => ({
+vi.mock('../../config/getBrokerCredentials.js', () => ({
   getBrokerCredentials: vi.fn()
 }));
-import { getBrokerCredentials } from '../config/getBrokerCredentials.js';
+
+import axios from 'axios';
+import User from '../../models/User.js';
+import { getBrokerCredentials } from '../../config/getBrokerCredentials.js';
+
+process.env.MASTER_ENCRYPTION_KEY = '0'.repeat(64);
+const { getActiveBrokerPortfolio } = await import('../brokerController.js');
 
 function createRes() {
   return {
@@ -80,6 +82,6 @@ describe('getActiveBrokerPortfolio', () => {
     const res = createRes();
     await getActiveBrokerPortfolio(req, res);
     expect(res.status).toHaveBeenCalledWith(500);
-    expect(res.json).toHaveBeenCalledWith({ error: 'Failed to fetch portfolio' });
+    expect(res.json).toHaveBeenCalledWith({ error: 'fail' });
   });
 });

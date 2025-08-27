@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { registerValidation } from './authController.js';
 import { validationResult } from 'express-validator';
+
+process.env.MASTER_ENCRYPTION_KEY = '0'.repeat(64);
+const { registerValidation } = await import('../authController.js');
 
 const runValidations = async (req, validations) => {
   for (const v of validations) {

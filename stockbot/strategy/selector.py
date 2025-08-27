@@ -1,6 +1,6 @@
 
 # strategy/selector.py
-from strategy.momentum_strategy import MomentumStrategy
+from stockbot.strategy.baselines import MomentumStrategy
 from strategy.base_strategy import BaseStrategy
 from typing import Dict, Any
 

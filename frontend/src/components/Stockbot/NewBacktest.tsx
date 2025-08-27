@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { postJSON } from "@/api/http";
+import api from "@/api/client";
 import { addRecentRun } from "./lib/runs";
 
 export default function NewBacktest({
@@ -44,7 +44,7 @@ export default function NewBacktest({
       } else {
         payload.policy = baseline;
       }
-      const resp = await postJSON<{ job_id: string }>("/api/stockbot/backtest", payload);
+      const { data: resp } = await api.post<{ job_id: string }>("/stockbot/backtest", payload);
       if (!resp?.job_id) throw new Error("No job_id returned");
       addRecentRun({ id: resp.job_id, type: "backtest", status: "QUEUED", created_at: new Date().toISOString() });
       onJobCreated(resp.job_id);

@@ -1,15 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { handleJarvisPrompt } from './jarvisController.js';
 
 vi.mock('axios', () => ({
-  default: { post: vi.fn() }
+  default: { post: vi.fn(), isAxiosError: () => false }
 }));
-import axios from 'axios';
 
-vi.mock('../config/schwab.js', () => ({
+vi.mock('../../config/schwab.js', () => ({
   refreshSchwabAccessTokenInternal: vi.fn()
 }));
-import { refreshSchwabAccessTokenInternal } from '../config/schwab.js';
+
+vi.mock('../../utils/logger.js', () => ({
+  log: vi.fn()
+}));
+
+import axios from 'axios';
+import { refreshSchwabAccessTokenInternal } from '../../config/schwab.js';
+
+process.env.MASTER_ENCRYPTION_KEY = '0'.repeat(64);
+process.env.STOCKBOT_URL = 'http://stockbot';
+const { handleJarvisPrompt } = await import('../jarvisController.js');
 
 function createRes() {
   return {

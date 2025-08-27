@@ -1,17 +1,18 @@
-import { fetchJSON, postJSON } from '@/api/http';
-import { setUserPreferences } from '@/api/client';
+import api, { setUserPreferences } from '@/api/client';
 
 export const setActiveBroker = async (broker: string) => {
   return setUserPreferences({ activeBroker: broker });
 };
 
 export async function disconnectBroker(broker: string) {
-  return postJSON(`/api/${broker}/disconnect`, {});
+  const { data } = await api.post(`/${broker}/disconnect`, {});
+  return data;
 }
 
 export async function getActiveApiPortfolioData() {
   try {
-    return await fetchJSON(`/api/broker/portfolio`);
+    const { data } = await api.get(`/broker/portfolio`);
+    return data;
   } catch (error: any) {
     console.error('❌ Error fetching active broker portfolio:', error);
     const status = (error as any).status;
@@ -28,8 +29,8 @@ export async function getActiveApiPortfolioData() {
 // Add this function to check actual broker connection status
 export async function checkBrokerConnectionStatus(brokerId: string) {
   try {
-    const { status } = await fetchJSON<{ status: string }>(`/api/${brokerId}/status`);
-    return status || 'disconnected';
+    const { data } = await api.get<{ status: string }>(`/${brokerId}/status`);
+    return data.status || 'disconnected';
   } catch (error) {
     console.error(`Failed to check connection status for ${brokerId}:`, error);
     return 'disconnected';
