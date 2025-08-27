@@ -1,10 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
-import { getPreferences } from './userController.js';
 
-vi.mock('../models/User.js', () => ({
+vi.mock('../../models/User.js', () => ({
   default: { findById: vi.fn() }
 }));
-import User from '../models/User.js';
+import User from '../../models/User.js';
+
+process.env.MASTER_ENCRYPTION_KEY = '0'.repeat(64);
+const { getPreferences } = await import('../userController.js');
 
 function createRes() {
   return {

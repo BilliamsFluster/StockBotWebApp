@@ -36,7 +36,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install -r requirements-test.txt
-        working-directory: stockbot
-      - run: pytest
-        working-directory: stockbot
+      - run: pip install -r stockbot/requirements-test.txt
+      - run: pytest stockbot/tests
