@@ -16,7 +16,7 @@ from api.controllers.insights_controller import InsightsRequest, generate_insigh
 from api.controllers.highlights_controller import HighlightsRequest, generate_highlights
 
 
-def verify_api_key(request: Request):
+'''def verify_api_key(request: Request): -- security will be implemented soon
     expected = os.getenv("STOCKBOT_API_KEY")
     if not expected:
         raise RuntimeError("STOCKBOT_API_KEY not configured")
@@ -25,7 +25,9 @@ def verify_api_key(request: Request):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
 
-router = APIRouter(dependencies=[Depends(verify_api_key)])
+router = APIRouter(dependencies=[Depends(verify_api_key)])'''
+router = APIRouter()
+
 
 
 @router.post("/train")
