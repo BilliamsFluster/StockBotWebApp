@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { fetchJSON } from "@/api/http";
+import api from "@/api/client";
 import { RunSummary } from "./lib/types";
 import StatusChip from "./shared/StatusChip";
 import {
@@ -33,7 +33,7 @@ export default function Dashboard({
     setLoading(true);
     try {
       // You can pass ?type=train or ?type=backtest if your API supports filters
-      const data = await fetchJSON<RunSummary[]>("/api/stockbot/runs");
+      const { data } = await api.get<RunSummary[]>("/stockbot/runs");
       const next = saveRecentRuns((data ?? []).slice(0, 5));
       setRuns(next);
     } catch (e) {
