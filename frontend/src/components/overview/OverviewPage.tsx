@@ -21,7 +21,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { OnboardingTeaser } from "@/components/OnboardingTeaser";
+import { OnboardingTeaser } from "@/components/overview/OnboardingTeaser";
 import { useOnboarding } from "@/context/OnboardingContext";
 import { usePortfolioData } from "@/hooks/usePortfolioData";
 import { Stat } from "./shared/Stat";

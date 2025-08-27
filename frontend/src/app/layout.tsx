@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import LayoutWrapper from "@/components/LayoutWrapper";
+import LayoutWrapper from "@/components/layout/LayoutWrapper";
 import DebugBridge from "@/components/DebugBridge";
 
 

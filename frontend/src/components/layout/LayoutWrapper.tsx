@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import Lenis from '@studio-freight/lenis';
+import { usePathname } from 'next/navigation';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from '@/context/AuthContext';
 import { OnboardingProvider, useOnboarding } from '@/context/OnboardingContext';
@@ -13,13 +14,12 @@ import JarvisWidget from '@/components/Jarvis/JarvisWidget';
 import Sidebar from '@/components/Sidebar';
 import { Menu } from 'lucide-react';
 import clsx from 'clsx';
-import { OnboardingDialog } from './OnboardingDialogue';
+import { OnboardingDialog } from '@/components/overview/OnboardingDialogue';
 
 function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { showOnboarding, setShowOnboarding } = useOnboarding();
 
-  // State for sidebar
   const [isMobileOpen, setMobileOpen] = useState(false);
   const [isSidebarExpanded, setSidebarExpanded] = useState(true);
 
@@ -29,7 +29,26 @@ function AppLayout({ children }: { children: React.ReactNode }) {
     pathname === '/login' ||
     pathname === '/register';
 
-  // If it's an auth page, render a simple layout without the sidebar
+  // ✅ Initialize Lenis globally
+  useEffect(() => {
+    const lenis = new Lenis({
+      duration: 1.2,
+      easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+      
+    });
+
+    function raf(time: number) {
+      lenis.raf(time);
+      requestAnimationFrame(raf);
+    }
+
+    requestAnimationFrame(raf);
+
+    return () => {
+      lenis.destroy();
+    };
+  }, []);
+
   if (isAuthPage) {
     return (
       <>
@@ -39,7 +58,6 @@ function AppLayout({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // Render the main app layout with the sidebar
   return (
     <>
       <AuthRedirect />
@@ -50,8 +68,9 @@ function AppLayout({ children }: { children: React.ReactNode }) {
         setExpanded={setSidebarExpanded}
       />
       <main
+        data-lenis-scroll
         className={clsx(
-          'flex flex-col h-screen overflow-y-auto transition-all duration-300',
+          'flex flex-col transition-all duration-300 min-h-screen',
           isSidebarExpanded ? 'lg:ml-64' : 'lg:ml-[76px]'
         )}
       >
@@ -79,14 +98,12 @@ export default function LayoutWrapper({
   children: React.ReactNode;
 }) {
   const [isClient, setIsClient] = useState(false);
-  
+
   useEffect(() => {
     setIsClient(true);
   }, []);
 
-  if (!isClient) {
-    return null; // Or a loading spinner
-  }
+  if (!isClient) return null;
 
   return (
     <Providers>

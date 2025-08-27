@@ -1,4 +1,4 @@
-import LayoutWrapper from '@/components/LayoutWrapper';
+import LayoutWrapper from '@/components/layout/LayoutWrapper';
 
 export const metadata = {
   title: 'Jarvis | Chatbot',
