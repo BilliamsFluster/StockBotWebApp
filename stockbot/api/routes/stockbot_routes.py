@@ -1,4 +1,6 @@
-from fastapi import APIRouter, BackgroundTasks, File, UploadFile, Depends, Request, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, File, UploadFile, Depends, Request, WebSocket, HTTPException, status
+from fastapi.responses import StreamingResponse
+import asyncio
 import os
 from api.controllers.stockbot_controller import (
     TrainRequest,
@@ -9,8 +11,14 @@ from api.controllers.stockbot_controller import (
     get_run,
     get_artifacts,
     get_artifact_file,
+    tb_list_tags_for_run,
+    tb_scalar_series_for_run,
+    tb_histogram_series_for_run,
+    tb_grad_matrix_for_run,
+    tb_scalars_batch_for_run,
     save_policy_upload,
     bundle_zip,
+    cancel_run,
 )
 from api.controllers.insights_controller import InsightsRequest, generate_insights
 from api.controllers.highlights_controller import HighlightsRequest, generate_highlights
@@ -63,6 +71,109 @@ def get_run_artifact_file(run_id: str, name: str):
 @router.get("/runs/{run_id}/bundle")
 def get_run_bundle(run_id: str, include_model: bool = True):
     return bundle_zip(run_id, include_model=include_model)
+
+
+# ---- TensorBoard data ----
+@router.get("/runs/{run_id}/tb/tags")
+def get_run_tb_tags(run_id: str, request: Request):
+    return tb_list_tags_for_run(run_id, request)
+
+
+@router.get("/runs/{run_id}/tb/scalars")
+def get_run_tb_scalars(run_id: str, tag: str):
+    return tb_scalar_series_for_run(run_id, tag)
+
+
+@router.get("/runs/{run_id}/tb/histograms")
+def get_run_tb_histograms(run_id: str, tag: str, request: Request):
+    return tb_histogram_series_for_run(run_id, tag)
+
+
+@router.get("/runs/{run_id}/tb/grad-matrix")
+def get_run_tb_grad_matrix(run_id: str, request: Request):
+    return tb_grad_matrix_for_run(run_id, request)
+
+
+@router.get("/runs/{run_id}/tb/scalars-batch")
+def get_run_tb_scalars_batch(run_id: str, tags: str, request: Request):
+    tag_list = [t for t in (tags or "").split(",") if t]
+    return tb_scalars_batch_for_run(run_id, tag_list, request)
+
+
+@router.post("/runs/{run_id}/cancel")
+def post_cancel_run(run_id: str):
+    return cancel_run(run_id)
+
+
+# Optional: WebSocket live status (parallel to SSE stream)
+@router.websocket("/runs/{run_id}/ws")
+async def ws_run_status(ws: WebSocket, run_id: str):
+    await ws.accept()
+    try:
+        from api.controllers.stockbot_controller import RUNS  # lazy import
+        last = None
+        while True:
+            rec = RUNS.get(run_id)
+            if not rec:
+                await ws.send_json({"error": "not found"})
+                break
+            payload = {
+                "id": rec.id,
+                "type": rec.type,
+                "status": rec.status,
+                "out_dir": rec.out_dir,
+                "created_at": rec.created_at,
+                "started_at": rec.started_at,
+                "finished_at": rec.finished_at,
+                "error": rec.error,
+            }
+            if payload != last:
+                await ws.send_json(payload)
+                last = payload
+            if rec.status in ("SUCCEEDED", "FAILED", "CANCELLED"):
+                break
+            await asyncio.sleep(1.0)
+    except Exception:
+        pass
+    finally:
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+
+@router.get("/runs/{run_id}/stream")
+async def stream_run_status(run_id: str):
+    """Server-Sent Events stream of run status until terminal; emits JSON per event."""
+    from api.controllers.stockbot_controller import RUNS  # lazy import to avoid cycles
+
+    async def event_gen():
+        last = None
+        while True:
+            rec = RUNS.get(run_id)
+            if not rec:
+                yield "event: error\n" + f"data: {{\"error\": \"not found\"}}\n\n"
+                return
+            payload = {
+                "id": rec.id,
+                "type": rec.type,
+                "status": rec.status,
+                "out_dir": rec.out_dir,
+                "created_at": rec.created_at,
+                "started_at": rec.started_at,
+                "finished_at": rec.finished_at,
+                "error": rec.error,
+            }
+            if payload != last:
+                import json
+                yield "data: " + json.dumps(payload) + "\n\n"
+                last = payload
+            # break if terminal
+            if rec.status in ("SUCCEEDED", "FAILED", "CANCELLED"):
+                return
+            await asyncio.sleep(1.0)
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream")
 
 
 @router.post("/policies")

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import api from "@/api/client";
+import api, { buildUrl } from "@/api/client";
 import { addRecentRun } from "./lib/runs";
 import type { JobStatusResponse, RunArtifacts } from "./lib/types";
 
@@ -131,6 +131,9 @@ export default function NewTraining({
   const [rebalanceEps, setRebalanceEps] = useState(0.0);
   const [startCash, setStartCash] = useState(100000);
   const [episodeMaxSteps, setEpisodeMaxSteps] = useState<number | null>(256);
+  const [mappingMode, setMappingMode] = useState<"simplex_cash" | "tanh_leverage">("simplex_cash");
+  const [investMax, setInvestMax] = useState(0.85);
+  const [maxStepChange, setMaxStepChange] = useState(0.08);
 
   // ===== Features =====
   const [useCustomPipeline, setUseCustomPipeline] = useState(true);
@@ -150,10 +153,22 @@ export default function NewTraining({
 
   // ===== Training =====
   const [normalize, setNormalize] = useState(true);
-  const [policy, setPolicy] = useState<"mlp" | "window_cnn">("window_cnn");
+  const [policy, setPolicy] = useState<"mlp" | "window_cnn" | "window_lstm">("window_cnn");
   const [timesteps, setTimesteps] = useState(300000);
   const [seed, setSeed] = useState(42);
   const [outTag, setOutTag] = useState("ppo_cnn_norm");
+
+  // ===== PPO Hyperparameters =====
+  const [nSteps, setNSteps] = useState(4096);
+  const [batchSize, setBatchSize] = useState(1024);
+  const [learningRate, setLearningRate] = useState(3e-5);
+  const [gamma, setGamma] = useState(0.997);
+  const [gaeLambda, setGaeLambda] = useState(0.985);
+  const [clipRange, setClipRange] = useState(0.15);
+  const [entropyCoef, setEntropyCoef] = useState(0.04);
+  const [vfCoef, setVfCoef] = useState(1.0);
+  const [maxGradNorm, setMaxGradNorm] = useState(1.0);
+  const [dropout, setDropout] = useState(0.10);
 
   // ===== Run state =====
   const [jobId, setJobId] = useState<string | null>(null);
@@ -175,7 +190,24 @@ export default function NewTraining({
   useEffect(() => {
     if (!jobId) return;
     let timer: any;
+    let delay = 5000; // base delay
+    let running = true;
+    let busy = false;
+    let es: EventSource | null = null;
+    let ws: WebSocket | null = null;
+
+    const schedule = (ms: number) => {
+      if (!running) return;
+      clearTimeout(timer);
+      timer = setTimeout(tick, ms);
+    };
+
     const tick = async () => {
+      if (!running || busy) return schedule(delay);
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return schedule(Math.max(delay, 15000));
+      }
+      busy = true;
       try {
         const { data: st } = await api.get<JobStatusResponse>(`/stockbot/runs/${jobId}`);
         setStatus(st);
@@ -185,16 +217,86 @@ export default function NewTraining({
             const { data: a } = await api.get<RunArtifacts>(`/stockbot/runs/${jobId}/artifacts`);
             setArtifacts(a);
           } catch {}
+          running = false;
           return;
         }
-        timer = setTimeout(tick, 2000);
-      } catch {
-        timer = setTimeout(tick, 3000);
+        delay = 5000; // reset on success
+        schedule(delay);
+      } catch (e: any) {
+        // 429 backoff with optional Retry-After
+        const retryAfter = (e as any)?.status === 429 ? parseInt((e as any)?.response?.headers?.["retry-after"]) * 1000 : NaN;
+        if (Number.isFinite(retryAfter) && retryAfter > 0) {
+          delay = Math.min(Math.max(retryAfter, delay * 1.25), 60000);
+        } else {
+          delay = Math.min(delay * 1.7, 60000);
+        }
+        schedule(delay);
+      } finally {
+        busy = false;
       }
     };
-    tick();
-    return () => timer && clearTimeout(timer);
+
+    // Try WebSocket first; fallback to SSE, then polling
+    try {
+      const wsUrl = buildUrl(`/api/stockbot/runs/${jobId}/ws`).replace(/^http/, 'ws');
+      ws = new WebSocket(wsUrl);
+      ws.onmessage = (ev) => {
+        try {
+          const st = JSON.parse(ev.data);
+          setStatus(st);
+          if (TERMINAL.includes(st.status)) {
+            setProgress(st.status === "SUCCEEDED" ? "Run complete." : `Run ${st.status.toLowerCase()}.`);
+            (async () => {
+              try {
+                const { data: a } = await api.get<RunArtifacts>(`/stockbot/runs/${jobId}/artifacts`);
+                setArtifacts(a);
+              } catch {}
+            })();
+            try { ws && ws.close(); } catch {}
+            running = false;
+          }
+        } catch {}
+      };
+      ws.onerror = () => {
+        try { ws && ws.close(); } catch {}
+        // SSE fallback
+        const url = buildUrl(`/api/stockbot/runs/${jobId}/stream`);
+        es = new EventSource(url);
+        es.onmessage = (ev) => {
+          try {
+            const st = JSON.parse(ev.data);
+            setStatus(st);
+            if (TERMINAL.includes(st.status)) {
+              setProgress(st.status === "SUCCEEDED" ? "Run complete." : `Run ${st.status.toLowerCase()}.`);
+              (async () => {
+                try {
+                  const { data: a } = await api.get<RunArtifacts>(`/stockbot/runs/${jobId}/artifacts`);
+                  setArtifacts(a);
+                } catch {}
+              })();
+              es && es.close();
+              running = false;
+            }
+          } catch {}
+        };
+        es.onerror = () => {
+          es && es.close();
+          schedule(0);
+        };
+      };
+    } catch {
+      schedule(0);
+    }
+
+    return () => { running = false; clearTimeout(timer); try { es && es.close(); } catch {}; try { ws && ws.close(); } catch {} };
   }, [jobId]);
+
+  const cancelThisRun = async () => {
+    if (!jobId) return;
+    try {
+      await api.post(`/stockbot/runs/${jobId}/cancel`);
+    } catch {}
+  };
 
   // ===== Submit =====
   const onSubmit = async () => {
@@ -245,6 +347,9 @@ export default function NewTraining({
           rebalance_eps: safeNum(rebalanceEps, 0),
           randomize_start: !!randomizeStart,
           horizon: horizon ?? undefined,
+          mapping_mode: mappingMode,
+          invest_max: safeNum(investMax, 0.85),
+          max_step_change: safeNum(maxStepChange, 0.08),
         },
 
         features: {
@@ -273,6 +378,18 @@ export default function NewTraining({
         timesteps: safeNum(timesteps, 0),
         seed: safeNum(seed, 0),
         out_tag: outTag,
+
+        // PPO HPs
+        n_steps: safeNum(nSteps, 4096),
+        batch_size: safeNum(batchSize, 1024),
+        learning_rate: safeNum(learningRate, 3e-5),
+        gamma: safeNum(gamma, 0.997),
+        gae_lambda: safeNum(gaeLambda, 0.985),
+        clip_range: safeNum(clipRange, 0.15),
+        entropy_coef: safeNum(entropyCoef, 0.04),
+        vf_coef: safeNum(vfCoef, 1.0),
+        max_grad_norm: safeNum(maxGradNorm, 1.0),
+        dropout: safeNum(dropout, 0.1),
       };
 
       const { data: resp } = await api.post<{ job_id: string }>("/stockbot/train", payload);
@@ -321,8 +438,13 @@ export default function NewTraining({
       </div>
 
       {progress && (
-        <div className="rounded-md bg-muted p-3 text-sm">
-          <div className="font-medium">Status</div>
+        <div className="rounded-md bg-muted p-3 text-sm space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="font-medium">Status</div>
+            {status?.status && !TERMINAL.includes(status.status) && (
+              <Button size="sm" variant="outline" onClick={cancelThisRun}>Cancel Run</Button>
+            )}
+          </div>
           <div className="text-muted-foreground">
             {progress}
             {status?.status ? ` (server: ${status.status})` : ""}
@@ -545,6 +667,21 @@ export default function NewTraining({
               onChange={(e) => setRebalanceEps(safeNum(e.target.value, rebalanceEps))}
             />
           </div>
+          <div className="space-y-2">
+            <Label>Mapping Mode</Label>
+            <select className="border rounded h-10 px-3 w-full" value={mappingMode} onChange={(e)=>setMappingMode(e.target.value as any)}>
+              <option value="simplex_cash">simplex_cash (long-only + cash)</option>
+              <option value="tanh_leverage">tanh_leverage (long/short)</option>
+            </select>
+          </div>
+          <div className="space-y-2">
+            <Label>invest_max</Label>
+            <Input type="number" step="0.01" value={investMax} onChange={(e)=>setInvestMax(safeNum(e.target.value, investMax))} />
+          </div>
+          <div className="space-y-2">
+            <Label>max_step_change</Label>
+            <Input type="number" step="0.01" value={maxStepChange} onChange={(e)=>setMaxStepChange(safeNum(e.target.value, maxStepChange))} />
+          </div>
           <div className="col-span-full flex items-center justify-between rounded border p-3">
             <Label className="mr-4">Randomize Start</Label>
             <Switch checked={randomizeStart} onCheckedChange={setRandomizeStart} />
@@ -686,10 +823,11 @@ export default function NewTraining({
             <select
               className="border rounded h-10 px-3 w-full"
               value={policy}
-              onChange={(e) => setPolicy(e.target.value as "mlp" | "window_cnn")}
+              onChange={(e) => setPolicy(e.target.value as any)}
             >
               <option value="mlp">mlp</option>
               <option value="window_cnn">window_cnn</option>
+              <option value="window_lstm">window_lstm</option>
             </select>
           </div>
           <div className="space-y-2">
@@ -712,6 +850,23 @@ export default function NewTraining({
             <Label>Run Tag</Label>
             <Input value={outTag} onChange={(e) => setOutTag(e.target.value)} />
           </div>
+        </div>
+      </section>
+
+      {/* PPO Hyperparameters */}
+      <section className="rounded-xl border p-4">
+        <div className="font-medium mb-4">PPO Hyperparameters</div>
+        <div className="grid md:grid-cols-3 gap-4">
+          <div className="space-y-2"><Label>n_steps</Label><Input type="number" value={nSteps} onChange={(e)=>setNSteps(safeNum(e.target.value,nSteps))} /></div>
+          <div className="space-y-2"><Label>batch_size</Label><Input type="number" value={batchSize} onChange={(e)=>setBatchSize(safeNum(e.target.value,batchSize))} /></div>
+          <div className="space-y-2"><Label>learning_rate</Label><Input type="number" step="0.000001" value={learningRate} onChange={(e)=>setLearningRate(safeNum(e.target.value,learningRate))} /></div>
+          <div className="space-y-2"><Label>gamma</Label><Input type="number" step="0.0001" value={gamma} onChange={(e)=>setGamma(safeNum(e.target.value,gamma))} /></div>
+          <div className="space-y-2"><Label>gae_lambda</Label><Input type="number" step="0.0001" value={gaeLambda} onChange={(e)=>setGaeLambda(safeNum(e.target.value,gaeLambda))} /></div>
+          <div className="space-y-2"><Label>clip_range</Label><Input type="number" step="0.01" value={clipRange} onChange={(e)=>setClipRange(safeNum(e.target.value,clipRange))} /></div>
+          <div className="space-y-2"><Label>entropy_coef</Label><Input type="number" step="0.0001" value={entropyCoef} onChange={(e)=>setEntropyCoef(safeNum(e.target.value,entropyCoef))} /></div>
+          <div className="space-y-2"><Label>vf_coef</Label><Input type="number" step="0.01" value={vfCoef} onChange={(e)=>setVfCoef(safeNum(e.target.value,vfCoef))} /></div>
+          <div className="space-y-2"><Label>max_grad_norm</Label><Input type="number" step="0.01" value={maxGradNorm} onChange={(e)=>setMaxGradNorm(safeNum(e.target.value,maxGradNorm))} /></div>
+          <div className="space-y-2"><Label>dropout</Label><Input type="number" step="0.01" value={dropout} onChange={(e)=>setDropout(safeNum(e.target.value,dropout))} /></div>
         </div>
       </section>
 

@@ -110,11 +110,48 @@ class RLDiagCallback(BaseCallback):
 
     def log_grad_norm(self):
         total_sq = 0.0
-        for p in self.model.policy.parameters():
+        per_layer: list[tuple[str, float]] = []
+        try:
+            named = list(self.model.policy.named_parameters())
+        except Exception:
+            named = [("param", p) for p in self.model.policy.parameters()]  # type: ignore
+
+        for name, p in named:
             if p.grad is not None:
                 g = p.grad.data
-                total_sq += float(th.norm(g, p=2) ** 2)
+                n = float(th.norm(g, p=2))
+                total_sq += float(n ** 2)
+                per_layer.append((name, n))
+
+        # Global grad norm
         self.writer.add_scalar("grads/global_norm", (total_sq ** 0.5), self.num_timesteps)
+
+        # Per-layer grad norms (cap to avoid TB overload)
+        max_layers = 64
+        for name, n in per_layer[:max_layers]:
+            try:
+                self.writer.add_scalar(f"grads/by_layer/{name}", n, self.num_timesteps)
+            except Exception:
+                pass
+
+        # Histogram of gradient values (sampled)
+        try:
+            import numpy as np  # type: ignore
+            vals = []
+            for _, p in named:
+                if p.grad is not None:
+                    v = p.grad.detach().flatten().cpu().numpy()
+                    if v.size == 0:
+                        continue
+                    if v.size > 50000:
+                        idx = np.random.choice(v.size, 50000, replace=False)
+                        v = v[idx]
+                    vals.append(v)
+            if vals:
+                allv = np.concatenate(vals)
+                self.writer.add_histogram("grads/values", allv, self.num_timesteps)
+        except Exception:
+            pass
 
     def _on_training_end(self) -> None:
         self.writer.flush()

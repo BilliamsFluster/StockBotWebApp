@@ -10,6 +10,13 @@ import {
   getRunArtifactsProxy,
   getRunArtifactFileProxy,
   getRunBundleProxy,
+  streamRunStatusProxy,
+  cancelRunProxy,
+  getRunTbTagsProxy,
+  getRunTbScalarsProxy,
+  getRunTbHistogramsProxy,
+  getRunTbGradMatrixProxy,
+  getRunTbScalarsBatchProxy,
   getInsightsProxy,
   getHighlightsProxy,
 } from "../controllers/stockbotController.js";
@@ -32,6 +39,14 @@ router.get("/runs/:id/artifacts", protectRoute, getRunArtifactsProxy);
 // Stream a specific artifact (metrics, equity, trades, orders, summary, config, model, job_log)
 router.get("/runs/:id/files/:name", protectRoute, getRunArtifactFileProxy);
 router.get("/runs/:id/bundle", protectRoute, getRunBundleProxy);
+router.get("/runs/:id/stream", protectRoute, streamRunStatusProxy);
+router.post("/runs/:id/cancel", protectRoute, cancelRunProxy);
+// TensorBoard scalar endpoints
+router.get("/runs/:id/tb/tags", protectRoute, getRunTbTagsProxy);
+router.get("/runs/:id/tb/scalars", protectRoute, getRunTbScalarsProxy);
+router.get("/runs/:id/tb/scalars-batch", protectRoute, getRunTbScalarsBatchProxy);
+router.get("/runs/:id/tb/histograms", protectRoute, getRunTbHistogramsProxy);
+router.get("/runs/:id/tb/grad-matrix", protectRoute, getRunTbGradMatrixProxy);
 
 router.post("/policies/upload", protectRoute, upload.single("file"), uploadPolicyProxy);
 
