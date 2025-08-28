@@ -1,4 +1,3 @@
-
 # strategy/selector.py
 from stockbot.strategy.baselines import MomentumStrategy
 from strategy.base_strategy import BaseStrategy

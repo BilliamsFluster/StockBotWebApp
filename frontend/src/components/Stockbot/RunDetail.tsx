@@ -359,7 +359,7 @@ export default function RunDetail() {
                   labelFormatter={(t) => new Date(Number(t)).toLocaleString()}
                   formatter={(v: any) => formatUSD(Number(v))}
                 />
-                <Line type="monotone" dataKey="equity" dot={false} />
+                <Line type="monotone" dataKey="equity" dot={false} isAnimationActive={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -385,7 +385,7 @@ export default function RunDetail() {
                   formatter={(v: any) => `${(Number(v) * 100).toFixed(2)}%`}
                   labelFormatter={(t) => new Date(Number(t)).toLocaleString()}
                 />
-                <Area type="monotone" dataKey="dd" fillOpacity={0.3} />
+                <Area type="monotone" dataKey="dd" fillOpacity={0.3} isAnimationActive={false} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -441,7 +441,7 @@ export default function RunDetail() {
                 <XAxis dataKey="symbol" />
                 <YAxis tickFormatter={(v: number) => formatUSDShort(v)} />
                 <Tooltip formatter={(v: any) => formatUSD(Number(v))} />
-                <Bar dataKey="net" />
+                <Bar dataKey="net" isAnimationActive={false} />
               </BarChart>
             </ResponsiveContainer>
           </div>

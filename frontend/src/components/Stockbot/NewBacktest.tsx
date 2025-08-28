@@ -24,6 +24,7 @@ export default function NewBacktest({
   const [start, setStart] = useState("2022-01-01");
   const [end, setEnd] = useState("2022-12-31");
   const [outTag, setOutTag] = useState("ppo_cnn_norm_eval");
+  const [normalize, setNormalize] = useState(true);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -38,6 +39,7 @@ export default function NewBacktest({
         start,
         end,
         out_tag: outTag,
+        normalize,
       };
       if (runId) {
         payload.run_id = runId;
@@ -102,6 +104,10 @@ export default function NewBacktest({
         <div className="space-y-2">
           <Label>Run Tag</Label>
           <Input value={outTag} onChange={(e) => setOutTag(e.target.value)} />
+        </div>
+        <div className="col-span-full md:col-span-1 flex items-center justify-between rounded border p-3">
+          <Label className="mr-4">Normalize (eval)</Label>
+          <input type="checkbox" checked={normalize} onChange={(e)=>setNormalize(e.target.checked)} />
         </div>
       </div>
 

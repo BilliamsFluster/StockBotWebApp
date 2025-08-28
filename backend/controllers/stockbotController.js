@@ -34,7 +34,7 @@ export async function startBacktestProxy(req, res) {
     const { data } = await axios.post(`${STOCKBOT_URL}/api/stockbot/backtest`, req.body);
     return res.json(data);
   } catch (e) {
-    return res.status(400).json({ error: errMsg(e) });
+  return res.status(400).json({ error: errMsg(e) });
   }
 }
 
@@ -105,6 +105,92 @@ export async function getRunBundleProxy(req, res) {
   }
 }
 
+/** GET /api/stockbot/runs/:id/stream -> SSE passthrough */
+export async function streamRunStatusProxy(req, res) {
+  try {
+    const url = `${STOCKBOT_URL}/api/stockbot/runs/${encodeURIComponent(req.params.id)}/stream`;
+    const resp = await axios.get(url, { responseType: "stream" });
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    resp.data.pipe(res);
+  } catch (e) {
+    res.status(400).json({ error: errMsg(e) });
+  }
+}
+
+/** POST /api/stockbot/runs/:id/cancel */
+export async function cancelRunProxy(req, res) {
+  try {
+    const url = `${STOCKBOT_URL}/api/stockbot/runs/${encodeURIComponent(req.params.id)}/cancel`;
+    const { data } = await axios.post(url);
+    return res.json(data);
+  } catch (e) {
+    const status = e.response?.status || 500;
+    const body = e.response?.data || { error: errMsg(e) };
+    return res.status(status).json(body);
+  }
+}
+/** GET /api/stockbot/runs/:id/tb/tags */
+export async function getRunTbTagsProxy(req, res) {
+  try {
+    const url = `${STOCKBOT_URL}/api/stockbot/runs/${encodeURIComponent(req.params.id)}/tb/tags`;
+    const { data } = await axios.get(url);
+    return res.json(data);
+  } catch (e) {
+    return res.status(400).json({ error: errMsg(e) });
+  }
+}
+
+/** GET /api/stockbot/runs/:id/tb/scalars?tag=... */
+export async function getRunTbScalarsProxy(req, res) {
+  try {
+    const url = `${STOCKBOT_URL}/api/stockbot/runs/${encodeURIComponent(req.params.id)}/tb/scalars`;
+    const { data } = await axios.get(url, { params: { tag: req.query.tag } });
+    return res.json(data);
+  } catch (e) {
+    return res.status(400).json({ error: errMsg(e) });
+  }
+}
+
+/** GET /api/stockbot/runs/:id/tb/histograms?tag=... */
+export async function getRunTbHistogramsProxy(req, res) {
+  try {
+    const url = `${STOCKBOT_URL}/api/stockbot/runs/${encodeURIComponent(
+      req.params.id
+    )}/tb/histograms`;
+    const { data } = await axios.get(url, { params: { tag: req.query.tag } });
+    return res.json(data);
+  } catch (e) {
+    return res.status(400).json({ error: errMsg(e) });
+  }
+}
+
+/** GET /api/stockbot/runs/:id/tb/grad-matrix */
+export async function getRunTbGradMatrixProxy(req, res) {
+  try {
+    const url = `${STOCKBOT_URL}/api/stockbot/runs/${encodeURIComponent(
+      req.params.id
+    )}/tb/grad-matrix`;
+    const { data } = await axios.get(url);
+    return res.json(data);
+  } catch (e) {
+    return res.status(400).json({ error: errMsg(e) });
+  }
+}
+
+/** GET /api/stockbot/runs/:id/tb/scalars-batch?tags=a,b,c */
+export async function getRunTbScalarsBatchProxy(req, res) {
+  try {
+    const url = `${STOCKBOT_URL}/api/stockbot/runs/${encodeURIComponent(
+      req.params.id
+    )}/tb/scalars-batch`;
+    const { data } = await axios.get(url, { params: { tags: req.query.tags } });
+    return res.json(data);
+  } catch (e) {
+    return res.status(400).json({ error: errMsg(e) });
+  }
+}
 
 export async function uploadPolicyProxy(req, res) {
   try {
