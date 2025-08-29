@@ -5,8 +5,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { TooltipLabel } from "./shared/TooltipLabel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import api from "@/api/client";
 import type { RunSummary } from "./lib/types";
@@ -272,7 +272,9 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
           <div className="text-lg font-semibold">Training Results</div>
           <div className="flex-1" />
           <div className="hidden md:block w-64">
-            <Label className="text-xs">Run</Label>
+            <TooltipLabel className="text-xs" tooltip="Select a training run to inspect">
+              Run
+            </TooltipLabel>
             <select
               className="border rounded h-10 px-3 w-full"
               value={runId}
@@ -284,6 +286,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
             </select>
           </div>
           <div className="flex items-center gap-2">
+            <TooltipLabel tooltip="ID of a specific run">Run ID</TooltipLabel>
             <Input
               value={runId}
               onChange={(e) => setRunId(e.target.value)}
@@ -293,7 +296,9 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
             <Button size="sm" onClick={onLoad} disabled={!runId || loading}>{loading ? "Loading…" : "Load"}</Button>
           </div>
           <div className="flex items-center gap-2 rounded border px-2 py-1">
-            <Label className="text-sm">Auto‑refresh</Label>
+            <TooltipLabel className="text-sm" tooltip="Automatically reload metrics">
+              Auto‑refresh
+            </TooltipLabel>
             <Switch checked={autoRefresh} onCheckedChange={setAutoRefresh} />
           </div>
         </div>
@@ -503,7 +508,9 @@ function ActionsHistogramSection({ runId, tags }: { runId: string; tags: TBTags 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <Label className="text-xs">Tag</Label>
+        <TooltipLabel className="text-xs" tooltip="TensorBoard tag to visualize">
+          Tag
+        </TooltipLabel>
         <select className="border rounded h-9 px-2" value={tag || ""} onChange={(e)=>setTag(e.target.value)}>
           {(tags?.histograms || []).map((t) => (
             <option key={t} value={t}>{t}</option>

@@ -7,6 +7,7 @@ import {
   Table, TableHeader, TableRow, TableHead, TableBody, TableCell,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { parseCSVText, drawdownFromEquity } from "./lib/csv";
 import { formatPct, formatUSD, formatSigned } from "./lib/formats";
 import { Metrics } from "./lib/types";
@@ -302,7 +303,12 @@ export default function RunDetail() {
         <div className="flex flex-wrap items-center gap-3">
           <div className="text-lg font-semibold">Run Detail</div>
           <div className="flex-1" />
-          <Button variant="outline" size="sm" onClick={resetAll}>Reset</Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" size="sm" onClick={resetAll}>Reset</Button>
+            </TooltipTrigger>
+            <TooltipContent>Clear all loaded run data</TooltipContent>
+          </Tooltip>
           <label>
             <input type="file" multiple accept=".csv,application/json" onChange={onFileInput} className="hidden" id="upload-artifacts"/>
             <Button asChild size="sm">

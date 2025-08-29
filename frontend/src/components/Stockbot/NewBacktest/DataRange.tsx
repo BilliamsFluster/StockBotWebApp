@@ -1,5 +1,5 @@
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { TooltipLabel } from "../shared/TooltipLabel";
 
 interface DataRangeProps {
   symbols: string;
@@ -24,18 +24,21 @@ export function DataRangeSection({
       <div className="grid md:grid-cols-3 gap-4">
         <InputGroup
           label="Symbols"
+          tooltip="Comma-separated tickers"
           value={symbols}
           type="text"
           onChange={(v) => setSymbols(v)}
         />
         <InputGroup
           label="Start"
+          tooltip="Start date of historical data"
           value={start}
           type="date"
           onChange={(v) => setStart(v)}
         />
         <InputGroup
           label="End"
+          tooltip="End date of historical data"
           value={end}
           type="date"
           onChange={(v) => setEnd(v)}
@@ -47,15 +50,16 @@ export function DataRangeSection({
 
 interface InputGroupProps {
   label: string;
+  tooltip: string;
   value: string;
   type?: string;
   onChange: (v: string) => void;
 }
 
-function InputGroup({ label, value, onChange, type = "text" }: InputGroupProps) {
+function InputGroup({ label, tooltip, value, onChange, type = "text" }: InputGroupProps) {
   return (
     <div className="flex flex-col gap-1">
-      <Label className="text-sm font-medium">{label}</Label>
+      <TooltipLabel tooltip={tooltip}>{label}</TooltipLabel>
       <Input
         type={type}
         value={value}

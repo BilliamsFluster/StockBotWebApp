@@ -11,6 +11,7 @@ import TrainingResults from "@/components/Stockbot/TrainingResults";
 import CompareRuns from "@/components/Stockbot/CompareRuns";
 import Settings from "@/components/Stockbot/Settings";
 import LiveTrading from "@/components/Stockbot/LiveTrading";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 export default function Page() {
   const [tab, setTab] = useState("dashboard");
@@ -19,7 +20,8 @@ export default function Page() {
 
   return (
     <div className="p-6 space-y-6">
-      <Tabs value={tab} onValueChange={setTab} className="space-y-6">
+      <TooltipProvider delayDuration={80}>
+        <Tabs value={tab} onValueChange={setTab} className="space-y-6">
         <TabsList className="w-full grid grid-cols-8 gap-2">
           <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
           <TabsTrigger value="new-training">New Training</TabsTrigger>
@@ -90,7 +92,8 @@ export default function Page() {
         <TabsContent value="settings">
           <Settings />
         </TabsContent>
-      </Tabs>
+        </Tabs>
+      </TooltipProvider>
     </div>
   );
 }

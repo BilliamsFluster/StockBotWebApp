@@ -1,7 +1,7 @@
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { safeNum } from "./utils";
+import { TooltipLabel } from "../shared/TooltipLabel";
 
 interface FeaturesProps {
   useCustomPipeline: boolean;
@@ -25,11 +25,15 @@ export function FeaturesSection({
       <div className="font-medium mb-4">Features</div>
       <div className="grid md:grid-cols-2 gap-3">
         <div className="col-span-full flex items-center gap-2 rounded border p-2">
-          <Label className="min-w-[160px]">Use Custom Pipeline</Label>
+          <TooltipLabel className="min-w-[160px]" tooltip="Enable custom feature pipeline">
+            Use Custom Pipeline
+          </TooltipLabel>
           <Switch checked={useCustomPipeline} onCheckedChange={setUseCustomPipeline} />
         </div>
         <div className="flex items-center gap-2">
-          <Label className="min-w-[160px]">Feature Window</Label>
+          <TooltipLabel className="min-w-[160px]" tooltip="Number of periods used for each feature">
+            Feature Window
+          </TooltipLabel>
           <Input
             type="number"
             value={featureWindow}
@@ -38,7 +42,9 @@ export function FeaturesSection({
           />
         </div>
         <div className="flex items-center gap-2 col-span-full">
-          <Label className="min-w-[160px]">Indicators</Label>
+          <TooltipLabel className="min-w-[160px]" tooltip="Comma-separated technical indicators">
+            Indicators
+          </TooltipLabel>
           <Input
             value={indicators}
             onChange={(e) => setIndicators(e.target.value)}
