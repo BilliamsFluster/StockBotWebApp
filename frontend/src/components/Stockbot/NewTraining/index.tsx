@@ -1,4 +1,4 @@
-// src/components/Stockbot/NewTraining.tsx
+// src/components/Stockbot/NewTraining/index.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -6,20 +6,20 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Accordion } from "@/components/ui/accordion";
 import api, { buildUrl } from "@/api/client";
-import { addRecentRun } from "./lib/runs";
-import type { JobStatusResponse, RunArtifacts } from "./lib/types";
-import { safeNum } from "./NewTraining/utils";
-import { QuickSetupSection } from "./NewTraining/QuickSetup";
-import { DataEnvironmentSection } from "./NewTraining/DataEnv";
-import { CostsSection } from "./NewTraining/CostsSection";
-import { ExecutionSection } from "./NewTraining/ExecutionSection";
-import { RiskMarginSection } from "./NewTraining/RiskMargin";
-import { EpisodeSection } from "./NewTraining/EpisodeSection";
-import { FeaturesSection } from "./NewTraining/FeaturesSection";
-import { RewardSection } from "./NewTraining/RewardSection";
-import { TrainingSection } from "./NewTraining/TrainingSection";
-import { PPOHyperparamsSection } from "./NewTraining/PPOHyperparams";
-import { DownloadsSection } from "./NewTraining/DownloadsSection";
+import { addRecentRun } from "../lib/runs";
+import type { JobStatusResponse, RunArtifacts } from "../lib/types";
+import { safeNum } from "./utils";
+import { QuickSetupSection } from "./QuickSetup";
+import { DataEnvironmentSection } from "./DataEnv";
+import { CostsSection } from "./CostsSection";
+import { ExecutionSection } from "./ExecutionSection";
+import { RiskMarginSection } from "./RiskMargin";
+import { EpisodeSection } from "./EpisodeSection";
+import { FeaturesSection } from "./FeaturesSection";
+import { RewardSection } from "./RewardSection";
+import { TrainingSection } from "./TrainingSection";
+import { PPOHyperparamsSection } from "./PPOHyperparams";
+import { DownloadsSection } from "./DownloadsSection";
 
 type TrainPayload = {
   config_path: string;
