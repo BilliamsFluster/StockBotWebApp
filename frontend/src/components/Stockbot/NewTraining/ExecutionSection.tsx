@@ -1,7 +1,7 @@
 import { AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { safeNum } from "./utils";
+import { TooltipLabel } from "../shared/TooltipLabel";
 
 interface ExecutionProps {
   orderType: "market" | "limit";
@@ -30,7 +30,9 @@ export function ExecutionSection({
       <AccordionContent>
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
           <div className="flex items-center gap-2">
-            <Label className="min-w-[140px]">Order Type</Label>
+            <TooltipLabel className="min-w-[140px]" tooltip="Type of order to simulate">
+              Order Type
+            </TooltipLabel>
             <select
               className="flex-1 h-10 rounded border px-2"
               value={orderType}
@@ -41,7 +43,9 @@ export function ExecutionSection({
             </select>
           </div>
           <div className="flex items-center gap-2">
-            <Label className="min-w-[140px]">Limit Offset (bps)</Label>
+            <TooltipLabel className="min-w-[140px]" tooltip="Basis point offset for limit orders">
+              Limit Offset (bps)
+            </TooltipLabel>
             <Input
               type="number"
               step="0.1"
@@ -52,7 +56,9 @@ export function ExecutionSection({
             />
           </div>
           <div className="flex items-center gap-2">
-            <Label className="min-w-[140px]">Participation Cap</Label>
+            <TooltipLabel className="min-w-[140px]" tooltip="Maximum trade size as share of volume">
+              Participation Cap
+            </TooltipLabel>
             <Input
               type="number"
               step="0.01"
@@ -62,7 +68,9 @@ export function ExecutionSection({
             />
           </div>
           <div className="flex items-center gap-2">
-            <Label className="min-w-[140px]">Impact k</Label>
+            <TooltipLabel className="min-w-[140px]" tooltip="Price impact coefficient">
+              Impact k
+            </TooltipLabel>
             <Input
               type="number"
               step="0.001"

@@ -1,9 +1,9 @@
 "use client";
 
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Button } from "@/components/ui/button";
+import { TooltipLabel } from "../shared/TooltipLabel";
 
 interface PolicySourceProps {
   mode: "trained" | "baseline" | "upload";
@@ -41,19 +41,32 @@ export function PolicySourceSection({
           if (!lockedMode) setMode(v as any);
         }}
       >
-        <RadioCard id="src-trained" value="trained" disabled={lockedMode} label="Trained run" />
+        <RadioCard
+          id="src-trained"
+          value="trained"
+          disabled={lockedMode}
+          label="Trained run"
+          tooltip="Use a previously trained policy"
+        />
         <RadioCard
           id="src-baseline"
           value="baseline"
           disabled={lockedMode && mode !== "baseline"}
           label="Baseline policy"
+          tooltip="Run with a simple baseline strategy"
         />
-        <RadioCard id="src-upload" value="upload" disabled={lockedMode} label="Upload PPO .zip" />
+        <RadioCard
+          id="src-upload"
+          value="upload"
+          disabled={lockedMode}
+          label="Upload PPO .zip"
+          tooltip="Upload a custom PPO model"
+        />
       </RadioGroup>
 
       {mode === "trained" && (
         <div className="space-y-2">
-          <Label>Run ID</Label>
+          <TooltipLabel tooltip="ID of the training run to evaluate">Run ID</TooltipLabel>
           <Input value={runId ?? ""} readOnly placeholder="Provided by Dashboard" />
           {!runId && (
             <div className="text-xs text-muted-foreground">
@@ -67,6 +80,7 @@ export function PolicySourceSection({
         <div className="w-fit max-w-md">
           <SelectGroup
             label="Baseline"
+            tooltip="Choose baseline strategy"
             value={baseline}
             onChange={(v) => setBaseline(v as any)}
             options={[
@@ -82,7 +96,7 @@ export function PolicySourceSection({
 
       {mode === "upload" && (
         <div className="space-y-2">
-          <Label>Policy .zip</Label>
+          <TooltipLabel tooltip="Upload a PPO policy archive">Policy .zip</TooltipLabel>
           <div className="flex items-center gap-3">
             <Input
               type="file"
@@ -114,30 +128,36 @@ interface RadioCardProps {
   id: string;
   value: string;
   label: string;
+  tooltip: string;
   disabled?: boolean;
 }
 
-function RadioCard({ id, value, label, disabled }: RadioCardProps) {
+function RadioCard({ id, value, label, tooltip, disabled }: RadioCardProps) {
   return (
     <div className="flex items-center gap-2 rounded border p-3">
       <RadioGroupItem id={id} value={value} disabled={disabled} />
-      <Label htmlFor={id}>{label}</Label>
+      <TooltipLabel htmlFor={id} tooltip={tooltip}>
+        {label}
+      </TooltipLabel>
     </div>
   );
 }
 
 interface SelectGroupProps {
   label: string;
+  tooltip: string;
   value: string;
   onChange: (v: string) => void;
   options: { value: string; label: string }[];
   className?: string;
 }
 
-function SelectGroup({ label, value, onChange, options, className }: SelectGroupProps) {
+function SelectGroup({ label, tooltip, value, onChange, options, className }: SelectGroupProps) {
   return (
     <div className={`flex flex-col gap-1 ${className ?? ""}`}>
-      <Label className="text-sm font-medium">{label}</Label>
+      <TooltipLabel className="text-sm font-medium" tooltip={tooltip}>
+        {label}
+      </TooltipLabel>
       <select
         className="border rounded h-10 px-3 bg-background text-foreground"
         value={value}
