@@ -28,22 +28,46 @@ export function CostsSection({
     <AccordionItem value="costs">
       <AccordionTrigger>Costs</AccordionTrigger>
       <AccordionContent>
-        <div className="grid md:grid-cols-4 gap-4 pt-2">
-          <div className="space-y-2">
-            <Label>Commission % Notional</Label>
-            <Input type="number" step="0.0001" value={commissionPct} onChange={(e) => setCommissionPct(safeNum(e.target.value, commissionPct))} />
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
+          <div className="flex items-center gap-2">
+            <Label className="min-w-[140px]">Commission %</Label>
+            <Input
+              type="number"
+              step="0.0001"
+              value={commissionPct}
+              onChange={(e) => setCommissionPct(safeNum(e.target.value, commissionPct))}
+              className="flex-1"
+            />
           </div>
-          <div className="space-y-2">
-            <Label>Commission per Share</Label>
-            <Input type="number" step="0.0001" value={commissionPerShare} onChange={(e) => setCommissionPerShare(safeNum(e.target.value, commissionPerShare))} />
+          <div className="flex items-center gap-2">
+            <Label className="min-w-[140px]">Per Share</Label>
+            <Input
+              type="number"
+              step="0.0001"
+              value={commissionPerShare}
+              onChange={(e) => setCommissionPerShare(safeNum(e.target.value, commissionPerShare))}
+              className="flex-1"
+            />
           </div>
-          <div className="space-y-2">
-            <Label>Slippage (bps)</Label>
-            <Input type="number" step="0.1" value={slippageBps} onChange={(e) => setSlippageBps(safeNum(e.target.value, slippageBps))} />
+          <div className="flex items-center gap-2">
+            <Label className="min-w-[140px]">Slippage (bps)</Label>
+            <Input
+              type="number"
+              step="0.1"
+              value={slippageBps}
+              onChange={(e) => setSlippageBps(safeNum(e.target.value, slippageBps))}
+              className="flex-1"
+            />
           </div>
-          <div className="space-y-2">
-            <Label>Borrow Fee APR</Label>
-            <Input type="number" step="0.0001" value={borrowFeeApr} onChange={(e) => setBorrowFeeApr(safeNum(e.target.value, borrowFeeApr))} />
+          <div className="flex items-center gap-2">
+            <Label className="min-w-[140px]">Borrow Fee APR</Label>
+            <Input
+              type="number"
+              step="0.0001"
+              value={borrowFeeApr}
+              onChange={(e) => setBorrowFeeApr(safeNum(e.target.value, borrowFeeApr))}
+              className="flex-1"
+            />
           </div>
         </div>
       </AccordionContent>

@@ -28,11 +28,11 @@ export function ExecutionSection({
     <AccordionItem value="execution">
       <AccordionTrigger>Execution</AccordionTrigger>
       <AccordionContent>
-        <div className="grid md:grid-cols-4 gap-4 pt-2">
-          <div className="space-y-2">
-            <Label>Order Type</Label>
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
+          <div className="flex items-center gap-2">
+            <Label className="min-w-[140px]">Order Type</Label>
             <select
-              className="border rounded h-10 px-3 w-full"
+              className="flex-1 h-10 rounded border px-2"
               value={orderType}
               onChange={(e) => setOrderType(e.target.value as "market" | "limit")}
             >
@@ -40,32 +40,35 @@ export function ExecutionSection({
               <option value="limit">limit</option>
             </select>
           </div>
-          <div className="space-y-2">
-            <Label>Limit Offset (bps)</Label>
+          <div className="flex items-center gap-2">
+            <Label className="min-w-[140px]">Limit Offset (bps)</Label>
             <Input
               type="number"
               step="0.1"
               value={limitOffsetBps}
               onChange={(e) => setLimitOffsetBps(safeNum(e.target.value, limitOffsetBps))}
               disabled={orderType !== "limit"}
+              className="flex-1"
             />
           </div>
-          <div className="space-y-2">
-            <Label>Participation Cap (0–1)</Label>
+          <div className="flex items-center gap-2">
+            <Label className="min-w-[140px]">Participation Cap</Label>
             <Input
               type="number"
               step="0.01"
               value={participationCap}
               onChange={(e) => setParticipationCap(safeNum(e.target.value, participationCap))}
+              className="flex-1"
             />
           </div>
-          <div className="space-y-2">
-            <Label>Impact k</Label>
+          <div className="flex items-center gap-2">
+            <Label className="min-w-[140px]">Impact k</Label>
             <Input
               type="number"
               step="0.001"
               value={impactK}
               onChange={(e) => setImpactK(safeNum(e.target.value, impactK))}
+              className="flex-1"
             />
           </div>
         </div>

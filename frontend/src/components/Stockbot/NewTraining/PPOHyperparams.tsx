@@ -52,17 +52,105 @@ export function PPOHyperparamsSection({
     <AccordionItem value="ppo">
       <AccordionTrigger>PPO Hyperparameters</AccordionTrigger>
       <AccordionContent>
-        <div className="grid md:grid-cols-3 gap-4 pt-2">
-          <div className="space-y-2"><Label>n_steps</Label><Input type="number" value={nSteps} onChange={(e)=>setNSteps(safeNum(e.target.value,nSteps))} /></div>
-          <div className="space-y-2"><Label>batch_size</Label><Input type="number" value={batchSize} onChange={(e)=>setBatchSize(safeNum(e.target.value,batchSize))} /></div>
-          <div className="space-y-2"><Label>learning_rate</Label><Input type="number" step="0.000001" value={learningRate} onChange={(e)=>setLearningRate(safeNum(e.target.value,learningRate))} /></div>
-          <div className="space-y-2"><Label>gamma</Label><Input type="number" step="0.0001" value={gamma} onChange={(e)=>setGamma(safeNum(e.target.value,gamma))} /></div>
-          <div className="space-y-2"><Label>gae_lambda</Label><Input type="number" step="0.0001" value={gaeLambda} onChange={(e)=>setGaeLambda(safeNum(e.target.value,gaeLambda))} /></div>
-          <div className="space-y-2"><Label>clip_range</Label><Input type="number" step="0.01" value={clipRange} onChange={(e)=>setClipRange(safeNum(e.target.value,clipRange))} /></div>
-          <div className="space-y-2"><Label>entropy_coef</Label><Input type="number" step="0.0001" value={entropyCoef} onChange={(e)=>setEntropyCoef(safeNum(e.target.value,entropyCoef))} /></div>
-          <div className="space-y-2"><Label>vf_coef</Label><Input type="number" step="0.01" value={vfCoef} onChange={(e)=>setVfCoef(safeNum(e.target.value,vfCoef))} /></div>
-          <div className="space-y-2"><Label>max_grad_norm</Label><Input type="number" step="0.01" value={maxGradNorm} onChange={(e)=>setMaxGradNorm(safeNum(e.target.value,maxGradNorm))} /></div>
-          <div className="space-y-2"><Label>dropout</Label><Input type="number" step="0.01" value={dropout} onChange={(e)=>setDropout(safeNum(e.target.value,dropout))} /></div>
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3 pt-2">
+          <div className="flex items-center gap-2">
+            <Label className="min-w-[130px]">n_steps</Label>
+            <Input
+              type="number"
+              value={nSteps}
+              onChange={(e) => setNSteps(safeNum(e.target.value, nSteps))}
+              className="flex-1"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Label className="min-w-[130px]">batch_size</Label>
+            <Input
+              type="number"
+              value={batchSize}
+              onChange={(e) => setBatchSize(safeNum(e.target.value, batchSize))}
+              className="flex-1"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Label className="min-w-[130px]">learning_rate</Label>
+            <Input
+              type="number"
+              step="0.000001"
+              value={learningRate}
+              onChange={(e) => setLearningRate(safeNum(e.target.value, learningRate))}
+              className="flex-1"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Label className="min-w-[130px]">gamma</Label>
+            <Input
+              type="number"
+              step="0.0001"
+              value={gamma}
+              onChange={(e) => setGamma(safeNum(e.target.value, gamma))}
+              className="flex-1"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Label className="min-w-[130px]">gae_lambda</Label>
+            <Input
+              type="number"
+              step="0.0001"
+              value={gaeLambda}
+              onChange={(e) => setGaeLambda(safeNum(e.target.value, gaeLambda))}
+              className="flex-1"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Label className="min-w-[130px]">clip_range</Label>
+            <Input
+              type="number"
+              step="0.01"
+              value={clipRange}
+              onChange={(e) => setClipRange(safeNum(e.target.value, clipRange))}
+              className="flex-1"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Label className="min-w-[130px]">entropy_coef</Label>
+            <Input
+              type="number"
+              step="0.0001"
+              value={entropyCoef}
+              onChange={(e) => setEntropyCoef(safeNum(e.target.value, entropyCoef))}
+              className="flex-1"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Label className="min-w-[130px]">vf_coef</Label>
+            <Input
+              type="number"
+              step="0.01"
+              value={vfCoef}
+              onChange={(e) => setVfCoef(safeNum(e.target.value, vfCoef))}
+              className="flex-1"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Label className="min-w-[130px]">max_grad_norm</Label>
+            <Input
+              type="number"
+              step="0.01"
+              value={maxGradNorm}
+              onChange={(e) => setMaxGradNorm(safeNum(e.target.value, maxGradNorm))}
+              className="flex-1"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Label className="min-w-[130px]">dropout</Label>
+            <Input
+              type="number"
+              step="0.01"
+              value={dropout}
+              onChange={(e) => setDropout(safeNum(e.target.value, dropout))}
+              className="flex-1"
+            />
+          </div>
         </div>
       </AccordionContent>
     </AccordionItem>
