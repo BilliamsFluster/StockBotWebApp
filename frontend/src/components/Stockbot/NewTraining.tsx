@@ -4,13 +4,22 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Accordion } from "@/components/ui/accordion";
 import api, { buildUrl } from "@/api/client";
 import { addRecentRun } from "./lib/runs";
 import type { JobStatusResponse, RunArtifacts } from "./lib/types";
+import { safeNum } from "./NewTraining/utils";
+import { QuickSetupSection } from "./NewTraining/QuickSetup";
+import { DataEnvironmentSection } from "./NewTraining/DataEnv";
+import { CostsSection } from "./NewTraining/CostsSection";
+import { ExecutionSection } from "./NewTraining/ExecutionSection";
+import { RiskMarginSection } from "./NewTraining/RiskMargin";
+import { EpisodeSection } from "./NewTraining/EpisodeSection";
+import { FeaturesSection } from "./NewTraining/FeaturesSection";
+import { RewardSection } from "./NewTraining/RewardSection";
+import { TrainingSection } from "./NewTraining/TrainingSection";
+import { PPOHyperparamsSection } from "./NewTraining/PPOHyperparams";
+import { DownloadsSection } from "./NewTraining/DownloadsSection";
 
 type TrainPayload = {
   config_path: string;
@@ -108,12 +117,6 @@ export default function NewTraining({
   onJobCreated: (id: string) => void;
   onCancel: () => void;
 }) {
-  // ===== Helpers =====
-  const safeNum = (v: any, fallback = 0) => {
-    const n = typeof v === "string" ? parseFloat(v) : v;
-    return Number.isFinite(n) ? n : fallback;
-  };
-
   // ===== Data / Env =====
   const [symbols, setSymbols] = useState("AAPL,MSFT");
   const [start, setStart] = useState("2018-01-01");
@@ -458,7 +461,9 @@ export default function NewTraining({
           <div className="flex items-center justify-between">
             <div className="font-medium">Status</div>
             {status?.status && !TERMINAL.includes(status.status) && (
-              <Button size="sm" variant="outline" onClick={cancelThisRun}>Cancel Run</Button>
+              <Button size="sm" variant="outline" onClick={cancelThisRun}>
+                Cancel Run
+              </Button>
             )}
           </div>
           <div className="text-muted-foreground">
@@ -470,532 +475,165 @@ export default function NewTraining({
       )}
       {error && <div className="text-sm text-red-600">{error}</div>}
 
-      {/* Quick Setup (most important) */}
-      <section className="rounded-xl border p-4">
-        <div className="font-medium mb-4">Quick Setup</div>
-        <div className="grid md:grid-cols-3 gap-4">
-          <div className="col-span-full md:col-span-1 flex items-center justify-between rounded border p-3">
-            <Label className="mr-4">Normalize Observations</Label>
-            <Switch checked={normalize} onCheckedChange={setNormalize} />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="policy">Policy</Label>
-            <select
-              className="border rounded h-10 px-3 w-full"
-              id="policy"
-              value={policy}
-              onChange={(e) => setPolicy(e.target.value as any)}
-            >
-              <option value="mlp">mlp</option>
-              <option value="window_cnn">window_cnn</option>
-              <option value="window_lstm">window_lstm</option>
-            </select>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="timesteps">Timesteps</Label>
-            <Input
-              type="number"
-              id="timesteps"
-              value={timesteps}
-              onChange={(e) => setTimesteps(safeNum(e.target.value, timesteps))}
-            />
-            <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-              <span>Examples:</span>
-              <button type="button" className="underline" onClick={()=>setSymbols("AAPL,MSFT,GOOGL")}>
-                AAPL,MSFT,GOOGL
-              </button>
-              <button type="button" className="underline" onClick={()=>setSymbols("XOM,CVX")}>
-                XOM,CVX
-              </button>
-              <button type="button" className="underline" onClick={()=>setSymbols("SPY,QQQ")}>
-                SPY,QQQ
-              </button>
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="seed">Seed</Label>
-            <Input
-              type="number"
-              id="seed"
-              value={seed}
-              onChange={(e) => setSeed(safeNum(e.target.value, seed))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="run-tag">Run Tag</Label>
-            <Input id="run-tag" value={outTag} onChange={(e) => setOutTag(e.target.value)} />
-          </div>
-        </div>
-      </section>
+      <QuickSetupSection
+        normalize={normalize}
+        setNormalize={setNormalize}
+        policy={policy}
+        setPolicy={setPolicy}
+        timesteps={timesteps}
+        setTimesteps={setTimesteps}
+        seed={seed}
+        setSeed={setSeed}
+        outTag={outTag}
+        setOutTag={setOutTag}
+        setSymbols={setSymbols}
+      />
 
-      {/* Data & Environment */}
-      <section className="rounded-xl border p-4">
-        <div className="font-medium mb-4">Data & Environment</div>
-        <div className="grid md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>Symbols (comma separated)</Label>
-            <Input
-              value={symbols}
-              onChange={(e) => setSymbols(e.target.value)}
-              placeholder="AAPL,MSFT,…"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Interval</Label>
-            <Input value={interval} onChange={(e) => setInterval(e.target.value)} placeholder="1d" />
-          </div>
-          <div className="space-y-2">
-            <Label>Start</Label>
-            <Input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
-          </div>
-          <div className="space-y-2">
-            <Label>End</Label>
-            <Input type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
-          </div>
-          <div className="col-span-full flex items-center justify-between rounded border p-3">
-            <Label className="mr-4">Adjusted Prices</Label>
-            <Switch checked={adjusted} onCheckedChange={setAdjusted} />
-          </div>
-        </div>
-      </section>
+      <DataEnvironmentSection
+        symbols={symbols}
+        setSymbols={setSymbols}
+        start={start}
+        setStart={setStart}
+        end={end}
+        setEnd={setEnd}
+        interval={interval}
+        setInterval={setInterval}
+        adjusted={adjusted}
+        setAdjusted={setAdjusted}
+      />
 
-      {/* Advanced Settings */}
       <Card className="p-4 space-y-3">
         <div className="font-medium">Advanced Settings</div>
         <Accordion type="multiple" className="w-full">
-          <AccordionItem value="costs">
-            <AccordionTrigger>Costs</AccordionTrigger>
-            <AccordionContent>
-              <div className="grid md:grid-cols-4 gap-4 pt-2">
-                <div className="space-y-2">
-                  <Label>Commission % Notional</Label>
-                  <Input type="number" step="0.0001" value={commissionPct} onChange={(e) => setCommissionPct(safeNum(e.target.value, commissionPct))} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Commission per Share</Label>
-                  <Input type="number" step="0.0001" value={commissionPerShare} onChange={(e) => setCommissionPerShare(safeNum(e.target.value, commissionPerShare))} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Slippage (bps)</Label>
-                  <Input type="number" step="0.1" value={slippageBps} onChange={(e) => setSlippageBps(safeNum(e.target.value, slippageBps))} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Borrow Fee APR</Label>
-                  <Input type="number" step="0.0001" value={borrowFeeApr} onChange={(e) => setBorrowFeeApr(safeNum(e.target.value, borrowFeeApr))} />
-                </div>
-              </div>
-            </AccordionContent>
-          </AccordionItem>
-
-          <AccordionItem value="execution">
-            <AccordionTrigger>Execution</AccordionTrigger>
-            <AccordionContent>
-              <div className="grid md:grid-cols-4 gap-4 pt-2">
-          <div className="space-y-2">
-            <Label>Order Type</Label>
-            <select
-              className="border rounded h-10 px-3 w-full"
-              value={orderType}
-              onChange={(e) => setOrderType(e.target.value as "market" | "limit")}
-            >
-              <option value="market">market</option>
-              <option value="limit">limit</option>
-            </select>
-          </div>
-          <div className="space-y-2">
-            <Label>Limit Offset (bps)</Label>
-            <Input
-              type="number"
-              step="0.1"
-              value={limitOffsetBps}
-              onChange={(e) => setLimitOffsetBps(safeNum(e.target.value, limitOffsetBps))}
-              disabled={orderType !== "limit"}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Participation Cap (0–1)</Label>
-            <Input
-              type="number"
-              step="0.01"
-              value={participationCap}
-              onChange={(e) => setParticipationCap(safeNum(e.target.value, participationCap))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Impact k</Label>
-            <Input
-              type="number"
-              step="0.001"
-              value={impactK}
-              onChange={(e) => setImpactK(safeNum(e.target.value, impactK))}
-            />
-          </div>
-        </div>
-            </AccordionContent>
-          </AccordionItem>
-
-      {/* Risk / Margin */}
-      <section className="rounded-xl border p-4">
-        <div className="font-medium mb-4">Risk / Margin</div>
-        <div className="grid md:grid-cols-4 gap-4">
-          <div className="space-y-2">
-            <Label>Max Gross Leverage</Label>
-            <Input
-              type="number"
-              step="0.1"
-              value={maxGrossLev}
-              onChange={(e) => setMaxGrossLev(safeNum(e.target.value, maxGrossLev))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Maintenance Margin</Label>
-            <Input
-              type="number"
-              step="0.01"
-              value={maintenanceMargin}
-              onChange={(e) => setMaintenanceMargin(safeNum(e.target.value, maintenanceMargin))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Cash Borrow APR</Label>
-            <Input
-              type="number"
-              step="0.0001"
-              value={cashBorrowApr}
-              onChange={(e) => setCashBorrowApr(safeNum(e.target.value, cashBorrowApr))}
-            />
-          </div>
-          <div className="col-span-full md:col-span-1 flex items-center justify-between rounded border p-3">
-            <Label className="mr-4">Allow Short</Label>
-            <Switch checked={allowShort} onCheckedChange={setAllowShort} />
-          </div>
-          <div className="col-span-full md:col-span-1 flex items-center justify-between rounded border p-3">
-            <Label className="mr-4">Intraday Only</Label>
-            <Switch checked={intradayOnly} onCheckedChange={setIntradayOnly} />
-          </div>
-        </div>
-      </section>
-
-      {/* Episode */}
-      <section className="rounded-xl border p-4">
-        <div className="font-medium mb-4">Episode</div>
-        <div className="grid md:grid-cols-4 gap-4">
-          <div className="space-y-2">
-            <Label>Lookback</Label>
-            <Input
-              type="number"
-              value={lookback}
-              onChange={(e) => setLookback(safeNum(e.target.value, lookback))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Horizon (bars)</Label>
-            <Input
-              type="number"
-              value={horizon ?? 0}
-              onChange={(e) => {
-                const val = safeNum(e.target.value, 0);
-                setHorizon(val > 0 ? val : null);
-              }}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Episode Max Steps</Label>
-            <Input
-              type="number"
-              value={episodeMaxSteps ?? 0}
-              onChange={(e) => {
-                const val = safeNum(e.target.value, 0);
-                setEpisodeMaxSteps(val > 0 ? val : null);
-              }}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Start Cash</Label>
-            <Input
-              type="number"
-              value={startCash}
-              onChange={(e) => setStartCash(safeNum(e.target.value, startCash))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Rebalance Epsilon (fraction of equity)</Label>
-            <Input
-              type="number"
-              step="0.0001"
-              value={rebalanceEps}
-              onChange={(e) => setRebalanceEps(safeNum(e.target.value, rebalanceEps))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Mapping Mode</Label>
-            <select className="border rounded h-10 px-3 w-full" value={mappingMode} onChange={(e)=>setMappingMode(e.target.value as any)}>
-              <option value="simplex_cash">simplex_cash (long-only + cash)</option>
-              <option value="tanh_leverage">tanh_leverage (long/short)</option>
-            </select>
-          </div>
-          <div className="space-y-2">
-            <Label>invest_max</Label>
-            <Input type="number" step="0.01" value={investMax} onChange={(e)=>setInvestMax(safeNum(e.target.value, investMax))} />
-          </div>
-          <div className="space-y-2">
-            <Label>max_step_change</Label>
-            <Input type="number" step="0.01" value={maxStepChange} onChange={(e)=>setMaxStepChange(safeNum(e.target.value, maxStepChange))} />
-          </div>
-          <div className="col-span-full flex items-center justify-between rounded border p-3">
-            <Label className="mr-4">Randomize Start</Label>
-            <Switch checked={randomizeStart} onCheckedChange={setRandomizeStart} />
-          </div>
-        </div>
-      </section>
-
-      {/* Features */}
-      <section className="rounded-xl border p-4">
-        <div className="font-medium mb-4">Features</div>
-        <div className="grid md:grid-cols-3 gap-4">
-          <div className="col-span-full md:col-span-1 flex items-center justify-between rounded border p-3">
-            <Label className="mr-4">Use Custom Pipeline</Label>
-            <Switch checked={useCustomPipeline} onCheckedChange={setUseCustomPipeline} />
-          </div>
-          <div className="space-y-2">
-            <Label>Feature Window</Label>
-            <Input
-              type="number"
-              value={featureWindow}
-              onChange={(e) => setFeatureWindow(safeNum(e.target.value, featureWindow))}
-            />
-          </div>
-          <div className="space-y-2 md:col-span-2">
-            <Label>Indicators (comma separated)</Label>
-            <Input
-              value={indicators}
-              onChange={(e) => setIndicators(e.target.value)}
-              placeholder="logret,rsi14,vol20,macd,bb_upper,bb_lower"
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* Reward & Shaping */}
-      <section className="rounded-xl border p-4">
-        <div className="font-medium mb-4">Reward & Shaping</div>
-        <div className="grid md:grid-cols-3 gap-4">
-          <div className="space-y-2">
-            <Label>Reward Mode</Label>
-            <select
-              className="border rounded h-10 px-3 w-full"
-              value={rewardMode}
-              onChange={(e) => setRewardMode(e.target.value as "delta_nav" | "log_nav")}
-            >
-              <option value="delta_nav">delta_nav</option>
-              <option value="log_nav">log_nav</option>
-            </select>
-          </div>
-          <div className="space-y-2">
-            <Label>Drawdown Penalty</Label>
-            <Input
-              type="number"
-              step="0.0001"
-              value={wDrawdown}
-              onChange={(e) => setWDrawdown(safeNum(e.target.value, wDrawdown))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Turnover Penalty</Label>
-            <Input
-              type="number"
-              step="0.0001"
-              value={wTurnover}
-              onChange={(e) => setWTurnover(safeNum(e.target.value, wTurnover))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Volatility Penalty</Label>
-            <Input
-              type="number"
-              step="0.0001"
-              value={wVol}
-              onChange={(e) => setWVol(safeNum(e.target.value, wVol))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Vol Window</Label>
-            <Input
-              type="number"
-              value={volWindow}
-              onChange={(e) => setVolWindow(safeNum(e.target.value, volWindow))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Leverage Penalty</Label>
-            <Input
-              type="number"
-              step="0.0001"
-              value={wLeverage}
-              onChange={(e) => setWLeverage(safeNum(e.target.value, wLeverage))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Stop Equity Fraction</Label>
-            <Input
-              type="number"
-              step="0.01"
-              value={stopEqFrac}
-              onChange={(e) => setStopEqFrac(safeNum(e.target.value, stopEqFrac))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Sharpe Window (optional)</Label>
-            <Input
-              type="number"
-              value={sharpeWindow ?? 0}
-              onChange={(e) => {
-                const v = safeNum(e.target.value, 0);
-                setSharpeWindow(v > 0 ? v : undefined);
-              }}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Sharpe Scale (optional)</Label>
-            <Input
-              type="number"
-              step="0.0001"
-              value={sharpeScale ?? 0}
-              onChange={(e) => {
-                const v = safeNum(e.target.value, 0);
-                setSharpeScale(v > 0 ? v : undefined);
-              }}
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* Training (advanced) */}
-      <section className="rounded-xl border p-4">
-        <div className="font-medium mb-4">Training (advanced)</div>
-        <div className="grid md:grid-cols-3 gap-4">
-          <div className="col-span-full md:col-span-1 flex items-center justify-between rounded border p-3">
-            <Label className="mr-4">Normalize Observations</Label>
-            <Switch checked={normalize} onCheckedChange={setNormalize} />
-          </div>
-          <div className="space-y-2">
-            <Label>Policy</Label>
-            <select
-              className="border rounded h-10 px-3 w-full"
-              value={policy}
-              onChange={(e) => setPolicy(e.target.value as any)}
-            >
-              <option value="mlp">mlp</option>
-              <option value="window_cnn">window_cnn</option>
-              <option value="window_lstm">window_lstm</option>
-            </select>
-          </div>
-          <div className="space-y-2">
-            <Label>Timesteps</Label>
-            <Input
-              type="number"
-              value={timesteps}
-              onChange={(e) => setTimesteps(safeNum(e.target.value, timesteps))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Seed</Label>
-            <Input
-              type="number"
-              value={seed}
-              onChange={(e) => setSeed(safeNum(e.target.value, seed))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Run Tag</Label>
-            <Input value={outTag} onChange={(e) => setOutTag(e.target.value)} />
-          </div>
-        </div>
-      </section>
-
-          <AccordionItem value="ppo">
-            <AccordionTrigger>PPO Hyperparameters</AccordionTrigger>
-            <AccordionContent>
-              <div className="grid md:grid-cols-3 gap-4 pt-2">
-          <div className="space-y-2"><Label>n_steps</Label><Input type="number" value={nSteps} onChange={(e)=>setNSteps(safeNum(e.target.value,nSteps))} /></div>
-          <div className="space-y-2"><Label>batch_size</Label><Input type="number" value={batchSize} onChange={(e)=>setBatchSize(safeNum(e.target.value,batchSize))} /></div>
-          <div className="space-y-2"><Label>learning_rate</Label><Input type="number" step="0.000001" value={learningRate} onChange={(e)=>setLearningRate(safeNum(e.target.value,learningRate))} /></div>
-          <div className="space-y-2"><Label>gamma</Label><Input type="number" step="0.0001" value={gamma} onChange={(e)=>setGamma(safeNum(e.target.value,gamma))} /></div>
-          <div className="space-y-2"><Label>gae_lambda</Label><Input type="number" step="0.0001" value={gaeLambda} onChange={(e)=>setGaeLambda(safeNum(e.target.value,gaeLambda))} /></div>
-          <div className="space-y-2"><Label>clip_range</Label><Input type="number" step="0.01" value={clipRange} onChange={(e)=>setClipRange(safeNum(e.target.value,clipRange))} /></div>
-          <div className="space-y-2"><Label>entropy_coef</Label><Input type="number" step="0.0001" value={entropyCoef} onChange={(e)=>setEntropyCoef(safeNum(e.target.value,entropyCoef))} /></div>
-          <div className="space-y-2"><Label>vf_coef</Label><Input type="number" step="0.01" value={vfCoef} onChange={(e)=>setVfCoef(safeNum(e.target.value,vfCoef))} /></div>
-          <div className="space-y-2"><Label>max_grad_norm</Label><Input type="number" step="0.01" value={maxGradNorm} onChange={(e)=>setMaxGradNorm(safeNum(e.target.value,maxGradNorm))} /></div>
-          <div className="space-y-2"><Label>dropout</Label><Input type="number" step="0.01" value={dropout} onChange={(e)=>setDropout(safeNum(e.target.value,dropout))} /></div>
-              </div>
-            </AccordionContent>
-          </AccordionItem>
+          <CostsSection
+            commissionPct={commissionPct}
+            setCommissionPct={setCommissionPct}
+            commissionPerShare={commissionPerShare}
+            setCommissionPerShare={setCommissionPerShare}
+            slippageBps={slippageBps}
+            setSlippageBps={setSlippageBps}
+            borrowFeeApr={borrowFeeApr}
+            setBorrowFeeApr={setBorrowFeeApr}
+          />
+          <ExecutionSection
+            orderType={orderType}
+            setOrderType={setOrderType}
+            limitOffsetBps={limitOffsetBps}
+            setLimitOffsetBps={setLimitOffsetBps}
+            participationCap={participationCap}
+            setParticipationCap={setParticipationCap}
+            impactK={impactK}
+            setImpactK={setImpactK}
+          />
+          <PPOHyperparamsSection
+            nSteps={nSteps}
+            setNSteps={setNSteps}
+            batchSize={batchSize}
+            setBatchSize={setBatchSize}
+            learningRate={learningRate}
+            setLearningRate={setLearningRate}
+            gamma={gamma}
+            setGamma={setGamma}
+            gaeLambda={gaeLambda}
+            setGaeLambda={setGaeLambda}
+            clipRange={clipRange}
+            setClipRange={setClipRange}
+            entropyCoef={entropyCoef}
+            setEntropyCoef={setEntropyCoef}
+            vfCoef={vfCoef}
+            setVfCoef={setVfCoef}
+            maxGradNorm={maxGradNorm}
+            setMaxGradNorm={setMaxGradNorm}
+            dropout={dropout}
+            setDropout={setDropout}
+          />
         </Accordion>
       </Card>
 
-      {/* Post-run actions */}
-      {jobId && TERMINAL.includes(status?.status as any) && (
-        <section className="rounded-xl border p-4 space-y-3">
-          <div className="font-medium">Downloads</div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <Switch checked={includeModel} onCheckedChange={setIncludeModel} id="include-model" />
-              <Label htmlFor="include-model" className="text-sm">
-                Include model (.zip) in bundle
-              </Label>
-            </div>
-            {bundleHref && (
-              <a className="underline" href={bundleHref} target="_blank" rel="noreferrer">
-                <Button>Download Bundle (.zip)</Button>
-              </a>
-            )}
-          </div>
+      <RiskMarginSection
+        maxGrossLev={maxGrossLev}
+        setMaxGrossLev={setMaxGrossLev}
+        maintenanceMargin={maintenanceMargin}
+        setMaintenanceMargin={setMaintenanceMargin}
+        cashBorrowApr={cashBorrowApr}
+        setCashBorrowApr={setCashBorrowApr}
+        allowShort={allowShort}
+        setAllowShort={setAllowShort}
+        intradayOnly={intradayOnly}
+        setIntradayOnly={setIntradayOnly}
+      />
 
-          {artifacts && (
-            <div className="flex flex-wrap gap-3 text-sm">
-              {artifacts.metrics && (
-                <a className="underline" href={artifacts.metrics} target="_blank" rel="noreferrer">
-                  metrics.json
-                </a>
-              )}
-              {artifacts.equity && (
-                <a className="underline" href={artifacts.equity} target="_blank" rel="noreferrer">
-                  equity.csv
-                </a>
-              )}
-              {artifacts.orders && (
-                <a className="underline" href={artifacts.orders} target="_blank" rel="noreferrer">
-                  orders.csv
-                </a>
-              )}
-              {artifacts.trades && (
-                <a className="underline" href={artifacts.trades} target="_blank" rel="noreferrer">
-                  trades.csv
-                </a>
-              )}
-              {artifacts.summary && (
-                <a className="underline" href={artifacts.summary} target="_blank" rel="noreferrer">
-                  summary.json
-                </a>
-              )}
-              {artifacts.config && (
-                <a className="underline" href={artifacts.config} target="_blank" rel="noreferrer">
-                  config.snapshot.yaml
-                </a>
-              )}
-              {artifacts.model && (
-                <a className="underline" href={artifacts.model} target="_blank" rel="noreferrer">
-                  ppo_policy.zip
-                </a>
-              )}
-              {artifacts.job_log && (
-                <a className="underline" href={artifacts.job_log} target="_blank" rel="noreferrer">
-                  job.log
-                </a>
-              )}
-            </div>
-          )}
-        </section>
+      <EpisodeSection
+        lookback={lookback}
+        setLookback={setLookback}
+        horizon={horizon}
+        setHorizon={setHorizon}
+        episodeMaxSteps={episodeMaxSteps}
+        setEpisodeMaxSteps={setEpisodeMaxSteps}
+        startCash={startCash}
+        setStartCash={setStartCash}
+        rebalanceEps={rebalanceEps}
+        setRebalanceEps={setRebalanceEps}
+        mappingMode={mappingMode}
+        setMappingMode={setMappingMode}
+        investMax={investMax}
+        setInvestMax={setInvestMax}
+        maxStepChange={maxStepChange}
+        setMaxStepChange={setMaxStepChange}
+        randomizeStart={randomizeStart}
+        setRandomizeStart={setRandomizeStart}
+      />
+
+      <FeaturesSection
+        useCustomPipeline={useCustomPipeline}
+        setUseCustomPipeline={setUseCustomPipeline}
+        featureWindow={featureWindow}
+        setFeatureWindow={setFeatureWindow}
+        indicators={indicators}
+        setIndicators={setIndicators}
+      />
+
+      <RewardSection
+        rewardMode={rewardMode}
+        setRewardMode={setRewardMode}
+        wDrawdown={wDrawdown}
+        setWDrawdown={setWDrawdown}
+        wTurnover={wTurnover}
+        setWTurnover={setWTurnover}
+        wVol={wVol}
+        setWVol={setWVol}
+        volWindow={volWindow}
+        setVolWindow={setVolWindow}
+        wLeverage={wLeverage}
+        setWLeverage={setWLeverage}
+        stopEqFrac={stopEqFrac}
+        setStopEqFrac={setStopEqFrac}
+        sharpeWindow={sharpeWindow}
+        setSharpeWindow={setSharpeWindow}
+        sharpeScale={sharpeScale}
+        setSharpeScale={setSharpeScale}
+      />
+
+      <TrainingSection
+        normalize={normalize}
+        setNormalize={setNormalize}
+        policy={policy}
+        setPolicy={setPolicy}
+        timesteps={timesteps}
+        setTimesteps={setTimesteps}
+        seed={seed}
+        setSeed={setSeed}
+        outTag={outTag}
+        setOutTag={setOutTag}
+      />
+
+      {jobId && TERMINAL.includes(status?.status as any) && (
+        <DownloadsSection
+          includeModel={includeModel}
+          setIncludeModel={setIncludeModel}
+          bundleHref={bundleHref}
+          artifacts={artifacts}
+        />
       )}
     </Card>
   );
