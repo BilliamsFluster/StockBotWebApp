@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import api from "@/api/client";
 import type { RunSummary } from "./lib/types";
 import {
@@ -47,6 +48,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   const [showTiming, setShowTiming] = useState(false);
   const [showGrads, setShowGrads] = useState(true);
   const [showDists, setShowDists] = useState(false);
+  const [tab, setTab] = useState("overview");
 
   // Load persisted UI state per run
   useEffect(() => {
@@ -313,7 +315,17 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
         )}
       </Card>
 
-      {/* Rollout/Eval */}
+      <Tabs value={tab} onValueChange={setTab} className="space-y-6">
+        <TabsList className="w-full flex flex-wrap gap-2">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="optim">Optimization</TabsTrigger>
+          <TabsTrigger value="timing">Timing</TabsTrigger>
+          <TabsTrigger value="grads">Gradients</TabsTrigger>
+          <TabsTrigger value="scalars">Scalars</TabsTrigger>
+        </TabsList>
+        {/* Rollout/Eval */}
+        <TabsContent value="overview">
+      <div id="tr-overview" />
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between">
           <div className="font-semibold">Rollout & Eval</div>
@@ -327,6 +339,8 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
         )}
       </Card>
 
+        </TabsContent>
+        <TabsContent value="optim">
       {/* Optimization */}
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between">
@@ -349,6 +363,8 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
         )}
       </Card>
 
+        </TabsContent>
+        <TabsContent value="timing">
       {/* Timing */}
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between">
@@ -362,6 +378,8 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
         )}
       </Card>
 
+        </TabsContent>
+        <TabsContent value="grads">
       {/* Gradients */}
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between">
@@ -390,21 +408,10 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
         )}
       </Card>
 
-      {gradMatrix && gradMatrix.layers.length > 0 && gradMatrix.steps.length > 0 && (
-        <Card className="p-4 space-y-2">
-          <div className="font-semibold">Gradient Norms Heatmap (layers × updates)</div>
-          <Heatmap gm={gradMatrix} />
-          <div className="text-xs text-muted-foreground">Color scale is log10(norm); red = higher.</div>
-        </Card>
-      )}
+      {/* gradients duplicate removed */}
 
-      {gradientSurface && (
-        <Card className="p-4 space-y-2">
-          <div className="font-semibold">Gradient Norms 3D Surface (log10(norm))</div>
-          <PlotlySurface x={gradientSurface.x} y={gradientSurface.y} z={gradientSurface.z} height={420} />
-        </Card>
-      )}
-
+        </TabsContent>
+        <TabsContent value="scalars">
       {/* All scalar tags (grouped) */}
       {tags && tags.scalars?.length > 0 && (
         <Card className="p-4 space-y-3">
@@ -457,6 +464,8 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
           )}
         </Card>
       )}
+        </TabsContent>
+      </Tabs>
 
       <div className="text-xs text-muted-foreground">
         Tip: Expand Everything you want to see in detail.
