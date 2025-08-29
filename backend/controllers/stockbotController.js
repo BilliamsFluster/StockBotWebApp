@@ -257,3 +257,85 @@ export async function getHighlightsProxy(req, res) {
     return res.status(status).json(body);
   }
 }
+
+/**
+ * Live trading proxies
+ * These endpoints bridge the frontend to the Python StockBot service,
+ * automatically attaching the active broker and decrypted credentials
+ * from the authenticated user.
+ */
+export async function startLiveTradingProxy(req, res) {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const body = req.body || {};
+    const broker = body.broker || user.preferences?.activeBroker;
+    if (!broker) return res.status(400).json({ error: "No active broker set" });
+
+    const credentials = await getBrokerCredentials(user, broker);
+
+    const payload = {
+      broker,
+      credentials,
+      run_id: body.run_id,
+      policy_path: body.policy_path,
+      // optional: trading parameters could be passed-through here later
+    };
+
+    const { data } = await axios.post(
+      `${STOCKBOT_URL}/api/stockbot/trade/start`,
+      payload
+    );
+    return res.json(data);
+  } catch (e) {
+    const status = e.response?.status || 500;
+    const body = e.response?.data || { error: errMsg(e) };
+    return res.status(status).json(body);
+  }
+}
+
+export async function stopLiveTradingProxy(req, res) {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const body = req.body || {};
+    const broker = body.broker || user.preferences?.activeBroker;
+    if (!broker) return res.status(400).json({ error: "No active broker set" });
+
+    const credentials = await getBrokerCredentials(user, broker);
+
+    const payload = { broker, credentials };
+    const { data } = await axios.post(
+      `${STOCKBOT_URL}/api/stockbot/trade/stop`,
+      payload
+    );
+    return res.json(data);
+  } catch (e) {
+    const status = e.response?.status || 500;
+    const body = e.response?.data || { error: errMsg(e) };
+    return res.status(status).json(body);
+  }
+}
+
+export async function getLiveTradingStatusProxy(req, res) {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const broker = user.preferences?.activeBroker;
+    if (!broker) return res.status(400).json({ error: "No active broker set" });
+
+    // Prefer GET to the python service; if it requires POST, it should be adjusted there.
+    const { data } = await axios.get(
+      `${STOCKBOT_URL}/api/stockbot/trade/status`,
+      { params: { broker } }
+    );
+    return res.json(data);
+  } catch (e) {
+    const status = e.response?.status || 500;
+    const body = e.response?.data || { error: errMsg(e) };
+    return res.status(status).json(body);
+  }
+}

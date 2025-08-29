@@ -19,6 +19,9 @@ import {
   getRunTbScalarsBatchProxy,
   getInsightsProxy,
   getHighlightsProxy,
+  startLiveTradingProxy,
+  stopLiveTradingProxy,
+  getLiveTradingStatusProxy,
 } from "../controllers/stockbotController.js";
 import { protectRoute } from "../middleware/protectRoute.js";
 
@@ -30,6 +33,11 @@ const router = express.Router();
 // Kick off jobs
 router.post("/train", protectRoute, startTrainProxy);
 router.post("/backtest", protectRoute, startBacktestProxy);
+
+// Live trading controls
+router.post("/trade/start", protectRoute, startLiveTradingProxy);
+router.post("/trade/stop", protectRoute, stopLiveTradingProxy);
+router.get("/trade/status", protectRoute, getLiveTradingStatusProxy);
 
 // Query jobs
 router.get("/runs", protectRoute, listRunsProxy);
