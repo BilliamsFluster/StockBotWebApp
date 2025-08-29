@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import api, { buildUrl } from "@/api/client";
 import { addRecentRun } from "./lib/runs";
 import type { JobStatusResponse, RunArtifacts } from "./lib/types";
@@ -52,6 +53,9 @@ type TrainPayload = {
     rebalance_eps: number;
     randomize_start: boolean;
     horizon?: number | null;
+    mapping_mode?: "simplex_cash" | "tanh_leverage";
+    invest_max?: number;
+    max_step_change?: number;
   };
 
   features: {
@@ -74,13 +78,25 @@ type TrainPayload = {
 
   // Training params
   normalize: boolean;
-  policy: "mlp" | "window_cnn";
+  policy: "mlp" | "window_cnn" | "window_lstm";
   timesteps: number;
   seed: number;
 
   // Output
   out_tag: string;
   out_dir?: string;
+
+  // PPO Hyperparameters
+  n_steps: number;
+  batch_size: number;
+  learning_rate: number;
+  gamma: number;
+  gae_lambda: number;
+  clip_range: number;
+  entropy_coef: number;
+  vf_coef: number;
+  max_grad_norm: number;
+  dropout: number;
 };
 
 const TERMINAL: Array<JobStatusResponse["status"]> = ["SUCCEEDED", "FAILED", "CANCELLED"];
@@ -454,6 +470,64 @@ export default function NewTraining({
       )}
       {error && <div className="text-sm text-red-600">{error}</div>}
 
+      {/* Quick Setup (most important) */}
+      <section className="rounded-xl border p-4">
+        <div className="font-medium mb-4">Quick Setup</div>
+        <div className="grid md:grid-cols-3 gap-4">
+          <div className="col-span-full md:col-span-1 flex items-center justify-between rounded border p-3">
+            <Label className="mr-4">Normalize Observations</Label>
+            <Switch checked={normalize} onCheckedChange={setNormalize} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="policy">Policy</Label>
+            <select
+              className="border rounded h-10 px-3 w-full"
+              id="policy"
+              value={policy}
+              onChange={(e) => setPolicy(e.target.value as any)}
+            >
+              <option value="mlp">mlp</option>
+              <option value="window_cnn">window_cnn</option>
+              <option value="window_lstm">window_lstm</option>
+            </select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="timesteps">Timesteps</Label>
+            <Input
+              type="number"
+              id="timesteps"
+              value={timesteps}
+              onChange={(e) => setTimesteps(safeNum(e.target.value, timesteps))}
+            />
+            <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+              <span>Examples:</span>
+              <button type="button" className="underline" onClick={()=>setSymbols("AAPL,MSFT,GOOGL")}>
+                AAPL,MSFT,GOOGL
+              </button>
+              <button type="button" className="underline" onClick={()=>setSymbols("XOM,CVX")}>
+                XOM,CVX
+              </button>
+              <button type="button" className="underline" onClick={()=>setSymbols("SPY,QQQ")}>
+                SPY,QQQ
+              </button>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="seed">Seed</Label>
+            <Input
+              type="number"
+              id="seed"
+              value={seed}
+              onChange={(e) => setSeed(safeNum(e.target.value, seed))}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="run-tag">Run Tag</Label>
+            <Input id="run-tag" value={outTag} onChange={(e) => setOutTag(e.target.value)} />
+          </div>
+        </div>
+      </section>
+
       {/* Data & Environment */}
       <section className="rounded-xl border p-4">
         <div className="font-medium mb-4">Data & Environment</div>
@@ -485,53 +559,38 @@ export default function NewTraining({
         </div>
       </section>
 
-      {/* Costs */}
-      <section className="rounded-xl border p-4">
-        <div className="font-medium mb-4">Costs</div>
-        <div className="grid md:grid-cols-4 gap-4">
-          <div className="space-y-2">
-            <Label>Commission % Notional</Label>
-            <Input
-              type="number"
-              step="0.0001"
-              value={commissionPct}
-              onChange={(e) => setCommissionPct(safeNum(e.target.value, commissionPct))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Commission per Share</Label>
-            <Input
-              type="number"
-              step="0.0001"
-              value={commissionPerShare}
-              onChange={(e) => setCommissionPerShare(safeNum(e.target.value, commissionPerShare))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Slippage (bps)</Label>
-            <Input
-              type="number"
-              step="0.1"
-              value={slippageBps}
-              onChange={(e) => setSlippageBps(safeNum(e.target.value, slippageBps))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Borrow Fee APR</Label>
-            <Input
-              type="number"
-              step="0.0001"
-              value={borrowFeeApr}
-              onChange={(e) => setBorrowFeeApr(safeNum(e.target.value, borrowFeeApr))}
-            />
-          </div>
-        </div>
-      </section>
+      {/* Advanced Settings */}
+      <Card className="p-4 space-y-3">
+        <div className="font-medium">Advanced Settings</div>
+        <Accordion type="multiple" className="w-full">
+          <AccordionItem value="costs">
+            <AccordionTrigger>Costs</AccordionTrigger>
+            <AccordionContent>
+              <div className="grid md:grid-cols-4 gap-4 pt-2">
+                <div className="space-y-2">
+                  <Label>Commission % Notional</Label>
+                  <Input type="number" step="0.0001" value={commissionPct} onChange={(e) => setCommissionPct(safeNum(e.target.value, commissionPct))} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Commission per Share</Label>
+                  <Input type="number" step="0.0001" value={commissionPerShare} onChange={(e) => setCommissionPerShare(safeNum(e.target.value, commissionPerShare))} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Slippage (bps)</Label>
+                  <Input type="number" step="0.1" value={slippageBps} onChange={(e) => setSlippageBps(safeNum(e.target.value, slippageBps))} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Borrow Fee APR</Label>
+                  <Input type="number" step="0.0001" value={borrowFeeApr} onChange={(e) => setBorrowFeeApr(safeNum(e.target.value, borrowFeeApr))} />
+                </div>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
 
-      {/* Execution */}
-      <section className="rounded-xl border p-4">
-        <div className="font-medium mb-4">Execution</div>
-        <div className="grid md:grid-cols-4 gap-4">
+          <AccordionItem value="execution">
+            <AccordionTrigger>Execution</AccordionTrigger>
+            <AccordionContent>
+              <div className="grid md:grid-cols-4 gap-4 pt-2">
           <div className="space-y-2">
             <Label>Order Type</Label>
             <select
@@ -572,7 +631,8 @@ export default function NewTraining({
             />
           </div>
         </div>
-      </section>
+            </AccordionContent>
+          </AccordionItem>
 
       {/* Risk / Margin */}
       <section className="rounded-xl border p-4">
@@ -810,9 +870,9 @@ export default function NewTraining({
         </div>
       </section>
 
-      {/* Training */}
+      {/* Training (advanced) */}
       <section className="rounded-xl border p-4">
-        <div className="font-medium mb-4">Training</div>
+        <div className="font-medium mb-4">Training (advanced)</div>
         <div className="grid md:grid-cols-3 gap-4">
           <div className="col-span-full md:col-span-1 flex items-center justify-between rounded border p-3">
             <Label className="mr-4">Normalize Observations</Label>
@@ -853,10 +913,10 @@ export default function NewTraining({
         </div>
       </section>
 
-      {/* PPO Hyperparameters */}
-      <section className="rounded-xl border p-4">
-        <div className="font-medium mb-4">PPO Hyperparameters</div>
-        <div className="grid md:grid-cols-3 gap-4">
+          <AccordionItem value="ppo">
+            <AccordionTrigger>PPO Hyperparameters</AccordionTrigger>
+            <AccordionContent>
+              <div className="grid md:grid-cols-3 gap-4 pt-2">
           <div className="space-y-2"><Label>n_steps</Label><Input type="number" value={nSteps} onChange={(e)=>setNSteps(safeNum(e.target.value,nSteps))} /></div>
           <div className="space-y-2"><Label>batch_size</Label><Input type="number" value={batchSize} onChange={(e)=>setBatchSize(safeNum(e.target.value,batchSize))} /></div>
           <div className="space-y-2"><Label>learning_rate</Label><Input type="number" step="0.000001" value={learningRate} onChange={(e)=>setLearningRate(safeNum(e.target.value,learningRate))} /></div>
@@ -867,8 +927,11 @@ export default function NewTraining({
           <div className="space-y-2"><Label>vf_coef</Label><Input type="number" step="0.01" value={vfCoef} onChange={(e)=>setVfCoef(safeNum(e.target.value,vfCoef))} /></div>
           <div className="space-y-2"><Label>max_grad_norm</Label><Input type="number" step="0.01" value={maxGradNorm} onChange={(e)=>setMaxGradNorm(safeNum(e.target.value,maxGradNorm))} /></div>
           <div className="space-y-2"><Label>dropout</Label><Input type="number" step="0.01" value={dropout} onChange={(e)=>setDropout(safeNum(e.target.value,dropout))} /></div>
-        </div>
-      </section>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
+      </Card>
 
       {/* Post-run actions */}
       {jobId && TERMINAL.includes(status?.status as any) && (
