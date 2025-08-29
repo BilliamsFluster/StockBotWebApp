@@ -1,3 +1,5 @@
+"use client";
+
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -31,89 +33,135 @@ export function QuickSetupSection({
   setSymbols,
 }: QuickSetupProps) {
   return (
-    <section className="rounded-xl border p-4">
-      <div className="font-medium mb-4">Quick Setup</div>
-      <div className="grid md:grid-cols-2 gap-3">
-        <div className="col-span-full flex items-center gap-2 rounded border p-2">
-          <Label className="min-w-[160px]">Normalize Observations</Label>
-          <Switch checked={normalize} onCheckedChange={setNormalize} />
-        </div>
-        <div className="flex items-center gap-2">
-          <Label htmlFor="policy" className="min-w-[160px]">
-            Policy
-          </Label>
-          <select
-            className="flex-1 h-10 rounded border px-2"
-            id="policy"
-            value={policy}
-            onChange={(e) => setPolicy(e.target.value as any)}
-          >
-            <option value="mlp">mlp</option>
-            <option value="window_cnn">window_cnn</option>
-            <option value="window_lstm">window_lstm</option>
-          </select>
-        </div>
-        <div className="flex items-center gap-2">
-          <Label htmlFor="timesteps" className="min-w-[160px]">
-            Timesteps
-          </Label>
-          <Input
-            type="number"
-            id="timesteps"
-            value={timesteps}
-            onChange={(e) => setTimesteps(safeNum(e.target.value, timesteps))}
-            className="flex-1"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Label htmlFor="seed" className="min-w-[160px]">
-            Seed
-          </Label>
-          <Input
-            type="number"
-            id="seed"
-            value={seed}
-            onChange={(e) => setSeed(safeNum(e.target.value, seed))}
-            className="flex-1"
-          />
-        </div>
-        <div className="flex items-center gap-2 col-span-full md:col-span-1">
-          <Label htmlFor="run-tag" className="min-w-[160px]">
-            Run Tag
-          </Label>
-          <Input
-            id="run-tag"
-            value={outTag}
-            onChange={(e) => setOutTag(e.target.value)}
-            className="flex-1"
-          />
-        </div>
-        <div className="col-span-full flex flex-wrap gap-2 text-xs text-muted-foreground">
+    <section className="rounded-xl border p-4 space-y-4">
+      <div className="font-medium">Quick Setup</div>
+      <div className="grid md:grid-cols-2 gap-4">
+        <SwitchGroup
+          label="Normalize Observations"
+          checked={normalize}
+          onChange={setNormalize}
+        />
+        <SelectGroup
+          label="Policy"
+          value={policy}
+          onChange={(v) => setPolicy(v as any)}
+          options={[
+            { value: "mlp", label: "mlp" },
+            { value: "window_cnn", label: "window_cnn" },
+            { value: "window_lstm", label: "window_lstm" },
+          ]}
+        />
+        <InputGroup
+          label="Timesteps"
+          value={timesteps}
+          type="number"
+          onChange={(v) => setTimesteps(v)}
+        />
+        <InputGroup
+          label="Seed"
+          value={seed}
+          type="number"
+          onChange={(v) => setSeed(v)}
+        />
+        <InputGroup
+          label="Run Tag"
+          value={outTag}
+          type="text"
+          onChange={(v) => setOutTag(v)}
+          className="md:col-span-1 col-span-full"
+        />
+
+        <div className="col-span-full flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span>Examples:</span>
-          <button
-            type="button"
-            className="underline"
-            onClick={() => setSymbols("AAPL,MSFT,GOOGL")}
-          >
-            AAPL,MSFT,GOOGL
-          </button>
-          <button
-            type="button"
-            className="underline"
-            onClick={() => setSymbols("XOM,CVX")}
-          >
-            XOM,CVX
-          </button>
-          <button
-            type="button"
-            className="underline"
-            onClick={() => setSymbols("SPY,QQQ")}
-          >
-            SPY,QQQ
-          </button>
+          {["AAPL,MSFT,GOOGL", "XOM,CVX", "SPY,QQQ"].map((example) => (
+            <button
+              key={example}
+              type="button"
+              onClick={() => setSymbols(example)}
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              {example}
+            </button>
+          ))}
         </div>
       </div>
     </section>
   );
 }
 
+interface InputGroupProps {
+  label: string;
+  value: string | number;
+  type?: string;
+  onChange: (v: any) => void;
+  className?: string;
+}
+
+function InputGroup({
+  label,
+  value,
+  type = "text",
+  onChange,
+  className = "",
+}: InputGroupProps) {
+  return (
+    <div className={`flex flex-col gap-1 ${className}`}>
+      <Label className="text-sm font-medium">{label}</Label>
+      <Input
+        type={type}
+        value={value}
+        onChange={(e) =>
+          onChange(
+            type === "number"
+              ? safeNum(e.target.value, typeof value === "number" ? value : Number(value))
+              : e.target.value
+          )
+        }
+      />
+    </div>
+  );
+}
+
+interface SwitchGroupProps {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}
+
+function SwitchGroup({ label, checked, onChange }: SwitchGroupProps) {
+  return (
+    <div className="flex flex-col gap-1">
+      <Label className="text-sm font-medium">{label}</Label>
+      <div className="flex items-center justify-between rounded border px-3 py-2">
+        <span className="text-sm text-muted-foreground">Toggle</span>
+        <Switch checked={checked} onCheckedChange={onChange} />
+      </div>
+    </div>
+  );
+}
+
+interface SelectGroupProps {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+}
+
+function SelectGroup({ label, value, onChange, options }: SelectGroupProps) {
+  return (
+    <div className="flex flex-col gap-1">
+      <Label className="text-sm font-medium">{label}</Label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="border rounded h-10 px-3 bg-background text-foreground"
+      >
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}

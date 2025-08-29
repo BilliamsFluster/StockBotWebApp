@@ -1,5 +1,14 @@
+"use client";
+
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { safeNum } from "./utils";
 
 interface RewardProps {
@@ -44,106 +53,85 @@ export function RewardSection({
   setSharpeScale,
 }: RewardProps) {
   return (
-    <section className="rounded-xl border p-4">
-      <div className="font-medium mb-4">Reward & Shaping</div>
-      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
-        <div className="flex items-center gap-2">
-          <Label className="min-w-[150px]">Reward Mode</Label>
-          <select
-            className="flex-1 h-10 rounded border px-2"
-            value={rewardMode}
-            onChange={(e) => setRewardMode(e.target.value as "delta_nav" | "log_nav")}
-          >
-            <option value="delta_nav">delta_nav</option>
-            <option value="log_nav">log_nav</option>
-          </select>
-        </div>
-        <div className="flex items-center gap-2">
-          <Label className="min-w-[150px]">Drawdown Penalty</Label>
-          <Input
-            type="number"
-            step="0.0001"
-            value={wDrawdown}
-            onChange={(e) => setWDrawdown(safeNum(e.target.value, wDrawdown))}
-            className="flex-1"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Label className="min-w-[150px]">Turnover Penalty</Label>
-          <Input
-            type="number"
-            step="0.0001"
-            value={wTurnover}
-            onChange={(e) => setWTurnover(safeNum(e.target.value, wTurnover))}
-            className="flex-1"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Label className="min-w-[150px]">Volatility Penalty</Label>
-          <Input
-            type="number"
-            step="0.0001"
-            value={wVol}
-            onChange={(e) => setWVol(safeNum(e.target.value, wVol))}
-            className="flex-1"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Label className="min-w-[150px]">Vol Window</Label>
-          <Input
-            type="number"
-            value={volWindow}
-            onChange={(e) => setVolWindow(safeNum(e.target.value, volWindow))}
-            className="flex-1"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Label className="min-w-[150px]">Leverage Penalty</Label>
-          <Input
-            type="number"
-            step="0.0001"
-            value={wLeverage}
-            onChange={(e) => setWLeverage(safeNum(e.target.value, wLeverage))}
-            className="flex-1"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Label className="min-w-[150px]">Stop Eq Fraction</Label>
-          <Input
-            type="number"
-            step="0.01"
-            value={stopEqFrac}
-            onChange={(e) => setStopEqFrac(safeNum(e.target.value, stopEqFrac))}
-            className="flex-1"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Label className="min-w-[150px]">Sharpe Window</Label>
-          <Input
-            type="number"
-            value={sharpeWindow ?? 0}
-            onChange={(e) => {
-              const v = safeNum(e.target.value, 0);
-              setSharpeWindow(v > 0 ? v : undefined);
-            }}
-            className="flex-1"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Label className="min-w-[150px]">Sharpe Scale</Label>
-          <Input
-            type="number"
-            step="0.0001"
-            value={sharpeScale ?? 0}
-            onChange={(e) => {
-              const v = safeNum(e.target.value, 0);
-              setSharpeScale(v > 0 ? v : undefined);
-            }}
-            className="flex-1"
-          />
-        </div>
+    <section className="rounded-xl border p-4 space-y-4">
+      <div className="font-semibold text-lg">Reward & Shaping</div>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <SelectGroup
+          label="Reward Mode"
+          value={rewardMode}
+          onChange={(v) => setRewardMode(v as "delta_nav" | "log_nav")}
+          options={[
+            { value: "delta_nav", label: "delta_nav" },
+            { value: "log_nav", label: "log_nav" },
+          ]}
+        />
+        <InputGroup label="Drawdown Penalty" value={wDrawdown} step="0.0001" onChange={setWDrawdown} />
+        <InputGroup label="Turnover Penalty" value={wTurnover} step="0.0001" onChange={setWTurnover} />
+        <InputGroup label="Volatility Penalty" value={wVol} step="0.0001" onChange={setWVol} />
+        <InputGroup label="Vol Window" value={volWindow} onChange={setVolWindow} />
+        <InputGroup label="Leverage Penalty" value={wLeverage} step="0.0001" onChange={setWLeverage} />
+        <InputGroup label="Stop Eq Fraction" value={stopEqFrac} step="0.01" onChange={setStopEqFrac} />
+        <InputGroup
+          label="Sharpe Window"
+          value={sharpeWindow ?? 0}
+          onChange={(v) => setSharpeWindow(v > 0 ? v : undefined)}
+        />
+        <InputGroup
+          label="Sharpe Scale"
+          value={sharpeScale ?? 0}
+          step="0.0001"
+          onChange={(v) => setSharpeScale(v > 0 ? v : undefined)}
+        />
       </div>
     </section>
   );
 }
 
+interface InputGroupProps {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  step?: string;
+}
+
+function InputGroup({ label, value, onChange, step = "1" }: InputGroupProps) {
+  return (
+    <div className="space-y-1">
+      <Label className="text-sm">{label}</Label>
+      <Input
+        type="number"
+        value={value}
+        step={step}
+        onChange={(e) => onChange(safeNum(e.target.value, value))}
+        className="w-full"
+      />
+    </div>
+  );
+}
+
+interface SelectGroupProps {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+}
+
+function SelectGroup({ label, value, onChange, options }: SelectGroupProps) {
+  return (
+    <div className="space-y-1">
+      <Label className="text-sm">{label}</Label>
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger className="w-full">
+          <SelectValue placeholder="Select..." />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((opt) => (
+            <SelectItem key={opt.value} value={opt.value}>
+              {opt.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}

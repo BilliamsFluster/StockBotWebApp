@@ -22,20 +22,46 @@ export function DataRangeSection({
     <section className="rounded-xl border p-4">
       <div className="font-medium mb-4">Data Range</div>
       <div className="grid md:grid-cols-3 gap-4">
-        <div className="space-y-2">
-          <Label>Symbols</Label>
-          <Input value={symbols} onChange={(e) => setSymbols(e.target.value)} />
-        </div>
-        <div className="space-y-2">
-          <Label>Start</Label>
-          <Input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
-        </div>
-        <div className="space-y-2">
-          <Label>End</Label>
-          <Input type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
-        </div>
+        <InputGroup
+          label="Symbols"
+          value={symbols}
+          type="text"
+          onChange={(v) => setSymbols(v)}
+        />
+        <InputGroup
+          label="Start"
+          value={start}
+          type="date"
+          onChange={(v) => setStart(v)}
+        />
+        <InputGroup
+          label="End"
+          value={end}
+          type="date"
+          onChange={(v) => setEnd(v)}
+        />
       </div>
     </section>
   );
 }
 
+interface InputGroupProps {
+  label: string;
+  value: string;
+  type?: string;
+  onChange: (v: string) => void;
+}
+
+function InputGroup({ label, value, onChange, type = "text" }: InputGroupProps) {
+  return (
+    <div className="flex flex-col gap-1">
+      <Label className="text-sm font-medium">{label}</Label>
+      <Input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full"
+      />
+    </div>
+  );
+}

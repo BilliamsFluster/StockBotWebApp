@@ -1,3 +1,5 @@
+"use client";
+
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -31,29 +33,22 @@ export function PolicySourceSection({
   return (
     <section className="rounded-xl border p-4 space-y-4">
       <div className="font-medium">Policy Source</div>
+
       <RadioGroup
-        className="grid md:grid-cols-3 gap-3"
+        className="grid md:grid-cols-3 gap-4"
         value={mode}
         onValueChange={(v) => {
           if (!lockedMode) setMode(v as any);
         }}
       >
-        <div className="flex items-center gap-2 rounded border p-3">
-          <RadioGroupItem value="trained" id="src-trained" disabled={lockedMode} />
-          <Label htmlFor="src-trained">Trained run</Label>
-        </div>
-        <div className="flex items-center gap-2 rounded border p-3">
-          <RadioGroupItem
-            value="baseline"
-            id="src-baseline"
-            disabled={lockedMode && mode !== "baseline"}
-          />
-          <Label htmlFor="src-baseline">Baseline policy</Label>
-        </div>
-        <div className="flex items-center gap-2 rounded border p-3">
-          <RadioGroupItem value="upload" id="src-upload" disabled={lockedMode} />
-          <Label htmlFor="src-upload">Upload PPO .zip</Label>
-        </div>
+        <RadioCard id="src-trained" value="trained" disabled={lockedMode} label="Trained run" />
+        <RadioCard
+          id="src-baseline"
+          value="baseline"
+          disabled={lockedMode && mode !== "baseline"}
+          label="Baseline policy"
+        />
+        <RadioCard id="src-upload" value="upload" disabled={lockedMode} label="Upload PPO .zip" />
       </RadioGroup>
 
       {mode === "trained" && (
@@ -69,19 +64,19 @@ export function PolicySourceSection({
       )}
 
       {mode === "baseline" && (
-        <div className="space-y-2">
-          <Label>Baseline</Label>
-          <select
-            className="border rounded h-10 px-3 w-full"
+        <div className="w-fit max-w-md">
+          <SelectGroup
+            label="Baseline"
             value={baseline}
-            onChange={(e) => setBaseline(e.target.value as any)}
-          >
-            <option value="equal">equal</option>
-            <option value="flat">flat</option>
-            <option value="first_long">first_long</option>
-            <option value="random">random</option>
-            <option value="buy_hold">buy_hold</option>
-          </select>
+            onChange={(v) => setBaseline(v as any)}
+            options={[
+              { value: "equal", label: "equal" },
+              { value: "flat", label: "flat" },
+              { value: "first_long", label: "first_long" },
+              { value: "random", label: "random" },
+              { value: "buy_hold", label: "buy_hold" },
+            ]}
+          />
         </div>
       )}
 
@@ -115,3 +110,45 @@ export function PolicySourceSection({
   );
 }
 
+interface RadioCardProps {
+  id: string;
+  value: string;
+  label: string;
+  disabled?: boolean;
+}
+
+function RadioCard({ id, value, label, disabled }: RadioCardProps) {
+  return (
+    <div className="flex items-center gap-2 rounded border p-3">
+      <RadioGroupItem id={id} value={value} disabled={disabled} />
+      <Label htmlFor={id}>{label}</Label>
+    </div>
+  );
+}
+
+interface SelectGroupProps {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  className?: string;
+}
+
+function SelectGroup({ label, value, onChange, options, className }: SelectGroupProps) {
+  return (
+    <div className={`flex flex-col gap-1 ${className ?? ""}`}>
+      <Label className="text-sm font-medium">{label}</Label>
+      <select
+        className="border rounded h-10 px-3 bg-background text-foreground"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}

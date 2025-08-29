@@ -31,47 +31,73 @@ export function RiskMarginSection({
   return (
     <section className="rounded-xl border p-4">
       <div className="font-medium mb-4">Risk / Margin</div>
-      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="flex items-center gap-2">
-          <Label className="min-w-[150px]">Max Gross Lev</Label>
-          <Input
-            type="number"
-            step="0.1"
-            value={maxGrossLev}
-            onChange={(e) => setMaxGrossLev(safeNum(e.target.value, maxGrossLev))}
-            className="flex-1"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Label className="min-w-[150px]">Maintenance Margin</Label>
-          <Input
-            type="number"
-            step="0.01"
-            value={maintenanceMargin}
-            onChange={(e) => setMaintenanceMargin(safeNum(e.target.value, maintenanceMargin))}
-            className="flex-1"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Label className="min-w-[150px]">Cash Borrow APR</Label>
-          <Input
-            type="number"
-            step="0.0001"
-            value={cashBorrowApr}
-            onChange={(e) => setCashBorrowApr(safeNum(e.target.value, cashBorrowApr))}
-            className="flex-1"
-          />
-        </div>
-        <div className="col-span-full md:col-span-1 flex items-center gap-2 rounded border p-2">
-          <Label className="min-w-[150px]">Allow Short</Label>
-          <Switch checked={allowShort} onCheckedChange={setAllowShort} />
-        </div>
-        <div className="col-span-full md:col-span-1 flex items-center gap-2 rounded border p-2">
-          <Label className="min-w-[150px]">Intraday Only</Label>
-          <Switch checked={intradayOnly} onCheckedChange={setIntradayOnly} />
-        </div>
+      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <InputGroup
+          label="Max Gross Lev"
+          value={maxGrossLev}
+          step="0.1"
+          onChange={setMaxGrossLev}
+        />
+        <InputGroup
+          label="Maintenance Margin"
+          value={maintenanceMargin}
+          step="0.01"
+          onChange={setMaintenanceMargin}
+        />
+        <InputGroup
+          label="Cash Borrow APR"
+          value={cashBorrowApr}
+          step="0.0001"
+          onChange={setCashBorrowApr}
+        />
+        <SwitchGroup
+          label="Allow Short"
+          checked={allowShort}
+          onChange={setAllowShort}
+        />
+        <SwitchGroup
+          label="Intraday Only"
+          checked={intradayOnly}
+          onChange={setIntradayOnly}
+        />
       </div>
     </section>
   );
 }
 
+interface InputGroupProps {
+  label: string;
+  value: number;
+  step: string;
+  onChange: (v: number) => void;
+}
+
+function InputGroup({ label, value, step, onChange }: InputGroupProps) {
+  return (
+    <div className="flex flex-col gap-1">
+      <Label className="text-sm font-medium">{label}</Label>
+      <Input
+        type="number"
+        step={step}
+        value={value}
+        onChange={(e) => onChange(safeNum(e.target.value, value))}
+        className="w-full"
+      />
+    </div>
+  );
+}
+
+interface SwitchGroupProps {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}
+
+function SwitchGroup({ label, checked, onChange }: SwitchGroupProps) {
+  return (
+    <div className="flex items-center justify-between border rounded px-3 py-2">
+      <Label className="text-sm font-medium">{label}</Label>
+      <Switch checked={checked} onCheckedChange={onChange} />
+    </div>
+  );
+}

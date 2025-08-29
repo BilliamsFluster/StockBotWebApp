@@ -1,4 +1,3 @@
-// src/components/Stockbot/NewBacktest.tsx
 "use client";
 
 import React, { useMemo, useState } from "react";
@@ -23,11 +22,11 @@ export default function NewBacktest({
     "equal" | "flat" | "first_long" | "random" | "buy_hold"
   >("equal");
 
-  // Policy source
   const [mode, setMode] = useState<"trained" | "baseline" | "upload">(
     runId ? "trained" : "baseline"
   );
   const lockedMode = useMemo(() => !!runId, [runId]);
+
   const [policyPath, setPolicyPath] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -35,6 +34,7 @@ export default function NewBacktest({
   const [symbols, setSymbols] = useState("AAPL,MSFT");
   const [start, setStart] = useState("2022-01-01");
   const [end, setEnd] = useState("2022-12-31");
+
   const [outTag, setOutTag] = useState("ppo_cnn_norm_eval");
   const [normalize, setNormalize] = useState(true);
 
@@ -91,12 +91,14 @@ export default function NewBacktest({
         payload
       );
       if (!resp?.job_id) throw new Error("No job_id returned");
+
       addRecentRun({
         id: resp.job_id,
         type: "backtest",
         status: "QUEUED",
         created_at: new Date().toISOString(),
       });
+
       onJobCreated(resp.job_id);
     } catch (e: any) {
       setError(e?.message ?? String(e));
@@ -119,37 +121,39 @@ export default function NewBacktest({
         </div>
       </div>
 
-      <PolicySourceSection
-        mode={mode}
-        setMode={setMode}
-        lockedMode={lockedMode}
-        runId={runId}
-        baseline={baseline}
-        setBaseline={setBaseline}
-        policyPath={policyPath}
-        onUpload={onUpload}
-        uploading={uploading}
-        uploadError={uploadError}
-      />
+      {/* Grid layout for form sections */}
+      <div className="grid md:grid-cols-2 gap-6">
+        <PolicySourceSection
+          mode={mode}
+          setMode={setMode}
+          lockedMode={lockedMode}
+          runId={runId}
+          baseline={baseline}
+          setBaseline={setBaseline}
+          policyPath={policyPath}
+          onUpload={onUpload}
+          uploading={uploading}
+          uploadError={uploadError}
+        />
 
-      <DataRangeSection
-        symbols={symbols}
-        setSymbols={setSymbols}
-        start={start}
-        setStart={setStart}
-        end={end}
-        setEnd={setEnd}
-      />
+        <DataRangeSection
+          symbols={symbols}
+          setSymbols={setSymbols}
+          start={start}
+          setStart={setStart}
+          end={end}
+          setEnd={setEnd}
+        />
 
-      <OutputOptionsSection
-        outTag={outTag}
-        setOutTag={setOutTag}
-        normalize={normalize}
-        setNormalize={setNormalize}
-      />
+        <OutputOptionsSection
+          outTag={outTag}
+          setOutTag={setOutTag}
+          normalize={normalize}
+          setNormalize={setNormalize}
+        />
+      </div>
 
       {error && <div className="text-red-500 text-sm">{error}</div>}
     </Card>
   );
 }
-

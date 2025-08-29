@@ -1,6 +1,9 @@
+"use client";
+
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { safeNum } from "./utils";
 
 interface EpisodeProps {
@@ -45,98 +48,124 @@ export function EpisodeSection({
   setRandomizeStart,
 }: EpisodeProps) {
   return (
-    <section className="rounded-xl border p-4">
-      <div className="font-medium mb-4">Episode</div>
-      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="flex items-center gap-2">
-          <Label className="min-w-[140px]">Lookback</Label>
-          <Input
-            type="number"
-            value={lookback}
-            onChange={(e) => setLookback(safeNum(e.target.value, lookback))}
-            className="flex-1"
+    <section className="rounded-xl border p-4 space-y-4">
+      <div className="font-medium">Episode</div>
+      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <InputGroup label="Lookback" value={lookback} onChange={setLookback} />
+        <InputGroup
+          label="Horizon (bars)"
+          value={horizon ?? 0}
+          onChange={(v) => setHorizon(v > 0 ? v : null)}
+        />
+        <InputGroup
+          label="Episode Max Steps"
+          value={episodeMaxSteps ?? 0}
+          onChange={(v) => setEpisodeMaxSteps(v > 0 ? v : null)}
+        />
+        <InputGroup label="Start Cash" value={startCash} onChange={setStartCash} />
+        <InputGroup
+          label="Rebalance Eps"
+          value={rebalanceEps}
+          step="0.0001"
+          onChange={setRebalanceEps}
+        />
+        <SelectGroup
+          label="Mapping Mode"
+          value={mappingMode}
+          onChange={(v) => setMappingMode(v as "simplex_cash" | "tanh_leverage")}
+          options={[
+            { value: "simplex_cash", label: "Simplex Cash (long-only + cash)" },
+            { value: "tanh_leverage", label: "Tanh Leverage (long/short)" },
+          ]}
+        />
+        <InputGroup
+          label="Invest Max"
+          value={investMax}
+          step="0.01"
+          onChange={setInvestMax}
+        />
+        <InputGroup
+          label="Max Step Change"
+          value={maxStepChange}
+          step="0.01"
+          onChange={setMaxStepChange}
+        />
+        <div className="col-span-full">
+          <SwitchGroup
+            label="Randomize Start"
+            checked={randomizeStart}
+            onChange={setRandomizeStart}
           />
-        </div>
-        <div className="flex items-center gap-2">
-          <Label className="min-w-[140px]">Horizon (bars)</Label>
-          <Input
-            type="number"
-            value={horizon ?? 0}
-            onChange={(e) => {
-              const val = safeNum(e.target.value, 0);
-              setHorizon(val > 0 ? val : null);
-            }}
-            className="flex-1"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Label className="min-w-[140px]">Episode Max Steps</Label>
-          <Input
-            type="number"
-            value={episodeMaxSteps ?? 0}
-            onChange={(e) => {
-              const val = safeNum(e.target.value, 0);
-              setEpisodeMaxSteps(val > 0 ? val : null);
-            }}
-            className="flex-1"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Label className="min-w-[140px]">Start Cash</Label>
-          <Input
-            type="number"
-            value={startCash}
-            onChange={(e) => setStartCash(safeNum(e.target.value, startCash))}
-            className="flex-1"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Label className="min-w-[140px]">Rebalance Eps</Label>
-          <Input
-            type="number"
-            step="0.0001"
-            value={rebalanceEps}
-            onChange={(e) => setRebalanceEps(safeNum(e.target.value, rebalanceEps))}
-            className="flex-1"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Label className="min-w-[140px]">Mapping Mode</Label>
-          <select
-            className="flex-1 h-10 rounded border px-2"
-            value={mappingMode}
-            onChange={(e) => setMappingMode(e.target.value as any)}
-          >
-            <option value="simplex_cash">simplex_cash (long-only + cash)</option>
-            <option value="tanh_leverage">tanh_leverage (long/short)</option>
-          </select>
-        </div>
-        <div className="flex items-center gap-2">
-          <Label className="min-w-[140px]">invest_max</Label>
-          <Input
-            type="number"
-            step="0.01"
-            value={investMax}
-            onChange={(e) => setInvestMax(safeNum(e.target.value, investMax))}
-            className="flex-1"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Label className="min-w-[140px]">max_step_change</Label>
-          <Input
-            type="number"
-            step="0.01"
-            value={maxStepChange}
-            onChange={(e) => setMaxStepChange(safeNum(e.target.value, maxStepChange))}
-            className="flex-1"
-          />
-        </div>
-        <div className="col-span-full flex items-center gap-2 rounded border p-2">
-          <Label className="min-w-[140px]">Randomize Start</Label>
-          <Switch checked={randomizeStart} onCheckedChange={setRandomizeStart} />
         </div>
       </div>
     </section>
   );
 }
 
+// ========== Subcomponents ==========
+
+interface InputGroupProps {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  step?: string;
+}
+
+function InputGroup({ label, value, onChange, step = "1" }: InputGroupProps) {
+  return (
+    <div className="flex flex-col gap-1">
+      <Label className="text-sm font-medium">{label}</Label>
+      <Input
+        type="number"
+        value={value}
+        step={step}
+        onChange={(e) => onChange(safeNum(e.target.value, value))}
+      />
+    </div>
+  );
+}
+
+interface SelectGroupProps {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+}
+
+function SelectGroup({ label, value, onChange, options }: SelectGroupProps) {
+  return (
+    <div className="flex flex-col gap-1">
+      <Label className="text-sm font-medium mb-1">{label}</Label>
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger>
+          <SelectValue placeholder="Select Mapping Mode" />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((opt) => (
+            <SelectItem key={opt.value} value={opt.value}>
+              {opt.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+interface SwitchGroupProps {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}
+
+function SwitchGroup({ label, checked, onChange }: SwitchGroupProps) {
+  return (
+    <div className="flex flex-col gap-1">
+      <Label className="text-sm font-medium">{label}</Label>
+      <div className="flex items-center justify-between rounded border px-3 py-2">
+        <span className="text-sm text-muted-foreground">Toggle</span>
+        <Switch checked={checked} onCheckedChange={onChange} />
+      </div>
+    </div>
+  );
+}
