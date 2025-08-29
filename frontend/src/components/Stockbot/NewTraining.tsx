@@ -475,166 +475,170 @@ export default function NewTraining({
       )}
       {error && <div className="text-sm text-red-600">{error}</div>}
 
-      <QuickSetupSection
-        normalize={normalize}
-        setNormalize={setNormalize}
-        policy={policy}
-        setPolicy={setPolicy}
-        timesteps={timesteps}
-        setTimesteps={setTimesteps}
-        seed={seed}
-        setSeed={setSeed}
-        outTag={outTag}
-        setOutTag={setOutTag}
-        setSymbols={setSymbols}
-      />
-
-      <DataEnvironmentSection
-        symbols={symbols}
-        setSymbols={setSymbols}
-        start={start}
-        setStart={setStart}
-        end={end}
-        setEnd={setEnd}
-        interval={interval}
-        setInterval={setInterval}
-        adjusted={adjusted}
-        setAdjusted={setAdjusted}
-      />
-
-      <Card className="p-4 space-y-3">
-        <div className="font-medium">Advanced Settings</div>
-        <Accordion type="multiple" className="w-full">
-          <CostsSection
-            commissionPct={commissionPct}
-            setCommissionPct={setCommissionPct}
-            commissionPerShare={commissionPerShare}
-            setCommissionPerShare={setCommissionPerShare}
-            slippageBps={slippageBps}
-            setSlippageBps={setSlippageBps}
-            borrowFeeApr={borrowFeeApr}
-            setBorrowFeeApr={setBorrowFeeApr}
-          />
-          <ExecutionSection
-            orderType={orderType}
-            setOrderType={setOrderType}
-            limitOffsetBps={limitOffsetBps}
-            setLimitOffsetBps={setLimitOffsetBps}
-            participationCap={participationCap}
-            setParticipationCap={setParticipationCap}
-            impactK={impactK}
-            setImpactK={setImpactK}
-          />
-          <PPOHyperparamsSection
-            nSteps={nSteps}
-            setNSteps={setNSteps}
-            batchSize={batchSize}
-            setBatchSize={setBatchSize}
-            learningRate={learningRate}
-            setLearningRate={setLearningRate}
-            gamma={gamma}
-            setGamma={setGamma}
-            gaeLambda={gaeLambda}
-            setGaeLambda={setGaeLambda}
-            clipRange={clipRange}
-            setClipRange={setClipRange}
-            entropyCoef={entropyCoef}
-            setEntropyCoef={setEntropyCoef}
-            vfCoef={vfCoef}
-            setVfCoef={setVfCoef}
-            maxGradNorm={maxGradNorm}
-            setMaxGradNorm={setMaxGradNorm}
-            dropout={dropout}
-            setDropout={setDropout}
-          />
-        </Accordion>
-      </Card>
-
-      <RiskMarginSection
-        maxGrossLev={maxGrossLev}
-        setMaxGrossLev={setMaxGrossLev}
-        maintenanceMargin={maintenanceMargin}
-        setMaintenanceMargin={setMaintenanceMargin}
-        cashBorrowApr={cashBorrowApr}
-        setCashBorrowApr={setCashBorrowApr}
-        allowShort={allowShort}
-        setAllowShort={setAllowShort}
-        intradayOnly={intradayOnly}
-        setIntradayOnly={setIntradayOnly}
-      />
-
-      <EpisodeSection
-        lookback={lookback}
-        setLookback={setLookback}
-        horizon={horizon}
-        setHorizon={setHorizon}
-        episodeMaxSteps={episodeMaxSteps}
-        setEpisodeMaxSteps={setEpisodeMaxSteps}
-        startCash={startCash}
-        setStartCash={setStartCash}
-        rebalanceEps={rebalanceEps}
-        setRebalanceEps={setRebalanceEps}
-        mappingMode={mappingMode}
-        setMappingMode={setMappingMode}
-        investMax={investMax}
-        setInvestMax={setInvestMax}
-        maxStepChange={maxStepChange}
-        setMaxStepChange={setMaxStepChange}
-        randomizeStart={randomizeStart}
-        setRandomizeStart={setRandomizeStart}
-      />
-
-      <FeaturesSection
-        useCustomPipeline={useCustomPipeline}
-        setUseCustomPipeline={setUseCustomPipeline}
-        featureWindow={featureWindow}
-        setFeatureWindow={setFeatureWindow}
-        indicators={indicators}
-        setIndicators={setIndicators}
-      />
-
-      <RewardSection
-        rewardMode={rewardMode}
-        setRewardMode={setRewardMode}
-        wDrawdown={wDrawdown}
-        setWDrawdown={setWDrawdown}
-        wTurnover={wTurnover}
-        setWTurnover={setWTurnover}
-        wVol={wVol}
-        setWVol={setWVol}
-        volWindow={volWindow}
-        setVolWindow={setVolWindow}
-        wLeverage={wLeverage}
-        setWLeverage={setWLeverage}
-        stopEqFrac={stopEqFrac}
-        setStopEqFrac={setStopEqFrac}
-        sharpeWindow={sharpeWindow}
-        setSharpeWindow={setSharpeWindow}
-        sharpeScale={sharpeScale}
-        setSharpeScale={setSharpeScale}
-      />
-
-      <TrainingSection
-        normalize={normalize}
-        setNormalize={setNormalize}
-        policy={policy}
-        setPolicy={setPolicy}
-        timesteps={timesteps}
-        setTimesteps={setTimesteps}
-        seed={seed}
-        setSeed={setSeed}
-        outTag={outTag}
-        setOutTag={setOutTag}
-      />
-
-      {jobId && TERMINAL.includes(status?.status as any) && (
-        <DownloadsSection
-          includeModel={includeModel}
-          setIncludeModel={setIncludeModel}
-          bundleHref={bundleHref}
-          artifacts={artifacts}
+      <div className="grid gap-6 md:grid-cols-2">
+        <QuickSetupSection
+          normalize={normalize}
+          setNormalize={setNormalize}
+          policy={policy}
+          setPolicy={setPolicy}
+          timesteps={timesteps}
+          setTimesteps={setTimesteps}
+          seed={seed}
+          setSeed={setSeed}
+          outTag={outTag}
+          setOutTag={setOutTag}
+          setSymbols={setSymbols}
         />
-      )}
+
+        <DataEnvironmentSection
+          symbols={symbols}
+          setSymbols={setSymbols}
+          start={start}
+          setStart={setStart}
+          end={end}
+          setEnd={setEnd}
+          interval={interval}
+          setInterval={setInterval}
+          adjusted={adjusted}
+          setAdjusted={setAdjusted}
+        />
+
+        <Card className="p-4 space-y-3 md:col-span-2">
+          <div className="font-medium">Advanced Settings</div>
+          <Accordion type="multiple" className="w-full">
+            <CostsSection
+              commissionPct={commissionPct}
+              setCommissionPct={setCommissionPct}
+              commissionPerShare={commissionPerShare}
+              setCommissionPerShare={setCommissionPerShare}
+              slippageBps={slippageBps}
+              setSlippageBps={setSlippageBps}
+              borrowFeeApr={borrowFeeApr}
+              setBorrowFeeApr={setBorrowFeeApr}
+            />
+            <ExecutionSection
+              orderType={orderType}
+              setOrderType={setOrderType}
+              limitOffsetBps={limitOffsetBps}
+              setLimitOffsetBps={setLimitOffsetBps}
+              participationCap={participationCap}
+              setParticipationCap={setParticipationCap}
+              impactK={impactK}
+              setImpactK={setImpactK}
+            />
+            <PPOHyperparamsSection
+              nSteps={nSteps}
+              setNSteps={setNSteps}
+              batchSize={batchSize}
+              setBatchSize={setBatchSize}
+              learningRate={learningRate}
+              setLearningRate={setLearningRate}
+              gamma={gamma}
+              setGamma={setGamma}
+              gaeLambda={gaeLambda}
+              setGaeLambda={setGaeLambda}
+              clipRange={clipRange}
+              setClipRange={setClipRange}
+              entropyCoef={entropyCoef}
+              setEntropyCoef={setEntropyCoef}
+              vfCoef={vfCoef}
+              setVfCoef={setVfCoef}
+              maxGradNorm={maxGradNorm}
+              setMaxGradNorm={setMaxGradNorm}
+              dropout={dropout}
+              setDropout={setDropout}
+            />
+          </Accordion>
+        </Card>
+
+        <RiskMarginSection
+          maxGrossLev={maxGrossLev}
+          setMaxGrossLev={setMaxGrossLev}
+          maintenanceMargin={maintenanceMargin}
+          setMaintenanceMargin={setMaintenanceMargin}
+          cashBorrowApr={cashBorrowApr}
+          setCashBorrowApr={setCashBorrowApr}
+          allowShort={allowShort}
+          setAllowShort={setAllowShort}
+          intradayOnly={intradayOnly}
+          setIntradayOnly={setIntradayOnly}
+        />
+
+        <EpisodeSection
+          lookback={lookback}
+          setLookback={setLookback}
+          horizon={horizon}
+          setHorizon={setHorizon}
+          episodeMaxSteps={episodeMaxSteps}
+          setEpisodeMaxSteps={setEpisodeMaxSteps}
+          startCash={startCash}
+          setStartCash={setStartCash}
+          rebalanceEps={rebalanceEps}
+          setRebalanceEps={setRebalanceEps}
+          mappingMode={mappingMode}
+          setMappingMode={setMappingMode}
+          investMax={investMax}
+          setInvestMax={setInvestMax}
+          maxStepChange={maxStepChange}
+          setMaxStepChange={setMaxStepChange}
+          randomizeStart={randomizeStart}
+          setRandomizeStart={setRandomizeStart}
+        />
+
+        <FeaturesSection
+          useCustomPipeline={useCustomPipeline}
+          setUseCustomPipeline={setUseCustomPipeline}
+          featureWindow={featureWindow}
+          setFeatureWindow={setFeatureWindow}
+          indicators={indicators}
+          setIndicators={setIndicators}
+        />
+
+        <RewardSection
+          rewardMode={rewardMode}
+          setRewardMode={setRewardMode}
+          wDrawdown={wDrawdown}
+          setWDrawdown={setWDrawdown}
+          wTurnover={wTurnover}
+          setWTurnover={setWTurnover}
+          wVol={wVol}
+          setWVol={setWVol}
+          volWindow={volWindow}
+          setVolWindow={setVolWindow}
+          wLeverage={wLeverage}
+          setWLeverage={setWLeverage}
+          stopEqFrac={stopEqFrac}
+          setStopEqFrac={setStopEqFrac}
+          sharpeWindow={sharpeWindow}
+          setSharpeWindow={setSharpeWindow}
+          sharpeScale={sharpeScale}
+          setSharpeScale={setSharpeScale}
+        />
+
+        <TrainingSection
+          normalize={normalize}
+          setNormalize={setNormalize}
+          policy={policy}
+          setPolicy={setPolicy}
+          timesteps={timesteps}
+          setTimesteps={setTimesteps}
+          seed={seed}
+          setSeed={setSeed}
+          outTag={outTag}
+          setOutTag={setOutTag}
+        />
+
+        {jobId && TERMINAL.includes(status?.status as any) && (
+          <div className="md:col-span-2">
+            <DownloadsSection
+              includeModel={includeModel}
+              setIncludeModel={setIncludeModel}
+              bundleHref={bundleHref}
+              artifacts={artifacts}
+            />
+          </div>
+        )}
+      </div>
     </Card>
   );
 }
