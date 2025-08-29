@@ -31,25 +31,43 @@ export function RiskMarginSection({
   return (
     <section className="rounded-xl border p-4">
       <div className="font-medium mb-4">Risk / Margin</div>
-      <div className="grid md:grid-cols-4 gap-4">
-        <div className="space-y-2">
-          <Label>Max Gross Leverage</Label>
-          <Input type="number" step="0.1" value={maxGrossLev} onChange={(e) => setMaxGrossLev(safeNum(e.target.value, maxGrossLev))} />
+      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="flex items-center gap-2">
+          <Label className="min-w-[150px]">Max Gross Lev</Label>
+          <Input
+            type="number"
+            step="0.1"
+            value={maxGrossLev}
+            onChange={(e) => setMaxGrossLev(safeNum(e.target.value, maxGrossLev))}
+            className="flex-1"
+          />
         </div>
-        <div className="space-y-2">
-          <Label>Maintenance Margin</Label>
-          <Input type="number" step="0.01" value={maintenanceMargin} onChange={(e) => setMaintenanceMargin(safeNum(e.target.value, maintenanceMargin))} />
+        <div className="flex items-center gap-2">
+          <Label className="min-w-[150px]">Maintenance Margin</Label>
+          <Input
+            type="number"
+            step="0.01"
+            value={maintenanceMargin}
+            onChange={(e) => setMaintenanceMargin(safeNum(e.target.value, maintenanceMargin))}
+            className="flex-1"
+          />
         </div>
-        <div className="space-y-2">
-          <Label>Cash Borrow APR</Label>
-          <Input type="number" step="0.0001" value={cashBorrowApr} onChange={(e) => setCashBorrowApr(safeNum(e.target.value, cashBorrowApr))} />
+        <div className="flex items-center gap-2">
+          <Label className="min-w-[150px]">Cash Borrow APR</Label>
+          <Input
+            type="number"
+            step="0.0001"
+            value={cashBorrowApr}
+            onChange={(e) => setCashBorrowApr(safeNum(e.target.value, cashBorrowApr))}
+            className="flex-1"
+          />
         </div>
-        <div className="col-span-full md:col-span-1 flex items-center justify-between rounded border p-3">
-          <Label className="mr-4">Allow Short</Label>
+        <div className="col-span-full md:col-span-1 flex items-center gap-2 rounded border p-2">
+          <Label className="min-w-[150px]">Allow Short</Label>
           <Switch checked={allowShort} onCheckedChange={setAllowShort} />
         </div>
-        <div className="col-span-full md:col-span-1 flex items-center justify-between rounded border p-3">
-          <Label className="mr-4">Intraday Only</Label>
+        <div className="col-span-full md:col-span-1 flex items-center gap-2 rounded border p-2">
+          <Label className="min-w-[150px]">Intraday Only</Label>
           <Switch checked={intradayOnly} onCheckedChange={setIntradayOnly} />
         </div>
       </div>

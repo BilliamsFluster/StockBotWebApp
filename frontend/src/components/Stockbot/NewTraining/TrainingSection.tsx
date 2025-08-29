@@ -31,30 +31,48 @@ export function TrainingSection({
   return (
     <section className="rounded-xl border p-4">
       <div className="font-medium mb-4">Training (advanced)</div>
-      <div className="grid md:grid-cols-3 gap-4">
-        <div className="col-span-full md:col-span-1 flex items-center justify-between rounded border p-3">
-          <Label className="mr-4">Normalize Observations</Label>
+      <div className="grid md:grid-cols-2 gap-3">
+        <div className="col-span-full flex items-center gap-2 rounded border p-2">
+          <Label className="min-w-[160px]">Normalize Observations</Label>
           <Switch checked={normalize} onCheckedChange={setNormalize} />
         </div>
-        <div className="space-y-2">
-          <Label>Policy</Label>
-          <select className="border rounded h-10 px-3 w-full" value={policy} onChange={(e) => setPolicy(e.target.value as any)}>
+        <div className="flex items-center gap-2">
+          <Label className="min-w-[160px]">Policy</Label>
+          <select
+            className="flex-1 h-10 rounded border px-2"
+            value={policy}
+            onChange={(e) => setPolicy(e.target.value as any)}
+          >
             <option value="mlp">mlp</option>
             <option value="window_cnn">window_cnn</option>
             <option value="window_lstm">window_lstm</option>
           </select>
         </div>
-        <div className="space-y-2">
-          <Label>Timesteps</Label>
-          <Input type="number" value={timesteps} onChange={(e) => setTimesteps(safeNum(e.target.value, timesteps))} />
+        <div className="flex items-center gap-2">
+          <Label className="min-w-[160px]">Timesteps</Label>
+          <Input
+            type="number"
+            value={timesteps}
+            onChange={(e) => setTimesteps(safeNum(e.target.value, timesteps))}
+            className="flex-1"
+          />
         </div>
-        <div className="space-y-2">
-          <Label>Seed</Label>
-          <Input type="number" value={seed} onChange={(e) => setSeed(safeNum(e.target.value, seed))} />
+        <div className="flex items-center gap-2">
+          <Label className="min-w-[160px]">Seed</Label>
+          <Input
+            type="number"
+            value={seed}
+            onChange={(e) => setSeed(safeNum(e.target.value, seed))}
+            className="flex-1"
+          />
         </div>
-        <div className="space-y-2">
-          <Label>Run Tag</Label>
-          <Input value={outTag} onChange={(e) => setOutTag(e.target.value)} />
+        <div className="flex items-center gap-2 col-span-full md:col-span-1">
+          <Label className="min-w-[160px]">Run Tag</Label>
+          <Input
+            value={outTag}
+            onChange={(e) => setOutTag(e.target.value)}
+            className="flex-1"
+          />
         </div>
       </div>
     </section>

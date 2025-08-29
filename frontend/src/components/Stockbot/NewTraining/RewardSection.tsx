@@ -46,11 +46,11 @@ export function RewardSection({
   return (
     <section className="rounded-xl border p-4">
       <div className="font-medium mb-4">Reward & Shaping</div>
-      <div className="grid md:grid-cols-3 gap-4">
-        <div className="space-y-2">
-          <Label>Reward Mode</Label>
+      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="flex items-center gap-2">
+          <Label className="min-w-[150px]">Reward Mode</Label>
           <select
-            className="border rounded h-10 px-3 w-full"
+            className="flex-1 h-10 rounded border px-2"
             value={rewardMode}
             onChange={(e) => setRewardMode(e.target.value as "delta_nav" | "log_nav")}
           >
@@ -58,32 +58,67 @@ export function RewardSection({
             <option value="log_nav">log_nav</option>
           </select>
         </div>
-        <div className="space-y-2">
-          <Label>Drawdown Penalty</Label>
-          <Input type="number" step="0.0001" value={wDrawdown} onChange={(e) => setWDrawdown(safeNum(e.target.value, wDrawdown))} />
+        <div className="flex items-center gap-2">
+          <Label className="min-w-[150px]">Drawdown Penalty</Label>
+          <Input
+            type="number"
+            step="0.0001"
+            value={wDrawdown}
+            onChange={(e) => setWDrawdown(safeNum(e.target.value, wDrawdown))}
+            className="flex-1"
+          />
         </div>
-        <div className="space-y-2">
-          <Label>Turnover Penalty</Label>
-          <Input type="number" step="0.0001" value={wTurnover} onChange={(e) => setWTurnover(safeNum(e.target.value, wTurnover))} />
+        <div className="flex items-center gap-2">
+          <Label className="min-w-[150px]">Turnover Penalty</Label>
+          <Input
+            type="number"
+            step="0.0001"
+            value={wTurnover}
+            onChange={(e) => setWTurnover(safeNum(e.target.value, wTurnover))}
+            className="flex-1"
+          />
         </div>
-        <div className="space-y-2">
-          <Label>Volatility Penalty</Label>
-          <Input type="number" step="0.0001" value={wVol} onChange={(e) => setWVol(safeNum(e.target.value, wVol))} />
+        <div className="flex items-center gap-2">
+          <Label className="min-w-[150px]">Volatility Penalty</Label>
+          <Input
+            type="number"
+            step="0.0001"
+            value={wVol}
+            onChange={(e) => setWVol(safeNum(e.target.value, wVol))}
+            className="flex-1"
+          />
         </div>
-        <div className="space-y-2">
-          <Label>Vol Window</Label>
-          <Input type="number" value={volWindow} onChange={(e) => setVolWindow(safeNum(e.target.value, volWindow))} />
+        <div className="flex items-center gap-2">
+          <Label className="min-w-[150px]">Vol Window</Label>
+          <Input
+            type="number"
+            value={volWindow}
+            onChange={(e) => setVolWindow(safeNum(e.target.value, volWindow))}
+            className="flex-1"
+          />
         </div>
-        <div className="space-y-2">
-          <Label>Leverage Penalty</Label>
-          <Input type="number" step="0.0001" value={wLeverage} onChange={(e) => setWLeverage(safeNum(e.target.value, wLeverage))} />
+        <div className="flex items-center gap-2">
+          <Label className="min-w-[150px]">Leverage Penalty</Label>
+          <Input
+            type="number"
+            step="0.0001"
+            value={wLeverage}
+            onChange={(e) => setWLeverage(safeNum(e.target.value, wLeverage))}
+            className="flex-1"
+          />
         </div>
-        <div className="space-y-2">
-          <Label>Stop Equity Fraction</Label>
-          <Input type="number" step="0.01" value={stopEqFrac} onChange={(e) => setStopEqFrac(safeNum(e.target.value, stopEqFrac))} />
+        <div className="flex items-center gap-2">
+          <Label className="min-w-[150px]">Stop Eq Fraction</Label>
+          <Input
+            type="number"
+            step="0.01"
+            value={stopEqFrac}
+            onChange={(e) => setStopEqFrac(safeNum(e.target.value, stopEqFrac))}
+            className="flex-1"
+          />
         </div>
-        <div className="space-y-2">
-          <Label>Sharpe Window (optional)</Label>
+        <div className="flex items-center gap-2">
+          <Label className="min-w-[150px]">Sharpe Window</Label>
           <Input
             type="number"
             value={sharpeWindow ?? 0}
@@ -91,10 +126,11 @@ export function RewardSection({
               const v = safeNum(e.target.value, 0);
               setSharpeWindow(v > 0 ? v : undefined);
             }}
+            className="flex-1"
           />
         </div>
-        <div className="space-y-2">
-          <Label>Sharpe Scale (optional)</Label>
+        <div className="flex items-center gap-2">
+          <Label className="min-w-[150px]">Sharpe Scale</Label>
           <Input
             type="number"
             step="0.0001"
@@ -103,6 +139,7 @@ export function RewardSection({
               const v = safeNum(e.target.value, 0);
               setSharpeScale(v > 0 ? v : undefined);
             }}
+            className="flex-1"
           />
         </div>
       </div>
