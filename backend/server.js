@@ -33,6 +33,7 @@ connectDB();
 const app = express();
 
 const BACKEND_URL = process.env.BACKEND_URL;
+console.log("BACKEND_URL:", BACKEND_URL);
 const PORT = process.env.BACKEND_PORT;
 const CERT_PATH = process.env.SSL_CERT;
 const KEY_PATH = process.env.SSL_KEY;
