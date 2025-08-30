@@ -1,14 +1,20 @@
-import { Label, LabelProps } from "@/components/ui/label";
+import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Info } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ReactNode } from "react";
+import { ReactNode, LabelHTMLAttributes } from "react";
 
-interface TooltipLabelProps extends LabelProps {
+interface TooltipLabelProps extends LabelHTMLAttributes<HTMLLabelElement> {
   tooltip: ReactNode;
+  children?: ReactNode;
 }
 
-export function TooltipLabel({ className, children, tooltip, ...props }: TooltipLabelProps) {
+export function TooltipLabel({
+  className,
+  children,
+  tooltip,
+  ...props
+}: TooltipLabelProps) {
   return (
     <div className="flex items-center gap-1">
       <Label className={cn("text-sm font-medium", className)} {...props}>

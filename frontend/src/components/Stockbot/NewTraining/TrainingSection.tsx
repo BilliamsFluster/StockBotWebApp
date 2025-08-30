@@ -1,7 +1,6 @@
 "use client";
 
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -11,6 +10,7 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 import { safeNum } from "./utils";
+import { TooltipLabel } from "../shared/TooltipLabel";
 
 interface TrainingProps {
   normalize: boolean;
@@ -43,7 +43,9 @@ export function TrainingSection({
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {/* Normalize */}
         <div className="flex flex-col gap-1">
-          <Label>Normalize Observations</Label>
+          <TooltipLabel tooltip="Normalize features using running statistics (zero mean, unit variance). Often improves stability.">
+            Normalize Observations
+          </TooltipLabel>
           <div className="flex items-center justify-between rounded border px-3 py-2">
             <span className="text-sm text-muted-foreground">Toggle</span>
             <Switch checked={normalize} onCheckedChange={setNormalize} />
@@ -52,7 +54,9 @@ export function TrainingSection({
 
         {/* Policy Selector */}
         <div className="flex flex-col gap-1">
-          <Label>Policy</Label>
+          <TooltipLabel tooltip="Policy network architecture. MLP uses per-step features; window CNN/LSTM consume the full lookback window.">
+            Policy
+          </TooltipLabel>
           <Select value={policy} onValueChange={(v) => setPolicy(v as any)}>
             <SelectTrigger>
               <SelectValue />
@@ -67,7 +71,9 @@ export function TrainingSection({
 
         {/* Timesteps */}
         <div className="flex flex-col gap-1">
-          <Label>Timesteps</Label>
+          <TooltipLabel tooltip="Total number of environment steps to train. Larger values generally improve performance but take longer.">
+            Timesteps
+          </TooltipLabel>
           <Input
             type="number"
             value={timesteps}
@@ -77,7 +83,9 @@ export function TrainingSection({
 
         {/* Seed */}
         <div className="flex flex-col gap-1">
-          <Label>Seed</Label>
+          <TooltipLabel tooltip="Random seed for reproducibility across sampling, shuffling, and initialization.">
+            Seed
+          </TooltipLabel>
           <Input
             type="number"
             value={seed}
@@ -87,7 +95,9 @@ export function TrainingSection({
 
         {/* Out Tag */}
         <div className="flex flex-col gap-1 col-span-full md:col-span-1">
-          <Label>Run Tag</Label>
+          <TooltipLabel tooltip="Short label to identify this run. Used in output directories and UI.">
+            Run Tag
+          </TooltipLabel>
           <Input
             value={outTag}
             onChange={(e) => setOutTag(e.target.value)}

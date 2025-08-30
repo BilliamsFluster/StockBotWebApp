@@ -1,9 +1,9 @@
 "use client";
 
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { safeNum } from "./utils";
+import { TooltipLabel } from "../shared/TooltipLabel";
 
 interface QuickSetupProps {
   normalize: boolean;
@@ -38,11 +38,13 @@ export function QuickSetupSection({
       <div className="grid md:grid-cols-2 gap-4">
         <SwitchGroup
           label="Normalize Observations"
+          tooltip="Normalize features using running statistics (zero mean, unit variance). Often improves stability."
           checked={normalize}
           onChange={setNormalize}
         />
         <SelectGroup
           label="Policy"
+          tooltip="Policy network architecture. MLP uses per-step features; window CNN/LSTM consume the full lookback window."
           value={policy}
           onChange={(v) => setPolicy(v as any)}
           options={[
@@ -53,18 +55,21 @@ export function QuickSetupSection({
         />
         <InputGroup
           label="Timesteps"
+          tooltip="Total number of environment steps to train. Larger values generally improve performance but take longer."
           value={timesteps}
           type="number"
           onChange={(v) => setTimesteps(v)}
         />
         <InputGroup
           label="Seed"
+          tooltip="Random seed for reproducibility across sampling, shuffling, and initialization."
           value={seed}
           type="number"
           onChange={(v) => setSeed(v)}
         />
         <InputGroup
           label="Run Tag"
+          tooltip="Short label to identify this run. Used in output directories and UI."
           value={outTag}
           type="text"
           onChange={(v) => setOutTag(v)}
@@ -91,6 +96,7 @@ export function QuickSetupSection({
 
 interface InputGroupProps {
   label: string;
+  tooltip: string;
   value: string | number;
   type?: string;
   onChange: (v: any) => void;
@@ -99,6 +105,7 @@ interface InputGroupProps {
 
 function InputGroup({
   label,
+  tooltip,
   value,
   type = "text",
   onChange,
@@ -106,7 +113,9 @@ function InputGroup({
 }: InputGroupProps) {
   return (
     <div className={`flex flex-col gap-1 ${className}`}>
-      <Label className="text-sm font-medium">{label}</Label>
+      <TooltipLabel className="text-sm font-medium" tooltip={tooltip}>
+        {label}
+      </TooltipLabel>
       <Input
         type={type}
         value={value}
@@ -124,14 +133,17 @@ function InputGroup({
 
 interface SwitchGroupProps {
   label: string;
+  tooltip: string;
   checked: boolean;
   onChange: (v: boolean) => void;
 }
 
-function SwitchGroup({ label, checked, onChange }: SwitchGroupProps) {
+function SwitchGroup({ label, tooltip, checked, onChange }: SwitchGroupProps) {
   return (
     <div className="flex flex-col gap-1">
-      <Label className="text-sm font-medium">{label}</Label>
+      <TooltipLabel className="text-sm font-medium" tooltip={tooltip}>
+        {label}
+      </TooltipLabel>
       <div className="flex items-center justify-between rounded border px-3 py-2">
         <span className="text-sm text-muted-foreground">Toggle</span>
         <Switch checked={checked} onCheckedChange={onChange} />
@@ -142,15 +154,18 @@ function SwitchGroup({ label, checked, onChange }: SwitchGroupProps) {
 
 interface SelectGroupProps {
   label: string;
+  tooltip: string;
   value: string;
   onChange: (v: string) => void;
   options: { value: string; label: string }[];
 }
 
-function SelectGroup({ label, value, onChange, options }: SelectGroupProps) {
+function SelectGroup({ label, tooltip, value, onChange, options }: SelectGroupProps) {
   return (
     <div className="flex flex-col gap-1">
-      <Label className="text-sm font-medium">{label}</Label>
+      <TooltipLabel className="text-sm font-medium" tooltip={tooltip}>
+        {label}
+      </TooltipLabel>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}

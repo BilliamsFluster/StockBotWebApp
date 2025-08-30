@@ -1,7 +1,7 @@
 import { AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { safeNum } from "./utils";
+import { TooltipLabel } from "../shared/TooltipLabel";
 
 interface CostsProps {
   commissionPct: number;
@@ -30,7 +30,12 @@ export function CostsSection({
       <AccordionContent>
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
           <div className="flex items-center gap-2">
-            <Label className="min-w-[140px]">Commission %</Label>
+            <TooltipLabel
+              className="min-w-[140px]"
+              tooltip="Fee as a fraction of notional traded (e.g., 0.0005 = 0.05%) applied per buy/sell."
+            >
+              Commission %
+            </TooltipLabel>
             <Input
               type="number"
               step="0.0001"
@@ -40,7 +45,12 @@ export function CostsSection({
             />
           </div>
           <div className="flex items-center gap-2">
-            <Label className="min-w-[140px]">Per Share</Label>
+            <TooltipLabel
+              className="min-w-[140px]"
+              tooltip="Fixed commission per share traded. Set to 0 if fees are purely percentage-based."
+            >
+              Per Share
+            </TooltipLabel>
             <Input
               type="number"
               step="0.0001"
@@ -50,7 +60,12 @@ export function CostsSection({
             />
           </div>
           <div className="flex items-center gap-2">
-            <Label className="min-w-[140px]">Slippage (bps)</Label>
+            <TooltipLabel
+              className="min-w-[140px]"
+              tooltip="Assumed execution slippage in basis points relative to reference price (1 bp = 0.01%)."
+            >
+              Slippage (bps)
+            </TooltipLabel>
             <Input
               type="number"
               step="0.1"
@@ -60,7 +75,12 @@ export function CostsSection({
             />
           </div>
           <div className="flex items-center gap-2">
-            <Label className="min-w-[140px]">Borrow Fee APR</Label>
+            <TooltipLabel
+              className="min-w-[140px]"
+              tooltip="Annualized borrow fee for short positions. Applied to the market value of borrowed shares."
+            >
+              Borrow Fee APR
+            </TooltipLabel>
             <Input
               type="number"
               step="0.0001"

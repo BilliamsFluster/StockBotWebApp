@@ -1,7 +1,7 @@
 import { AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { safeNum } from "./utils";
+import { TooltipLabel } from "../shared/TooltipLabel";
 
 interface PpoProps {
   nSteps: number;
@@ -54,7 +54,12 @@ export function PPOHyperparamsSection({
       <AccordionContent>
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3 pt-2">
           <div className="flex items-center gap-2">
-            <Label className="min-w-[130px]">n_steps</Label>
+            <TooltipLabel
+              className="min-w-[130px]"
+              tooltip="Rollout length per environment before each update. Ensure n_steps × n_envs is divisible by batch_size."
+            >
+              n_steps
+            </TooltipLabel>
             <Input
               type="number"
               value={nSteps}
@@ -63,7 +68,12 @@ export function PPOHyperparamsSection({
             />
           </div>
           <div className="flex items-center gap-2">
-            <Label className="min-w-[130px]">batch_size</Label>
+            <TooltipLabel
+              className="min-w-[130px]"
+              tooltip="Minibatch size used for SGD. Must divide the total rollout size (n_steps × n_envs)."
+            >
+              batch_size
+            </TooltipLabel>
             <Input
               type="number"
               value={batchSize}
@@ -72,7 +82,12 @@ export function PPOHyperparamsSection({
             />
           </div>
           <div className="flex items-center gap-2">
-            <Label className="min-w-[130px]">learning_rate</Label>
+            <TooltipLabel
+              className="min-w-[130px]"
+              tooltip="Optimizer step size. Lower values are more stable; typical range 3e-4 to 1e-5."
+            >
+              learning_rate
+            </TooltipLabel>
             <Input
               type="number"
               step="0.000001"
@@ -82,7 +97,12 @@ export function PPOHyperparamsSection({
             />
           </div>
           <div className="flex items-center gap-2">
-            <Label className="min-w-[130px]">gamma</Label>
+            <TooltipLabel
+              className="min-w-[130px]"
+              tooltip="Discount factor for future rewards (0–1). Higher favors long-term returns."
+            >
+              gamma
+            </TooltipLabel>
             <Input
               type="number"
               step="0.0001"
@@ -92,7 +112,12 @@ export function PPOHyperparamsSection({
             />
           </div>
           <div className="flex items-center gap-2">
-            <Label className="min-w-[130px]">gae_lambda</Label>
+            <TooltipLabel
+              className="min-w-[130px]"
+              tooltip="Lambda for Generalized Advantage Estimation (0–1). Closer to 1 reduces bias; lower reduces variance."
+            >
+              gae_lambda
+            </TooltipLabel>
             <Input
               type="number"
               step="0.0001"
@@ -102,7 +127,12 @@ export function PPOHyperparamsSection({
             />
           </div>
           <div className="flex items-center gap-2">
-            <Label className="min-w-[130px]">clip_range</Label>
+            <TooltipLabel
+              className="min-w-[130px]"
+              tooltip="PPO clipping epsilon for policy updates. Typical values 0.1–0.3."
+            >
+              clip_range
+            </TooltipLabel>
             <Input
               type="number"
               step="0.01"
@@ -112,7 +142,12 @@ export function PPOHyperparamsSection({
             />
           </div>
           <div className="flex items-center gap-2">
-            <Label className="min-w-[130px]">entropy_coef</Label>
+            <TooltipLabel
+              className="min-w-[130px]"
+              tooltip="Entropy bonus coefficient. Higher values encourage exploration and smoother policies."
+            >
+              entropy_coef
+            </TooltipLabel>
             <Input
               type="number"
               step="0.0001"
@@ -122,7 +157,12 @@ export function PPOHyperparamsSection({
             />
           </div>
           <div className="flex items-center gap-2">
-            <Label className="min-w-[130px]">vf_coef</Label>
+            <TooltipLabel
+              className="min-w-[130px]"
+              tooltip="Coefficient for the value function loss term in the PPO objective."
+            >
+              vf_coef
+            </TooltipLabel>
             <Input
               type="number"
               step="0.01"
@@ -132,7 +172,12 @@ export function PPOHyperparamsSection({
             />
           </div>
           <div className="flex items-center gap-2">
-            <Label className="min-w-[130px]">max_grad_norm</Label>
+            <TooltipLabel
+              className="min-w-[130px]"
+              tooltip="Global gradient clipping threshold (L2 norm). Helps stabilize training."
+            >
+              max_grad_norm
+            </TooltipLabel>
             <Input
               type="number"
               step="0.01"
@@ -142,7 +187,12 @@ export function PPOHyperparamsSection({
             />
           </div>
           <div className="flex items-center gap-2">
-            <Label className="min-w-[130px]">dropout</Label>
+            <TooltipLabel
+              className="min-w-[130px]"
+              tooltip="Dropout rate applied in the policy network (if supported). Set 0 to disable."
+            >
+              dropout
+            </TooltipLabel>
             <Input
               type="number"
               step="0.01"

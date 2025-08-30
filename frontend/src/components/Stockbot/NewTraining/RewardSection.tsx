@@ -1,7 +1,6 @@
 "use client";
 
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -10,6 +9,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { safeNum } from "./utils";
+import { TooltipLabel } from "../shared/TooltipLabel";
 
 interface RewardProps {
   rewardMode: "delta_nav" | "log_nav";
@@ -58,6 +58,7 @@ export function RewardSection({
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <SelectGroup
           label="Reward Mode"
+          tooltip="Base reward definition. 'delta_nav' uses change in NAV; 'log_nav' uses log-return of NAV."
           value={rewardMode}
           onChange={(v) => setRewardMode(v as "delta_nav" | "log_nav")}
           options={[
@@ -65,19 +66,56 @@ export function RewardSection({
             { value: "log_nav", label: "log_nav" },
           ]}
         />
-        <InputGroup label="Drawdown Penalty" value={wDrawdown} step="0.0001" onChange={setWDrawdown} />
-        <InputGroup label="Turnover Penalty" value={wTurnover} step="0.0001" onChange={setWTurnover} />
-        <InputGroup label="Volatility Penalty" value={wVol} step="0.0001" onChange={setWVol} />
-        <InputGroup label="Vol Window" value={volWindow} onChange={setVolWindow} />
-        <InputGroup label="Leverage Penalty" value={wLeverage} step="0.0001" onChange={setWLeverage} />
-        <InputGroup label="Stop Eq Fraction" value={stopEqFrac} step="0.01" onChange={setStopEqFrac} />
+        <InputGroup
+          label="Drawdown Penalty"
+          tooltip="Penalty weight applied to peak-to-trough drawdown to discourage large equity declines."
+          value={wDrawdown}
+          step="0.0001"
+          onChange={setWDrawdown}
+        />
+        <InputGroup
+          label="Turnover Penalty"
+          tooltip="Penalty weight proportional to traded notional between steps; discourages frequent large rebalances."
+          value={wTurnover}
+          step="0.0001"
+          onChange={setWTurnover}
+        />
+        <InputGroup
+          label="Volatility Penalty"
+          tooltip="Penalty weight on realized return volatility over the chosen window."
+          value={wVol}
+          step="0.0001"
+          onChange={setWVol}
+        />
+        <InputGroup
+          label="Vol Window"
+          tooltip="Lookback window length used to compute volatility."
+          value={volWindow}
+          onChange={setVolWindow}
+        />
+        <InputGroup
+          label="Leverage Penalty"
+          tooltip="Penalty weight on gross leverage to discourage excessive exposure."
+          value={wLeverage}
+          step="0.0001"
+          onChange={setWLeverage}
+        />
+        <InputGroup
+          label="Stop Eq Fraction"
+          tooltip="End episode early when equity falls below this fraction of starting equity. Set 0 to disable."
+          value={stopEqFrac}
+          step="0.01"
+          onChange={setStopEqFrac}
+        />
         <InputGroup
           label="Sharpe Window"
+          tooltip="Lookback window for an optional running Sharpe-style shaping term. Leave 0 to disable."
           value={sharpeWindow ?? 0}
           onChange={(v) => setSharpeWindow(v > 0 ? v : undefined)}
         />
         <InputGroup
           label="Sharpe Scale"
+          tooltip="Scale factor applied to the Sharpe shaping term. Leave 0 to disable."
           value={sharpeScale ?? 0}
           step="0.0001"
           onChange={(v) => setSharpeScale(v > 0 ? v : undefined)}
@@ -89,15 +127,18 @@ export function RewardSection({
 
 interface InputGroupProps {
   label: string;
+  tooltip: string;
   value: number;
   onChange: (v: number) => void;
   step?: string;
 }
 
-function InputGroup({ label, value, onChange, step = "1" }: InputGroupProps) {
+function InputGroup({ label, tooltip, value, onChange, step = "1" }: InputGroupProps) {
   return (
     <div className="space-y-1">
-      <Label className="text-sm">{label}</Label>
+      <TooltipLabel tooltip={tooltip} className="text-sm">
+        {label}
+      </TooltipLabel>
       <Input
         type="number"
         value={value}
@@ -111,15 +152,18 @@ function InputGroup({ label, value, onChange, step = "1" }: InputGroupProps) {
 
 interface SelectGroupProps {
   label: string;
+  tooltip: string;
   value: string;
   onChange: (v: string) => void;
   options: { value: string; label: string }[];
 }
 
-function SelectGroup({ label, value, onChange, options }: SelectGroupProps) {
+function SelectGroup({ label, tooltip, value, onChange, options }: SelectGroupProps) {
   return (
     <div className="space-y-1">
-      <Label className="text-sm">{label}</Label>
+      <TooltipLabel tooltip={tooltip} className="text-sm">
+        {label}
+      </TooltipLabel>
       <Select value={value} onValueChange={onChange}>
         <SelectTrigger className="w-full">
           <SelectValue placeholder="Select..." />

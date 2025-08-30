@@ -1,4 +1,3 @@
-// src/components/Stockbot/RunDetail.tsx
 "use client";
 
 import React, { useCallback, useMemo, useState } from "react";
@@ -7,14 +6,20 @@ import {
   Table, TableHeader, TableRow, TableHead, TableBody, TableCell,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip as UITooltip,
+  TooltipContent,
+  TooltipTrigger,
+  TooltipProvider,
+} from "@/components/ui/tooltip";
 import { parseCSVText, drawdownFromEquity } from "./lib/csv";
 import { formatPct, formatUSD, formatSigned } from "./lib/formats";
 import { Metrics } from "./lib/types";
 
 import {
-  LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
-  ResponsiveContainer, AreaChart, Area, BarChart, Bar,
+  LineChart, Line, XAxis, YAxis,
+  Tooltip as RechartsTooltip,
+  CartesianGrid, ResponsiveContainer, AreaChart, Area, BarChart, Bar,
 } from "recharts";
 
 type EquityRow = { ts: number; equity: number };
@@ -77,7 +82,7 @@ export default function RunDetail() {
     return [min - pad, max + pad];
   }, [equity]);
 
-  // ---------- ONLY DRAWNDOWN LOGIC CHANGED BELOW ----------
+  // ---------- ONLY DRAWDOWN LOGIC CHANGED BELOW ----------
 
   // File helpers (unchanged)
   const readAsText = (file: File) =>
@@ -143,7 +148,6 @@ export default function RunDetail() {
             nextEquity = norm;
 
             // --- Drawdown normalization ---
-            // 1) compute raw
             let dd = drawdownFromEquity(norm as any).map((d: any) => ({
               ts: toEpoch(d.ts)!, dd: toNum(d.dd)!,
             })) as DrawdownRow[];
@@ -155,7 +159,7 @@ export default function RunDetail() {
               const hasNeg = dd.some(d => d.dd < 0);
 
               // If values look like percents (e.g., 12 for 12%), scale to fraction.
-              const scale = maxAbs > 1.5 ? 1/100 : 1;
+              const scale = maxAbs > 1.5 ? 1 / 100 : 1;
 
               // Force drawdown to be ≤ 0 (0 at peaks, negative when down).
               dd = dd.map(d => {
@@ -195,7 +199,7 @@ export default function RunDetail() {
                 const maxAbs = Math.max(...dd.map(d => Math.abs(d.dd)));
                 const hasPos = dd.some(d => d.dd > 0);
                 const hasNeg = dd.some(d => d.dd < 0);
-                const scale = maxAbs > 1.5 ? 1/100 : 1;
+                const scale = maxAbs > 1.5 ? 1 / 100 : 1;
                 dd = dd.map(d => {
                   let v = d.dd * scale;
                   if (!hasNeg && hasPos) v = -Math.abs(v);
@@ -298,193 +302,209 @@ export default function RunDetail() {
   );
 
   return (
-    <div className="space-y-6">
-      <Card className="p-4 space-y-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="text-lg font-semibold">Run Detail</div>
-          <div className="flex-1" />
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="outline" size="sm" onClick={resetAll}>Reset</Button>
-            </TooltipTrigger>
-            <TooltipContent>Clear all loaded run data</TooltipContent>
-          </Tooltip>
-          <label>
-            <input type="file" multiple accept=".csv,application/json" onChange={onFileInput} className="hidden" id="upload-artifacts"/>
+    <TooltipProvider delayDuration={200}>
+      {/* Hidden input lives here to avoid nested <label>s */}
+      <input
+        type="file"
+        multiple
+        accept=".csv,application/json"
+        onChange={onFileInput}
+        className="hidden"
+        id="upload-artifacts"
+      />
+
+      <div className="space-y-6">
+        <Card className="p-4 space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="text-lg font-semibold">Run Detail</div>
+            <div className="flex-1" />
+
+            <UITooltip>
+              <TooltipTrigger asChild>
+                <Button variant="outline" size="sm" onClick={resetAll}>Reset</Button>
+              </TooltipTrigger>
+              <TooltipContent>Clear all loaded run data</TooltipContent>
+            </UITooltip>
+
             <Button asChild size="sm">
-              <span><label htmlFor="upload-artifacts" className="cursor-pointer">Upload Files…</label></span>
+              <label htmlFor="upload-artifacts" className="cursor-pointer select-none">
+                Upload Files…
+              </label>
             </Button>
-          </label>
-        </div>
-
-        <div
-          onDrop={onDrop} onDragOver={onDragOver} onDragLeave={onDragLeave}
-          className={["mt-2 rounded-xl border-2 border-dashed p-6 text-center transition",
-            dragActive ? "border-primary bg-muted/40" : "border-muted-foreground/30"].join(" ")}
-        >
-          <div className="text-sm text-muted-foreground">
-            Drop your <code>metrics.json</code>, <code>equity.csv</code>, <code>trades.csv</code>, and <code>orders.csv</code> here — or click “Upload Files…”
           </div>
-          <div className="text-xs text-muted-foreground mt-1">Tip: you can also drop an entire folder from your file explorer.</div>
-          {loading && <div className="mt-2 text-sm">Loading…</div>}
-        </div>
 
-        <div className="grid md:grid-cols-5 gap-3">
-          <Kpi label="Total Return" value={formatPct(metrics?.total_return)} />
-          <Kpi label="CAGR" value={formatPct(metrics?.cagr)} />
-          <Kpi label="Sharpe" value={formatSigned(metrics?.sharpe)} />
-          <Kpi label="Max Drawdown" value={formatPct(metrics?.max_drawdown)} />
-          <Kpi label="Turnover" value={formatSigned(metrics?.turnover)} />
-          <Kpi label="# Trades" value={String(metrics?.num_trades ?? (trades?.length || 0))} />
-          <Kpi label="Hit Rate" value={metrics?.hit_rate != null ? formatPct(metrics.hit_rate) : "—"} />
-          <Kpi label="Avg Trade PnL" value={formatUSD(metrics?.avg_trade_pnl)} />
-          <Kpi label="Vol (ann.)" value={formatPct(metrics?.vol_annual)} />
-        </div>
-      </Card>
+          <div
+            onDrop={onDrop} onDragOver={onDragOver} onDragLeave={onDragLeave}
+            className={[
+              "mt-2 rounded-xl border-2 border-dashed p-6 text-center transition",
+              dragActive ? "border-primary bg-muted/40" : "border-muted-foreground/30",
+            ].join(" ")}
+          >
+            <div className="text-sm text-muted-foreground">
+              Drop your <code>metrics.json</code>, <code>equity.csv</code>, <code>trades.csv</code>, and <code>orders.csv</code> here — or click “Upload Files…”
+            </div>
+            <div className="text-xs text-muted-foreground mt-1">Tip: you can also drop an entire folder from your file explorer.</div>
+            {loading && <div className="mt-2 text-sm">Loading…</div>}
+          </div>
 
-      <div className="grid lg:grid-cols-2 gap-6">
-        {/* EQUITY (unchanged) */}
-        <Card className="p-4 space-y-2">
-          <div className="font-semibold">Equity Curve</div>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={equity} key={equityKey}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="ts" type="number" scale="time"
-                  domain={["dataMin", "dataMax"]} tickFormatter={(t) => new Date(Number(t)).toLocaleDateString()} hide
-                />
-                <YAxis
-                  dataKey="equity"
-                  domain={yDomain}
-                  tickCount={6}
-                  allowDecimals
-                  tickFormatter={(v: number) => formatUSDShort(v)}
-                />
-                <Tooltip
-                  labelFormatter={(t) => new Date(Number(t)).toLocaleString()}
-                  formatter={(v: any) => formatUSD(Number(v))}
-                />
-                <Line type="monotone" dataKey="equity" dot={false} isAnimationActive={false} />
-              </LineChart>
-            </ResponsiveContainer>
+          <div className="grid md:grid-cols-5 gap-3">
+            <Kpi label="Total Return" value={formatPct(metrics?.total_return)} />
+            <Kpi label="CAGR" value={formatPct(metrics?.cagr)} />
+            <Kpi label="Sharpe" value={formatSigned(metrics?.sharpe)} />
+            <Kpi label="Max Drawdown" value={formatPct(metrics?.max_drawdown)} />
+            <Kpi label="Turnover" value={formatSigned(metrics?.turnover)} />
+            <Kpi label="# Trades" value={String(metrics?.num_trades ?? (trades?.length || 0))} />
+            <Kpi label="Hit Rate" value={metrics?.hit_rate != null ? formatPct(metrics.hit_rate) : "—"} />
+            <Kpi label="Avg Trade PnL" value={formatUSD(metrics?.avg_trade_pnl)} />
+            <Kpi label="Vol (ann.)" value={formatPct(metrics?.vol_annual)} />
           </div>
         </Card>
 
-        {/* DRAWDOWN (fixed) */}
-        <Card className="p-4 space-y-2">
-          <div className="font-semibold">Drawdown</div>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={drawdown} key={ddKey}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="ts" type="number" scale="time"
-                  domain={["dataMin", "dataMax"]} tickFormatter={(t) => new Date(Number(t)).toLocaleDateString()} hide
-                />
-                <YAxis
-                  domain={ddDomain}
-                  tickCount={6}
-                  tickFormatter={(v) => `${(Number(v) * 100).toFixed(0)}%`}
-                />
-                <Tooltip
-                  formatter={(v: any) => `${(Number(v) * 100).toFixed(2)}%`}
-                  labelFormatter={(t) => new Date(Number(t)).toLocaleString()}
-                />
-                <Area type="monotone" dataKey="dd" fillOpacity={0.3} isAnimationActive={false} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-      </div>
+        <div className="grid lg:grid-cols-2 gap-6">
+          {/* EQUITY (unchanged) */}
+          <Card className="p-4 space-y-2">
+            <div className="font-semibold">Equity Curve</div>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={equity} key={equityKey}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="ts" type="number" scale="time"
+                    domain={["dataMin", "dataMax"]}
+                    tickFormatter={(t) => new Date(Number(t)).toLocaleDateString()}
+                    hide
+                  />
+                  <YAxis
+                    dataKey="equity"
+                    domain={yDomain}
+                    tickCount={6}
+                    allowDecimals
+                    tickFormatter={(v: number) => formatUSDShort(v)}
+                  />
+                  <RechartsTooltip
+                    labelFormatter={(t) => new Date(Number(t)).toLocaleString()}
+                    formatter={(v: any) => formatUSD(Number(v))}
+                  />
+                  <Line type="monotone" dataKey="equity" dot={false} isAnimationActive={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
 
-      <div className="grid lg:grid-cols-2 gap-6">
+          {/* DRAWDOWN (fixed) */}
+          <Card className="p-4 space-y-2">
+            <div className="font-semibold">Drawdown</div>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={drawdown} key={ddKey}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="ts" type="number" scale="time"
+                    domain={["dataMin", "dataMax"]}
+                    tickFormatter={(t) => new Date(Number(t)).toLocaleDateString()}
+                    hide
+                  />
+                  <YAxis
+                    domain={ddDomain}
+                    tickCount={6}
+                    tickFormatter={(v) => `${(Number(v) * 100).toFixed(0)}%`}
+                  />
+                  <RechartsTooltip formatter={(v: any) => `${(Number(v) * 100).toFixed(2)}%`} />
+                  <Area type="monotone" dataKey="dd" fillOpacity={0.3} isAnimationActive={false} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+        </div>
+
+        <div className="grid lg:grid-cols-2 gap-6">
+          <Card className="p-4 space-y-2">
+            <div className="font-semibold">Trades (Top 10 by |PnL|)</div>
+            <div className="overflow-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Symbol</TableHead>
+                    <TableHead>Side</TableHead>
+                    <TableHead>Qty</TableHead>
+                    <TableHead>Entry</TableHead>
+                    <TableHead>Exit</TableHead>
+                    <TableHead>Net PnL</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {trades
+                    .slice()
+                    .sort((a, b) => Math.abs(Number(b.net_pnl || 0)) - Math.abs(Number(a.net_pnl || 0)))
+                    .slice(0, 10)
+                    .map((t, i) => (
+                      <TableRow key={i}>
+                        <TableCell>{t.symbol ?? "—"}</TableCell>
+                        <TableCell>{t.side ?? "—"}</TableCell>
+                        <TableCell>{Number.isFinite(Number(t.qty)) ? Number(t.qty).toFixed(2) : "—"}</TableCell>
+                        <TableCell>{t.entry_ts ? new Date(t.entry_ts).toLocaleDateString() : "—"}</TableCell>
+                        <TableCell>{t.exit_ts ? new Date(t.exit_ts).toLocaleDateString() : "—"}</TableCell>
+                        <TableCell className={Number(t.net_pnl) >= 0 ? "text-green-600" : "text-red-600"}>
+                          {formatUSD(Number(t.net_pnl || 0))}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  {trades.length === 0 && (
+                    <TableRow><TableCell colSpan={6} className="text-muted-foreground italic">No trades loaded.</TableCell></TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+
+          <Card className="p-4 space-y-2">
+            <div className="font-semibold">Trade PnL by Symbol (Cumulative)</div>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={symbolPnl}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="symbol" />
+                  <YAxis tickFormatter={(v: number) => formatUSDShort(v)} />
+                  <RechartsTooltip formatter={(v: any) => formatUSD(Number(v))} />
+                  <Bar dataKey="net" isAnimationActive={false} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+        </div>
+
         <Card className="p-4 space-y-2">
-          <div className="font-semibold">Trades (Top 10 by |PnL|)</div>
+          <div className="font-semibold">Orders (last 20)</div>
           <div className="overflow-auto">
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>Time</TableHead>
                   <TableHead>Symbol</TableHead>
-                  <TableHead>Side</TableHead>
                   <TableHead>Qty</TableHead>
-                  <TableHead>Entry</TableHead>
-                  <TableHead>Exit</TableHead>
-                  <TableHead>Net PnL</TableHead>
+                  <TableHead>Price</TableHead>
+                  <TableHead>Commission</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {trades
-                  .slice()
-                  .sort((a, b) => Math.abs(Number(b.net_pnl || 0)) - Math.abs(Number(a.net_pnl || 0)))
-                  .slice(0, 10)
-                  .map((t, i) => (
-                    <TableRow key={i}>
-                      <TableCell>{t.symbol ?? "—"}</TableCell>
-                      <TableCell>{t.side ?? "—"}</TableCell>
-                      <TableCell>{Number.isFinite(Number(t.qty)) ? Number(t.qty).toFixed(2) : "—"}</TableCell>
-                      <TableCell>{t.entry_ts ? new Date(t.entry_ts).toLocaleDateString() : "—"}</TableCell>
-                      <TableCell>{t.exit_ts ? new Date(t.exit_ts).toLocaleDateString() : "—"}</TableCell>
-                      <TableCell className={Number(t.net_pnl) >= 0 ? "text-green-600" : "text-red-600"}>
-                        {formatUSD(Number(t.net_pnl || 0))}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                {trades.length === 0 && (
-                  <TableRow><TableCell colSpan={6} className="text-muted-foreground italic">No trades loaded.</TableCell></TableRow>
+                {orders.slice(-20).map((o, i) => (
+                  <TableRow key={i}>
+                    <TableCell>{o.ts ? new Date(o.ts).toLocaleString() : "—"}</TableCell>
+                    <TableCell>{o.symbol ?? "—"}</TableCell>
+                    <TableCell>{Number.isFinite(Number(o.qty)) ? Number(o.qty).toFixed(4) : "—"}</TableCell>
+                    <TableCell>{formatUSD(Number(o.price || 0))}</TableCell>
+                    <TableCell>{formatUSD(Number(o.commission || 0))}</TableCell>
+                  </TableRow>
+                ))}
+                {orders.length === 0 && (
+                  <TableRow><TableCell colSpan={5} className="text-muted-foreground italic">No orders loaded.</TableCell></TableRow>
                 )}
               </TableBody>
             </Table>
           </div>
         </Card>
-
-        <Card className="p-4 space-y-2">
-          <div className="font-semibold">Trade PnL by Symbol (Cumulative)</div>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={symbolPnl}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="symbol" />
-                <YAxis tickFormatter={(v: number) => formatUSDShort(v)} />
-                <Tooltip formatter={(v: any) => formatUSD(Number(v))} />
-                <Bar dataKey="net" isAnimationActive={false} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
       </div>
-
-      <Card className="p-4 space-y-2">
-        <div className="font-semibold">Orders (last 20)</div>
-        <div className="overflow-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Time</TableHead>
-                <TableHead>Symbol</TableHead>
-                <TableHead>Qty</TableHead>
-                <TableHead>Price</TableHead>
-                <TableHead>Commission</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {orders.slice(-20).map((o, i) => (
-                <TableRow key={i}>
-                  <TableCell>{o.ts ? new Date(o.ts).toLocaleString() : "—"}</TableCell>
-                  <TableCell>{o.symbol ?? "—"}</TableCell>
-                  <TableCell>{Number.isFinite(Number(o.qty)) ? Number(o.qty).toFixed(4) : "—"}</TableCell>
-                  <TableCell>{formatUSD(Number(o.price || 0))}</TableCell>
-                  <TableCell>{formatUSD(Number(o.commission || 0))}</TableCell>
-                </TableRow>
-              ))}
-              {orders.length === 0 && (
-                <TableRow><TableCell colSpan={5} className="text-muted-foreground italic">No orders loaded.</TableCell></TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      </Card>
-    </div>
+    </TooltipProvider>
   );
 }
 
