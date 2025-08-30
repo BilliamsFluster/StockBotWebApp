@@ -15,6 +15,7 @@ import {
 import { parseCSVText, drawdownFromEquity } from "./lib/csv";
 import { formatPct, formatUSD, formatSigned } from "./lib/formats";
 import { Metrics } from "./lib/types";
+import { TooltipLabel } from "./shared/TooltipLabel";
 
 import {
   LineChart, Line, XAxis, YAxis,
@@ -348,22 +349,56 @@ export default function RunDetail() {
           </div>
 
           <div className="grid md:grid-cols-5 gap-3">
-            <Kpi label="Total Return" value={formatPct(metrics?.total_return)} />
-            <Kpi label="CAGR" value={formatPct(metrics?.cagr)} />
-            <Kpi label="Sharpe" value={formatSigned(metrics?.sharpe)} />
-            <Kpi label="Max Drawdown" value={formatPct(metrics?.max_drawdown)} />
-            <Kpi label="Turnover" value={formatSigned(metrics?.turnover)} />
-            <Kpi label="# Trades" value={String(metrics?.num_trades ?? (trades?.length || 0))} />
+            <Kpi
+              label="Total Return"
+              value={formatPct(metrics?.total_return)}
+              tooltip="Total return over the run: (ending equity / starting equity) − 1."
+            />
+            <Kpi
+              label="CAGR"
+              value={formatPct(metrics?.cagr)}
+              tooltip="Compound annual growth rate implied by start/end equity and run duration."
+            />
+            <Kpi
+              label="Sharpe"
+              value={formatSigned(metrics?.sharpe)}
+              tooltip="Annualized Sharpe ratio based on per-period returns; risk‑free assumed 0 unless configured."
+            />
+            <Kpi
+              label="Max Drawdown"
+              value={formatPct(metrics?.max_drawdown)}
+              tooltip="Worst peak‑to‑trough equity drop during the run."
+            />
+            <Kpi
+              label="Turnover"
+              value={formatSigned(metrics?.turnover)}
+              tooltip="Average turnover (fraction of capital traded per period). Higher means more trading."
+            />
+            <Kpi
+              label="# Trades"
+              value={String(metrics?.num_trades ?? (trades?.length || 0))}
+              tooltip="Number of closed trades (from metrics or trades.csv)."
+            />
             <Kpi label="Hit Rate" value={metrics?.hit_rate != null ? formatPct(metrics.hit_rate) : "—"} />
-            <Kpi label="Avg Trade PnL" value={formatUSD(metrics?.avg_trade_pnl)} />
-            <Kpi label="Vol (ann.)" value={formatPct(metrics?.vol_annual)} />
+            <Kpi
+              label="Avg Trade PnL"
+              value={formatUSD(metrics?.avg_trade_pnl)}
+              tooltip="Mean net PnL per trade (includes commissions and slippage)."
+            />
+            <Kpi
+              label="Vol (ann.)"
+              value={formatPct(metrics?.vol_annual)}
+              tooltip="Annualized volatility of portfolio returns."
+            />
           </div>
         </Card>
 
         <div className="grid lg:grid-cols-2 gap-6">
           {/* EQUITY (unchanged) */}
           <Card className="p-4 space-y-2">
-            <div className="font-semibold">Equity Curve</div>
+            <TooltipLabel className="font-semibold" tooltip="Portfolio equity over time. Hover the chart to see exact equity values at each timestamp.">
+              Equity Curve
+            </TooltipLabel>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={equity} key={equityKey}>
@@ -393,7 +428,9 @@ export default function RunDetail() {
 
           {/* DRAWDOWN (fixed) */}
           <Card className="p-4 space-y-2">
-            <div className="font-semibold">Drawdown</div>
+            <TooltipLabel className="font-semibold" tooltip="Peak-to-trough decline from the running equity peak. 0 at new highs; negative while below peak.">
+              Drawdown
+            </TooltipLabel>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={drawdown} key={ddKey}>
@@ -419,7 +456,12 @@ export default function RunDetail() {
 
         <div className="grid lg:grid-cols-2 gap-6">
           <Card className="p-4 space-y-2">
-            <div className="font-semibold">Trades (Top 10 by |PnL|)</div>
+            <TooltipLabel
+              className="font-semibold"
+              tooltip="Shows the 10 trades with the largest absolute net PnL. Entry/exit times are local; side indicates direction."
+            >
+              Trades (Top 10 by |PnL|)
+            </TooltipLabel>
             <div className="overflow-auto">
               <Table>
                 <TableHeader>
@@ -458,7 +500,12 @@ export default function RunDetail() {
           </Card>
 
           <Card className="p-4 space-y-2">
-            <div className="font-semibold">Trade PnL by Symbol (Cumulative)</div>
+            <TooltipLabel
+              className="font-semibold"
+              tooltip="Cumulative net PnL grouped by symbol across all closed trades. Highlights per-symbol winners and losers."
+            >
+              Trade PnL by Symbol (Cumulative)
+            </TooltipLabel>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={symbolPnl}>
@@ -474,7 +521,12 @@ export default function RunDetail() {
         </div>
 
         <Card className="p-4 space-y-2">
-          <div className="font-semibold">Orders (last 20)</div>
+          <TooltipLabel
+            className="font-semibold"
+            tooltip="Most recent 20 orders by time from artifacts. Commission shown as a positive cost; timestamps are local."
+          >
+            Orders (last 20)
+          </TooltipLabel>
           <div className="overflow-auto">
             <Table>
               <TableHeader>
@@ -509,10 +561,28 @@ export default function RunDetail() {
 }
 
 // Lightweight KPI
-function Kpi({ label, value }: { label: string; value: React.ReactNode }) {
+function Kpi({ label, value, tooltip }: { label: string; value: React.ReactNode; tooltip?: React.ReactNode }) {
+  const defaultTip =
+    tooltip ??
+    (label === "Total Return" ? "Total return over the run: (ending equity / starting equity) − 1." :
+    label === "CAGR" ? "Compound annual growth rate implied by start/end equity and run duration." :
+    label === "Sharpe" ? "Annualized Sharpe ratio based on per-period returns; risk‑free assumed 0 unless configured." :
+    label === "Max Drawdown" ? "Worst peak‑to‑trough equity drop during the run." :
+    label === "Turnover" ? "Average turnover (fraction of capital traded per period). Higher means more trading." :
+    label === "# Trades" ? "Number of closed trades (from metrics or trades.csv)." :
+    label === "Hit Rate" ? "Fraction of trades with positive net PnL." :
+    label === "Avg Trade PnL" ? "Mean net PnL per trade (includes commissions and slippage)." :
+    label === "Vol (ann.)" ? "Annualized volatility of portfolio returns." :
+    undefined);
   return (
     <div className="rounded-xl border p-3">
-      <div className="text-xs text-muted-foreground">{label}</div>
+      {defaultTip ? (
+        <TooltipLabel className="text-xs text-muted-foreground" tooltip={defaultTip}>
+          {label}
+        </TooltipLabel>
+      ) : (
+        <div className="text-xs text-muted-foreground">{label}</div>
+      )}
       <div className="text-xl font-semibold leading-tight">{value ?? "—"}</div>
     </div>
   );
