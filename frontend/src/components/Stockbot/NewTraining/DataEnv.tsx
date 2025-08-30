@@ -1,6 +1,8 @@
+"use client";
+
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { TooltipLabel } from "../shared/TooltipLabel";
 
 interface DataEnvProps {
   symbols: string;
@@ -28,31 +30,96 @@ export function DataEnvironmentSection({
   setAdjusted,
 }: DataEnvProps) {
   return (
-    <section className="rounded-xl border p-4">
-      <div className="font-medium mb-4">Data & Environment</div>
+    <section className="rounded-xl border p-4 space-y-4">
+      <div className="font-medium">Data & Environment</div>
       <div className="grid md:grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label>Symbols (comma separated)</Label>
-          <Input value={symbols} onChange={(e) => setSymbols(e.target.value)} placeholder="AAPL,MSFT,…" />
-        </div>
-        <div className="space-y-2">
-          <Label>Interval</Label>
-          <Input value={interval} onChange={(e) => setInterval(e.target.value)} placeholder="1d" />
-        </div>
-        <div className="space-y-2">
-          <Label>Start</Label>
-          <Input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
-        </div>
-        <div className="space-y-2">
-          <Label>End</Label>
-          <Input type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
-        </div>
-        <div className="col-span-full flex items-center justify-between rounded border p-3">
-          <Label className="mr-4">Adjusted Prices</Label>
-          <Switch checked={adjusted} onCheckedChange={setAdjusted} />
+        <InputGroup
+          label="Symbols"
+          tooltip="Comma-separated stock tickers"
+          value={symbols}
+          onChange={setSymbols}
+          placeholder="AAPL,MSFT,…"
+        />
+        <InputGroup
+          label="Interval"
+          tooltip="Data frequency such as 1d or 1h"
+          value={interval}
+          onChange={setInterval}
+          placeholder="1d"
+        />
+        <InputGroup
+          label="Start"
+          tooltip="Start date for training data"
+          value={start}
+          onChange={setStart}
+          type="date"
+        />
+        <InputGroup
+          label="End"
+          tooltip="End date for training data"
+          value={end}
+          onChange={setEnd}
+          type="date"
+        />
+        <div className="md:col-span-1">
+          <SwitchGroup
+            label="Adjusted Prices"
+            tooltip="Use prices adjusted for splits and dividends"
+            checked={adjusted}
+            onChange={setAdjusted}
+          />
         </div>
       </div>
     </section>
   );
 }
 
+interface InputGroupProps {
+  label: string;
+  tooltip: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  type?: string;
+}
+
+function InputGroup({
+  label,
+  tooltip,
+  value,
+  onChange,
+  placeholder,
+  type = "text",
+}: InputGroupProps) {
+  return (
+    <div className="flex flex-col gap-1">
+      <TooltipLabel tooltip={tooltip}>{label}</TooltipLabel>
+      <Input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full"
+      />
+    </div>
+  );
+}
+
+interface SwitchGroupProps {
+  label: string;
+  tooltip: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}
+
+function SwitchGroup({ label, tooltip, checked, onChange }: SwitchGroupProps) {
+  return (
+    <div className="flex flex-col gap-1 w-fit">
+      <TooltipLabel tooltip={tooltip}>{label}</TooltipLabel>
+      <div className="border rounded px-3 py-2 flex items-center justify-between gap-4 min-w-[180px]">
+        <span className="text-sm text-muted-foreground">Toggle</span>
+        <Switch checked={checked} onCheckedChange={onChange} />
+      </div>
+    </div>
+  );
+}

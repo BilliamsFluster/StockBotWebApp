@@ -5,8 +5,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { TooltipLabel } from "./shared/TooltipLabel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import api from "@/api/client";
 import type { RunSummary } from "./lib/types";
@@ -155,23 +155,38 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   const fmtVal = (v: number) => Number.isFinite(v) ? v.toFixed(5) : "";
 
   // cards builder
-  const ChartCard = ({ title, tag, color }: { title: string; tag: string | null; color?: string }) => (
-    <Card className="p-4 space-y-2">
-      <div className="font-semibold">{title}</div>
-      <div className="h-56">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={(tag && series[tag]) || []}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="step" tickFormatter={fmtStep} />
-            <YAxis allowDecimals tickFormatter={(v: any) => String(v)} />
-            <Tooltip labelFormatter={(l) => `step ${l}`} formatter={(v: any) => fmtVal(Number(v))} />
-            <Line type="monotone" dataKey="value" stroke={color || "#8884d8"} dot={false} isAnimationActive={false} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-      {!tag && <div className="text-xs text-muted-foreground">Tag not found for this run.</div>}
-    </Card>
-  );
+  const ChartCard = ({ title, tag, color }: { title: string; tag: string | null; color?: string }) => {
+    const tip =
+      title === "Reward (train/eval)" ? "Average episode reward during rollout and evaluation (if enabled)." :
+      title === "Episode Length (mean)" ? "Mean number of steps per rollout episode." :
+      title === "Value Loss" ? "Value function loss (e.g., MSE of value targets)." :
+      title === "Policy Loss" ? "Policy objective (PPO surrogate) loss; monitors optimization progress." :
+      title === "Entropy" ? "Policy entropy; higher values encourage exploration." :
+      title === "Learning Rate" ? "Optimizer learning rate (may be scheduled)." :
+      title === "Clip Fraction" ? "Fraction of samples where the PPO ratio was clipped. High values can indicate large updates." :
+      title === "Approx KL" ? "Approximate KL divergence between old and new policy; tracks update size." :
+      title === "FPS" ? "Throughput (environment steps per second)." :
+      title === "Gradient Norm" ? "Global L2 norm of gradients; useful for spotting exploding/vanishing gradients." :
+      (tag ? `Scalar: ${tag}` : undefined);
+
+    return (
+      <Card className="p-4 space-y-2">
+        <TooltipLabel className="font-semibold" tooltip={tip || title}>{title}</TooltipLabel>
+        <div className="h-56">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={(tag && series[tag]) || []}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="step" tickFormatter={fmtStep} />
+              <YAxis allowDecimals tickFormatter={(v: any) => String(v)} />
+              <Tooltip labelFormatter={(l) => `step ${l}`} formatter={(v: any) => fmtVal(Number(v))} />
+              <Line type="monotone" dataKey="value" stroke={color || "#8884d8"} dot={false} isAnimationActive={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+        {!tag && <div className="text-xs text-muted-foreground">Tag not found for this run.</div>}
+      </Card>
+    );
+  };
 
   const Heatmap = ({ gm }: { gm: GradMatrix }) => {
     // simple canvas heatmap (steps x layers)
@@ -272,7 +287,9 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
           <div className="text-lg font-semibold">Training Results</div>
           <div className="flex-1" />
           <div className="hidden md:block w-64">
-            <Label className="text-xs">Run</Label>
+            <TooltipLabel className="text-xs" tooltip="Select a training run to inspect">
+              Run
+            </TooltipLabel>
             <select
               className="border rounded h-10 px-3 w-full"
               value={runId}
@@ -284,6 +301,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
             </select>
           </div>
           <div className="flex items-center gap-2">
+            <TooltipLabel tooltip="ID of a specific run">Run ID</TooltipLabel>
             <Input
               value={runId}
               onChange={(e) => setRunId(e.target.value)}
@@ -293,7 +311,9 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
             <Button size="sm" onClick={onLoad} disabled={!runId || loading}>{loading ? "Loading…" : "Load"}</Button>
           </div>
           <div className="flex items-center gap-2 rounded border px-2 py-1">
-            <Label className="text-sm">Auto‑refresh</Label>
+            <TooltipLabel className="text-sm" tooltip="Automatically reload metrics">
+              Auto‑refresh
+            </TooltipLabel>
             <Switch checked={autoRefresh} onCheckedChange={setAutoRefresh} />
           </div>
         </div>
@@ -307,7 +327,9 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
       {/* Distributions (Histograms) */}
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <div className="font-semibold">Distributions</div>
+          <TooltipLabel className="font-semibold" tooltip="Histogram of values from the selected TensorBoard histogram tag (e.g., action distribution).">
+            Distributions
+          </TooltipLabel>
           <div className="text-sm"><label><input type="checkbox" checked={showDists} onChange={(e)=>setShowDists(e.target.checked)} /> Show</label></div>
         </div>
         {showDists && (
@@ -328,7 +350,9 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
       <div id="tr-overview" />
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <div className="font-semibold">Rollout & Eval</div>
+          <TooltipLabel className="font-semibold" tooltip="Training rollout reward and evaluation reward over steps.">
+            Rollout & Eval
+          </TooltipLabel>
           <div className="text-sm"><label><input type="checkbox" checked={showRollout} onChange={(e)=>setShowRollout(e.target.checked)} /> Show</label></div>
         </div>
         {showRollout && (
@@ -344,7 +368,9 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
       {/* Optimization */}
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <div className="font-semibold">Optimization</div>
+          <TooltipLabel className="font-semibold" tooltip="Optimization metrics from PPO (loss terms, learning rate, clipping, KL).">
+            Optimization
+          </TooltipLabel>
           <div className="text-sm"><label><input type="checkbox" checked={showOptim} onChange={(e)=>setShowOptim(e.target.checked)} /> Show</label></div>
         </div>
         {showOptim && (
@@ -368,7 +394,9 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
       {/* Timing */}
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <div className="font-semibold">Timing</div>
+          <TooltipLabel className="font-semibold" tooltip="Performance and throughput metrics such as frames per second (FPS).">
+            Timing
+          </TooltipLabel>
           <div className="text-sm"><label><input type="checkbox" checked={showTiming} onChange={(e)=>setShowTiming(e.target.checked)} /> Show</label></div>
         </div>
         {showTiming && (
@@ -383,7 +411,9 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
       {/* Gradients */}
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <div className="font-semibold">Gradients</div>
+          <TooltipLabel className="font-semibold" tooltip="Gradient diagnostics including global norm and per-layer distributions.">
+            Gradients
+          </TooltipLabel>
           <div className="text-sm"><label><input type="checkbox" checked={showGrads} onChange={(e)=>setShowGrads(e.target.checked)} /> Show</label></div>
         </div>
         {showGrads && (
@@ -415,7 +445,9 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
       {/* All scalar tags (grouped) */}
       {tags && tags.scalars?.length > 0 && (
         <Card className="p-4 space-y-3">
-          <div className="font-semibold">All Scalars</div>
+          <TooltipLabel className="font-semibold" tooltip="Browse and plot any scalar TensorBoard tag. Click tags below to add, and toggle visibility.">
+            All Scalars
+          </TooltipLabel>
           <ScalarGroups
             runId={runId}
             tags={tags}
@@ -503,7 +535,9 @@ function ActionsHistogramSection({ runId, tags }: { runId: string; tags: TBTags 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <Label className="text-xs">Tag</Label>
+        <TooltipLabel className="text-xs" tooltip="TensorBoard tag to visualize">
+          Tag
+        </TooltipLabel>
         <select className="border rounded h-9 px-2" value={tag || ""} onChange={(e)=>setTag(e.target.value)}>
           {(tags?.histograms || []).map((t) => (
             <option key={t} value={t}>{t}</option>

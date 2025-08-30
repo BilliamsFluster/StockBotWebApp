@@ -1,7 +1,16 @@
+"use client";
+
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
 import { safeNum } from "./utils";
+import { TooltipLabel } from "../shared/TooltipLabel";
 
 interface TrainingProps {
   normalize: boolean;
@@ -29,35 +38,72 @@ export function TrainingSection({
   setOutTag,
 }: TrainingProps) {
   return (
-    <section className="rounded-xl border p-4">
-      <div className="font-medium mb-4">Training (advanced)</div>
-      <div className="grid md:grid-cols-3 gap-4">
-        <div className="col-span-full md:col-span-1 flex items-center justify-between rounded border p-3">
-          <Label className="mr-4">Normalize Observations</Label>
-          <Switch checked={normalize} onCheckedChange={setNormalize} />
+    <section className="rounded-xl border p-4 space-y-4">
+      <div className="font-medium text-lg">Training (Advanced)</div>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {/* Normalize */}
+        <div className="flex flex-col gap-1">
+          <TooltipLabel tooltip="Normalize features using running statistics (zero mean, unit variance). Often improves stability.">
+            Normalize Observations
+          </TooltipLabel>
+          <div className="flex items-center justify-between rounded border px-3 py-2">
+            <span className="text-sm text-muted-foreground">Toggle</span>
+            <Switch checked={normalize} onCheckedChange={setNormalize} />
+          </div>
         </div>
-        <div className="space-y-2">
-          <Label>Policy</Label>
-          <select className="border rounded h-10 px-3 w-full" value={policy} onChange={(e) => setPolicy(e.target.value as any)}>
-            <option value="mlp">mlp</option>
-            <option value="window_cnn">window_cnn</option>
-            <option value="window_lstm">window_lstm</option>
-          </select>
+
+        {/* Policy Selector */}
+        <div className="flex flex-col gap-1">
+          <TooltipLabel tooltip="Policy network architecture. MLP uses per-step features; window CNN/LSTM consume the full lookback window.">
+            Policy
+          </TooltipLabel>
+          <Select value={policy} onValueChange={(v) => setPolicy(v as any)}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="mlp">MLP</SelectItem>
+              <SelectItem value="window_cnn">Window CNN</SelectItem>
+              <SelectItem value="window_lstm">Window LSTM</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-        <div className="space-y-2">
-          <Label>Timesteps</Label>
-          <Input type="number" value={timesteps} onChange={(e) => setTimesteps(safeNum(e.target.value, timesteps))} />
+
+        {/* Timesteps */}
+        <div className="flex flex-col gap-1">
+          <TooltipLabel tooltip="Total number of environment steps to train. Larger values generally improve performance but take longer.">
+            Timesteps
+          </TooltipLabel>
+          <Input
+            type="number"
+            value={timesteps}
+            onChange={(e) => setTimesteps(safeNum(e.target.value, timesteps))}
+          />
         </div>
-        <div className="space-y-2">
-          <Label>Seed</Label>
-          <Input type="number" value={seed} onChange={(e) => setSeed(safeNum(e.target.value, seed))} />
+
+        {/* Seed */}
+        <div className="flex flex-col gap-1">
+          <TooltipLabel tooltip="Random seed for reproducibility across sampling, shuffling, and initialization.">
+            Seed
+          </TooltipLabel>
+          <Input
+            type="number"
+            value={seed}
+            onChange={(e) => setSeed(safeNum(e.target.value, seed))}
+          />
         </div>
-        <div className="space-y-2">
-          <Label>Run Tag</Label>
-          <Input value={outTag} onChange={(e) => setOutTag(e.target.value)} />
+
+        {/* Out Tag */}
+        <div className="flex flex-col gap-1 col-span-full md:col-span-1">
+          <TooltipLabel tooltip="Short label to identify this run. Used in output directories and UI.">
+            Run Tag
+          </TooltipLabel>
+          <Input
+            value={outTag}
+            onChange={(e) => setOutTag(e.target.value)}
+          />
         </div>
       </div>
     </section>
   );
 }
-

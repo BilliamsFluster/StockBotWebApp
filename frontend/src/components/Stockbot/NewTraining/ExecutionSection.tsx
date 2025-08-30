@@ -1,7 +1,7 @@
 import { AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { safeNum } from "./utils";
+import { TooltipLabel } from "../shared/TooltipLabel";
 
 interface ExecutionProps {
   orderType: "market" | "limit";
@@ -28,11 +28,13 @@ export function ExecutionSection({
     <AccordionItem value="execution">
       <AccordionTrigger>Execution</AccordionTrigger>
       <AccordionContent>
-        <div className="grid md:grid-cols-4 gap-4 pt-2">
-          <div className="space-y-2">
-            <Label>Order Type</Label>
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
+          <div className="flex items-center gap-2">
+            <TooltipLabel className="min-w-[140px]" tooltip="Type of order to simulate">
+              Order Type
+            </TooltipLabel>
             <select
-              className="border rounded h-10 px-3 w-full"
+              className="flex-1 h-10 rounded border px-2"
               value={orderType}
               onChange={(e) => setOrderType(e.target.value as "market" | "limit")}
             >
@@ -40,32 +42,41 @@ export function ExecutionSection({
               <option value="limit">limit</option>
             </select>
           </div>
-          <div className="space-y-2">
-            <Label>Limit Offset (bps)</Label>
+          <div className="flex items-center gap-2">
+            <TooltipLabel className="min-w-[140px]" tooltip="Basis point offset for limit orders">
+              Limit Offset (bps)
+            </TooltipLabel>
             <Input
               type="number"
               step="0.1"
               value={limitOffsetBps}
               onChange={(e) => setLimitOffsetBps(safeNum(e.target.value, limitOffsetBps))}
               disabled={orderType !== "limit"}
+              className="flex-1"
             />
           </div>
-          <div className="space-y-2">
-            <Label>Participation Cap (0–1)</Label>
+          <div className="flex items-center gap-2">
+            <TooltipLabel className="min-w-[140px]" tooltip="Maximum trade size as share of volume">
+              Participation Cap
+            </TooltipLabel>
             <Input
               type="number"
               step="0.01"
               value={participationCap}
               onChange={(e) => setParticipationCap(safeNum(e.target.value, participationCap))}
+              className="flex-1"
             />
           </div>
-          <div className="space-y-2">
-            <Label>Impact k</Label>
+          <div className="flex items-center gap-2">
+            <TooltipLabel className="min-w-[140px]" tooltip="Price impact coefficient">
+              Impact k
+            </TooltipLabel>
             <Input
               type="number"
               step="0.001"
               value={impactK}
               onChange={(e) => setImpactK(safeNum(e.target.value, impactK))}
+              className="flex-1"
             />
           </div>
         </div>

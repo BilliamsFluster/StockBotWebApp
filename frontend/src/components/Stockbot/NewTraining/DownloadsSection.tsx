@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import type { RunArtifacts } from "../lib/types";
+import { TooltipLabel } from "../shared/TooltipLabel";
 
 interface DownloadsProps {
   includeModel: boolean;
@@ -22,9 +22,13 @@ export function DownloadsSection({
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2">
           <Switch checked={includeModel} onCheckedChange={setIncludeModel} id="include-model" />
-          <Label htmlFor="include-model" className="text-sm">
+          <TooltipLabel
+            htmlFor="include-model"
+            className="text-sm"
+            tooltip="Include trained policy weights in the downloadable bundle. Increases file size."
+          >
             Include model (.zip) in bundle
-          </Label>
+          </TooltipLabel>
         </div>
         {bundleHref && (
           <a className="underline" href={bundleHref} target="_blank" rel="noreferrer">

@@ -24,3 +24,19 @@ export async function getMarketHighlights() {
   const { data } = await api.get<{ highlights: string }>('/stockbot/highlights');
   return data;
 }
+
+// Live trading endpoints
+export async function startLiveTrading(params: { run_id?: string; policy_path?: string } = {}) {
+  const { data } = await api.post('/stockbot/trade/start', params);
+  return data as { status: string; session_id?: string; message?: string };
+}
+
+export async function stopLiveTrading() {
+  const { data } = await api.post('/stockbot/trade/stop', {});
+  return data as { status: string; message?: string };
+}
+
+export async function getLiveTradingStatus() {
+  const { data } = await api.get('/stockbot/trade/status');
+  return data as { status: string; details?: any };
+}
