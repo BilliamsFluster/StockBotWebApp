@@ -15,6 +15,9 @@ export async function getActiveBrokerPortfolio(req, res) {
 
     // 🔹 Get decrypted broker-specific credentials
     const credentials = await getBrokerCredentials(user, activeBroker);
+    if (!credentials) {
+      return res.status(400).json({ error: 'No credentials found for active broker' });
+    }
 
     // 🔹 Call Python StockBot
     const botRes = await axios.post(
@@ -27,7 +30,15 @@ export async function getActiveBrokerPortfolio(req, res) {
 
     res.json(botRes.data);
   } catch (err) {
-    console.error('❌ Error fetching active broker portfolio:', err.message);
-    res.status(500).json({ error: 'Failed to fetch portfolio' });
+  console.error('❌ Error fetching active broker portfolio:', err);
+
+  if (axios.isAxiosError(err)) {
+    const status = err.response?.status || 500;
+    const body = err.response?.data || { error: err.message || 'Failed to fetch portfolio' };
+    console.error('❌ Python bot error response:', body);
+    return res.status(status).json(body);
+  }
+  return res.status(500).json({ error: err?.message || 'Failed to fetch portfolio' });
+
   }
 }

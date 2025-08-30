@@ -1,12 +1,34 @@
 import User from '../models/User.js';
 import jwt from 'jsonwebtoken';
-import { log } from '../utils/logger.js';
+import logger from '../utils/logger.js';
+import { body, validationResult } from 'express-validator';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'yoursecretkey';
-const REFRESH_SECRET = process.env.REFRESH_SECRET || 'refreshsecretkey';
+const { JWT_SECRET, REFRESH_SECRET } = process.env;
 const TOKEN_EXPIRY = '20m';
 const REFRESH_EXPIRY = '8h';
 const REFRESH_EXPIRY_MS = 8 * 60 * 60 * 1000; // for cookie in ms
+
+export const registerValidation = [
+  body('username')
+    .trim()
+    .notEmpty().withMessage('Username is required')
+    .escape(),
+  body('email')
+    .trim()
+    .isEmail().withMessage('Valid email is required')
+    .normalizeEmail(),
+  body('password')
+    .isLength({ min: 6 }).withMessage('Password must be at least 6 characters long'),
+];
+
+export const loginValidation = [
+  body('email')
+    .trim()
+    .isEmail().withMessage('Valid email is required')
+    .normalizeEmail(),
+  body('password')
+    .notEmpty().withMessage('Password is required'),
+];
 
 
 const generateToken = (userId) =>
@@ -16,12 +38,13 @@ const generateRefreshToken = (userId) =>
   jwt.sign({ id: userId }, REFRESH_SECRET, { expiresIn: REFRESH_EXPIRY });
 
 export const registerUser = async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
   try {
     const { username, email, password } = req.body;
-
-    if (!username || !email || !password) {
-      return res.status(400).json({ message: 'All fields are required' });
-    }
 
     const existingUser = await User.findOne({ email });
     if (existingUser) {
@@ -33,18 +56,19 @@ export const registerUser = async (req, res) => {
 
     res.status(201).json({ message: 'User registered successfully' });
   } catch (err) {
-    log('REGISTER ERROR:', err);
+    logger.error({ err }, 'REGISTER ERROR');
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
 
 export const loginUser = async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
   try {
     const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({ message: 'All fields are required' });
-    }
 
     const user = await User.findOne({ email });
     if (!user || !(await user.matchPassword(password))) {

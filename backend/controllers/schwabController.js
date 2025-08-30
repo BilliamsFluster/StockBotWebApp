@@ -68,7 +68,9 @@ export const getSchwabAccountStatus = async (req, res) => {
 export const setSchwabCredentials = async (req, res) => {
   try {
     const { app_key, app_secret } = req.body;
-    if (!app_key || !app_secret) {
+    const trimmedKey = app_key?.trim();
+    const trimmedSecret = app_secret?.trim();
+    if (!trimmedKey || !trimmedSecret) {
       return res.status(400).json({ message: 'Missing credentials' });
     }
 
@@ -80,8 +82,8 @@ export const setSchwabCredentials = async (req, res) => {
     // Mongoose pre-save hook will encrypt these
     user.schwab_tokens = {
       ...user.schwab_tokens,
-      app_key,
-      app_secret
+      app_key: trimmedKey,
+      app_secret: trimmedSecret
     };
 
     await user.save();

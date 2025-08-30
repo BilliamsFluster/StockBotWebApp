@@ -81,4 +81,6 @@ backend/certs/ca.key
 backend/certs/cert.crt
 backend/certs/cert.key
 stockbot/models
-
+stockbot/data/memory/default.json
+stockbot/venv/
+stockbot/runs/

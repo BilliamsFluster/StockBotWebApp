@@ -7,7 +7,12 @@ import crypto from 'crypto';
 // 🔐 Encryption constants
 // ========================
 const ALGO = 'aes-256-gcm';
-const ENC_KEY = Buffer.from(process.env.MASTER_ENCRYPTION_KEY, 'hex'); // 32 bytes
+
+const keyHex = process.env.MASTER_ENCRYPTION_KEY;
+if (!keyHex || !/^[0-9a-fA-F]{64}$/.test(keyHex)) {
+  throw new Error('MASTER_ENCRYPTION_KEY must be a 64-character hex string');
+}
+const ENC_KEY = Buffer.from(keyHex, 'hex'); // 32 bytes
 
 // ========================
 // 🔐 Helper functions

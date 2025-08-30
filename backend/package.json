@@ -5,27 +5,34 @@
   "type": "module",
   "scripts": {
     "dev": "infisical run -- npm run start:dev",
-    "start:dev": "nodemon server.js"
+    "start:dev": "nodemon server.js",
+    "test": "vitest run"
+
   },
-  "dependencies": {
+    "dependencies": {
     "axios": "^1.6.0",
     "base-64": "^1.0.0",
-    "bcrypt": "^5.1.0",
     "bcryptjs": "^3.0.2",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "express-ws": "^5.0.2",
-    "form-data": "^4.0.4",
-    "jsonwebtoken": "^9.0.0",
-    "mongoose": "^8.0.0",
-    "multer": "^2.0.2",
-    "ws": "^8.18.3"
-  },
+      "express": "^4.18.2",
+      "express-ws": "^5.0.2",
+      "express-rate-limit": "^6.10.0",
+      "express-validator": "^7.0.1",
+      "form-data": "^4.0.4",
+      "jsonwebtoken": "^9.0.0",
+      "mongoose": "^8.0.0",
+      "multer": "^2.0.2",
+      "pino": "^9.0.0",
+      "pino-http": "^9.0.0",
+      "helmet": "^7.0.0",
+      "ws": "^8.18.3"
+    },
   "devDependencies": {
     "@infisical/cli": "^0.41.96",
     "cross-env": "^7.0.3",
-    "nodemon": "^3.1.0"
+    "nodemon": "^3.1.0",
+    "vitest": "^2.1.1"
   }
 }

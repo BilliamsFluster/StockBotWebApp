@@ -1,38 +1,78 @@
 """
-Text-to-speech (TTS) module for Jarvis.
-Generates unique filenames to avoid concurrency issues.
+Async Text-to-Speech using Microsoft Edge TTS.
+pip install edge-tts
 """
-
 import os
-import tempfile
-import asyncio
-import uuid
 import edge_tts
-
+import asyncio
+from typing import Optional
 
 class TextToSpeech:
+    """Thin wrapper around edge-tts that supports cancellation.
+
+    Parameters roughly mirror edge-tts options. MP3 is produced by default
+    when streaming; the client expects `audio/mpeg`.
+    """
+
     def __init__(
         self,
-        voice: str = None,
-        rate: str = None,
-        pitch: str = None,
-    ):
-        self.voice = voice or os.getenv("EDGE_TTS_VOICE", "en-US-AriaNeural")
-        self.rate = rate or os.getenv("EDGE_TTS_RATE", "+0%")
-        self.pitch = pitch or os.getenv("EDGE_TTS_PITCH", "+0Hz")
+        voice: str = "en-US-JennyNeural",
+        rate: str = "+0%",
+        pitch: str = "+0Hz",
+        volume: str = "+0%",
+    ) -> None:
+        self.voice = voice
+        self.rate = rate
+        self.pitch = pitch
+        self.volume = volume
 
-    async def synthesize(self, text: str, output_path: str = None) -> str:
-        if not output_path:
-            output_path = os.path.join(
-                tempfile.gettempdir(), f"tts_{uuid.uuid4().hex}.mp3"
-            )
-
+    async def synthesize(self, text: str, out_path: str) -> str:
+        """Generate speech and write to `out_path` (e.g., .../reply.mp3)."""
         communicate = edge_tts.Communicate(
-            text, self.voice, rate=self.rate, pitch=self.pitch
+            text,
+            voice=self.voice,
+            rate=self.rate,
+            pitch=self.pitch,
+            volume=self.volume,
         )
-        await communicate.save(output_path)
-        return output_path
+        await communicate.save(out_path)
+        return out_path
 
-    def synthesize_sync(self, text: str, output_path: str = None) -> str:
-        asyncio.run(self.synthesize(text, output_path))
-        return output_path
+    async def synthesize_to_bytes(
+        self,
+        text: str,
+        cancel: Optional[asyncio.Event] = None,
+        max_bytes: Optional[int] = None,
+    ) -> bytes:
+        """
+        Stream TTS into memory and return MP3 bytes.
+
+        Args:
+            text: Text/SSML to synthesize.
+            cancel: If set during streaming, stop early and return what we have.
+            max_bytes: Optional hard cap to avoid runaway memory usage.
+        """
+        communicate = edge_tts.Communicate(
+            text,
+            voice=self.voice,
+            rate=self.rate,
+            pitch=self.pitch,
+            volume=self.volume,
+        )
+        buf = bytearray()
+        try:
+            async for chunk in communicate.stream():  # yields dicts {type, data}
+                if cancel is not None and cancel.is_set():
+                    break  # stop streaming promptly on barge‑in
+                if chunk["type"] == "audio":
+                    data = chunk["data"]
+                    buf.extend(data)
+                    if max_bytes is not None and len(buf) >= max_bytes:
+                        break
+        except asyncio.CancelledError:
+            # propagate if the caller truly cancels the task
+            raise
+        except Exception:
+            # Return what we have on partial failure to keep pipeline resilient
+            pass
+        return bytes(buf)

@@ -117,26 +117,38 @@ uvicorn server:app --reload --host 0.0.0.0 --port 5002
 
 ### Environment Variables (Infisical)
 
-The application uses Infisical for secure environment management. You'll need to configure the following variables:
+The application uses Infisical for secure environment management. You'll need to configure the following variables in Infisical:
+
 
 #### Backend (.env)
+Variables below are stored in Infisical and loaded by modules in [`backend/config`](backend/config).
+
 ```bash
+# URLs & Ports
+BACKEND_URL=https://localhost:5001        # Public URL for logging and callbacks
+BACKEND_PORT=5001                         # Port the Express server listens on
+STOCKBOT_URL=http://localhost:5002        # Python StockBot service
+FRONTEND_URL=https://localhost:3000       # Single allowed CORS origin
+FRONTEND_URLS=https://localhost:3000      # Comma-separated list of allowed origins
+
 # Database
-MONGODB_URI=mongodb://localhost:27017/stockbot
-JWT_SECRET=your-jwt-secret-key
+MONGO_URI=mongodb://localhost:27017/stockbot  # MongoDB connection string
 
-# Broker APIs
-SCHWAB_CLIENT_ID=your-schwab-client-id
-SCHWAB_CLIENT_SECRET=your-schwab-client-secret
-SCHWAB_REDIRECT_URI=https://localhost:3000/schwab/callback
+# Auth & Security
+JWT_SECRET=change-me                     # JWT signing secret
+REFRESH_SECRET=change-me-too             # Refresh token secret
+MASTER_ENCRYPTION_KEY=your-master-key    # Encrypts stored broker tokens
+LOG_LEVEL=info                           # pino logger level
 
-ALPACA_API_KEY=your-alpaca-api-key
-ALPACA_SECRET_KEY=your-alpaca-secret-key
-ALPACA_BASE_URL=https://paper-api.alpaca.markets  # or live URL
+# Schwab OAuth
+SCHWAB_APP_KEY=your-schwab-app-key       # Schwab developer app key
+SCHWAB_APP_SECRET=your-schwab-app-secret # Schwab developer app secret
+SCHWAB_REDIRECT_URI=https://127.0.0.1    # OAuth redirect URI
 
-# Server Configuration
-BACKEND_PORT=5001
-BACKEND_HOST=0.0.0.0
+# SSL (required in production)
+SSL_CERT=./certs/cert.crt                # Path to SSL certificate
+SSL_KEY=./certs/cert.key                 # Path to SSL private key
+SSL_CA=./certs/ca.crt                    # Optional CA bundle
 ```
 
 #### Frontend (.env)
@@ -168,6 +180,7 @@ DATABASE_URL=sqlite:///./stockbot.db
 ALPHA_VANTAGE_API_KEY=your-alpha-vantage-key
 ```
 
+
 ### SSL Certificates Setup
 
 The frontend runs on HTTPS for secure broker integrations. Generate certificates:
@@ -184,6 +197,8 @@ mkcert localhost 127.0.0.1 ::1
 # Rename files
 mv localhost+2.pem cert.crt
 mv localhost+2-key.pem cert.key
+
+#place files inside frontend/certs and backend/certs
 ```
 
 ### Broker API Setup
@@ -314,7 +329,7 @@ setup_venv.bat        # Windows
 
 **Database Connection**
 - Ensure MongoDB is running
-- Check `MONGODB_URI` in Infisical configuration
+ - Check `MONGO_URI` in Infisical configuration
 - Verify network connectivity
 
 ### Logs and Debugging

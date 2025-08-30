@@ -1,41 +1,57 @@
-# stockbot/api/agent/base_agent.py
-
 from abc import ABC, abstractmethod
-import re
-from typing import Dict, List
+from typing import Dict, List, Any
+from jarvis.memory_manager import MemoryManager
+from utils.web_search import fetch_financial_snippets
 
 class BaseAgent(ABC):
-    """
-    Abstract LLM agent base class. 
-    Provides common flag-detection before calling generate().
-    """
-
-    # each subclass can override or extend this map
     FLAG_MAP: Dict[str, Dict[str, List[str]]] = {
-        # flag_name: { "keywords": [...], "method": provider_method_name }
-        "needs_summary":      { "keywords": ["portfolio", "summary", "account value", "total balance"], "method": "get_account_summary" },
-        "needs_positions":    { "keywords": ["holdings", "positions", "assets", "what do i own"],   "method": "get_positions"     },
-        "needs_orders":       { "keywords": ["orders", "pending orders", "placed orders"],           "method": "get_orders"        },
-        "needs_transactions": { "keywords": ["transactions", "history", "activity", "recent activity"], "method": "get_transactions" },
-        # you can add “needs_market_data” or any other flags here
+        "needs_summary":      {"keywords": ["portfolio", "summary", "account value", "total balance"], "method": "get_account_summary"},
+        "needs_positions":    {"keywords": ["holdings", "positions", "assets", "what do i own"],       "method": "get_positions"},
+        "needs_orders":       {"keywords": ["orders", "pending orders", "placed orders"],               "method": "get_orders"},
+        "needs_transactions": {"keywords": ["transactions", "history", "activity", "recent activity"], "method": "get_transactions"},
+        "needs_web_search":   {"keywords": ["news", "market", "latest", "headlines", "current events"], "method": "search_web"},
     }
 
-    def __init__(self, model: str):
+    def __init__(self, model: str, memory_manager: MemoryManager):
         self.model = model
+        self.memory_manager = memory_manager
+
+    def search_web(self):
+        """
+        Searches the web for financial news and market data.
+        """
+        return fetch_financial_snippets()
 
     def detect_flags(self, prompt: str) -> Dict[str, bool]:
-        """
-        Scan the prompt for each keyword set and return a dict of booleans.
-        """
         lower = prompt.lower()
-        return {
-            flag: any(kw in lower for kw in spec["keywords"])
-            for flag, spec in self.FLAG_MAP.items()
-        }
+        return {flag: any(kw in lower for kw in spec["keywords"]) for flag, spec in self.FLAG_MAP.items()}
+
+    def _resolve_flag_context(self, flags: Dict[str, bool]) -> Dict[str, Any]:
+        ctx = {}
+        for flag, is_on in flags.items():
+            if not is_on:
+                continue
+            method_name = self.FLAG_MAP[flag]["method"]
+            method = getattr(self, method_name, None)
+            if callable(method):
+                try:
+                    ctx[flag] = method()
+                except Exception as e:
+                    ctx[flag] = {"error": str(e)}
+        return ctx
 
     @abstractmethod
     def generate(self, prompt: str, output_format: str = "text") -> str:
         """
-        Subclasses implement the actual LLM call here.
+        Generates a response from the language model as an asynchronous stream.
+
+        Args:
+            user_input (str): The text input from the user to be processed by the model.
+            output_format (str): The desired format for the output stream (e.g., "text").
+
+        Yields:
+            str: Chunks of the generated text as they become available.
         """
-        pass
+        # This is an abstract method, so it must be implemented by subclasses.
+        # The 'yield' keyword here is a placeholder to indicate it's a generator.
+        raise NotImplementedError
