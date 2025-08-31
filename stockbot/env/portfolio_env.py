@@ -249,11 +249,11 @@ class PortfolioTradingEnv(gym.Env):
         # ---- advance to next bar
         self._i += 1
 
-        # ---- apply financing for this bar BEFORE valuing equity
-        self.port.step_interest(dt_years=self._dt_years())
-
         # ---- value portfolio at CLOSE[t]
         prices_close_t = self._prices(self._i - 1)  # CLOSE[t]
+
+        # ---- apply financing for this bar BEFORE valuing equity
+        self.port.step_interest(prices_close_t, dt_years=self._dt_years())
         eq_close_t = self.port.value(prices_close_t)
 
         # drawdown and metrics

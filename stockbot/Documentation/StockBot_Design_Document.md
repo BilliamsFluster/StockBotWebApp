@@ -94,13 +94,13 @@ Portfolio Env — `PortfolioTradingEnv`
   - `mapping_mode="tanh_leverage"`: fallback mapping where actions are `tanh()`-constrained weights with a gross leverage cap.
 - Execution & Brokerage:
   - Converts target weights to target shares based on prev close equity, builds `Order`s (market or limit), then simulates fills at next bar’s open using `ExecutionModel` and a `SimBroker` (adapter) with volume participation cap.
-  - Commissions and slippage applied per fill; financing on negative cash accrues via `Portfolio.step_interest()`.
+  - Commissions and slippage applied per fill; financing on negative cash and borrow on shorts accrue via `Portfolio.step_interest()`.
 - Reward: configurable base (`delta_nav` or `log_nav`) minus penalties: drawdown, turnover, rolling volatility, leverage cap breach.
 - Termination: end-of-data, horizon/max_steps, or equity stop (`stop_eq_frac`).
 
 Execution & Portfolio Models
 - `stockbot/env/execution.py:1`: Slippage and POV-constrained fills; limit order cross-checking vs (O,H,L,C); commission model.
-- `stockbot/env/portfolio.py:1`: Portfolio holdings, VWAP cost updates, cash movements, gross exposure, drawdown, interest on negative cash.
+  - `stockbot/env/portfolio.py:1`: Portfolio holdings, VWAP cost updates, cash movements, gross exposure, drawdown, interest on negative cash, and borrow fees on shorts.
 - `stockbot/env/orders.py:1`: `Order` and `Fill` data contracts.
 
 Key Files
@@ -259,7 +259,7 @@ Key Files
 
 **Risk, Execution & Market Microstructure**
 - Execution Model: Slippage bps around open for market orders, limit order crossing checks vs O/H/L/C, and participation-of-volume caps.
-- Financing: Negative cash accrues interest (borrow APR) each step scaled by bar interval.
+- Financing: Negative cash accrues interest and short positions incur borrow fees each step scaled by bar interval.
 - Reward Shaping: Penalties for drawdown, turnover, realized volatility, and leverage excess guide the policy to risk-aware behavior.
 - Circuit Breakers & Exposure: Placeholders in `stockbot/risk/` for portfolio-wide risk controls (circuit breakers, exposure validation) — ready for future extensions.
 
