@@ -16,6 +16,7 @@ class Portfolio:
     fees: FeeModel
     positions: Dict[str, Position] = field(default_factory=dict)
     equity_peak: float = 0.0
+    short_market_value: float = 0.0
 
     def value(self, prices: Dict[str,float]) -> float:
         pv = sum(pos.qty * prices[sym] for sym,pos in self.positions.items())
@@ -25,6 +26,13 @@ class Portfolio:
         if equity <= 0: return np.inf
         gross = sum(abs(pos.qty * prices[sym]) for sym,pos in self.positions.items())
         return gross / equity
+
+    def net_exposure(self, prices: Dict[str,float], equity: float) -> float:
+        """Return net dollar exposure (long minus short) as fraction of equity."""
+        if equity == 0:
+            return 0.0
+        net = sum(pos.qty * prices[sym] for sym, pos in self.positions.items())
+        return net / equity
 
     def weights(self, prices: Dict[str,float]) -> Dict[str,float]:
         eq = max(1e-9, self.value(prices))
@@ -50,10 +58,19 @@ class Portfolio:
             # cash decreases on buy, increases on sell; always pay commission
             self.cash -= f.qty * f.price + f.commission
 
-    def step_interest(self, dt_years: float):
+    def step_interest(self, prices: Dict[str, float], dt_years: float):
         # charge interest on negative cash
         if self.cash < 0:
             self.cash *= (1.0 + self.margin.cash_borrow_apr * dt_years)
+
+        # borrow fees on short positions
+        self.short_market_value = sum(
+            -pos.qty * prices[sym]
+            for sym, pos in self.positions.items()
+            if pos.qty < 0
+        )
+        if self.short_market_value > 0:
+            self.cash -= self.short_market_value * self.fees.borrow_fee_apr * dt_years
 
     def update_peak(self, equity: float):
         self.equity_peak = max(self.equity_peak, equity)
