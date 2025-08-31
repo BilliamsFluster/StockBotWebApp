@@ -7,3 +7,4 @@ from .baselines import (
     RandomStrategy,
 )
 from .sb3_adapter import SB3PolicyStrategy, load_sb3_model
+from .prob_policy import ProbPolicy
