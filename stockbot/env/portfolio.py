@@ -26,6 +26,13 @@ class Portfolio:
         gross = sum(abs(pos.qty * prices[sym]) for sym,pos in self.positions.items())
         return gross / equity
 
+    def net_exposure(self, prices: Dict[str,float], equity: float) -> float:
+        """Return net dollar exposure (long minus short) as fraction of equity."""
+        if equity == 0:
+            return 0.0
+        net = sum(pos.qty * prices[sym] for sym, pos in self.positions.items())
+        return net / equity
+
     def weights(self, prices: Dict[str,float]) -> Dict[str,float]:
         eq = max(1e-9, self.value(prices))
         return {sym: (pos.qty*prices[sym])/eq for sym,pos in self.positions.items()}
