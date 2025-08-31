@@ -74,4 +74,15 @@ def infer_sequence(model_dir: str, series: List[float]) -> Dict[str, Any]:
     next_state = np.dot(alpha[-1], transition)
     p_up_state = [_gaussian_cdf_pos(*e) for e in emissions]
     p_up = float(np.dot(next_state, p_up_state))
-    return {"posteriors": posteriors, "p_up": p_up}
+
+    means = np.array([e[0] for e in emissions])
+    variances = np.array([e[1] ** 2 for e in emissions])
+    expected_return = float(np.dot(next_state, means))
+    variance = float(np.dot(next_state, variances + means ** 2) - expected_return ** 2)
+
+    return {
+        "posteriors": posteriors,
+        "p_up": p_up,
+        "expected_return": expected_return,
+        "variance": variance,
+    }

@@ -1,6 +1,6 @@
 from pathlib import Path
 from pydantic import BaseModel
-from typing import List
+from typing import List, Dict
 
 from prob import train_model, infer_sequence
 
@@ -16,6 +16,13 @@ class ProbInferRequest(BaseModel):
     model_dir: str
 
 
+class ProbInferResponse(BaseModel):
+    posteriors: List[Dict[str, float]]
+    p_up: float
+    expected_return: float
+    variance: float
+
+
 def train(req: ProbTrainRequest) -> dict:
     out = Path(req.out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -23,5 +30,6 @@ def train(req: ProbTrainRequest) -> dict:
     return {"out_dir": str(out)}
 
 
-def infer(req: ProbInferRequest) -> dict:
-    return infer_sequence(req.model_dir, req.series)
+def infer(req: ProbInferRequest) -> ProbInferResponse:
+    res = infer_sequence(req.model_dir, req.series)
+    return ProbInferResponse(**res)
