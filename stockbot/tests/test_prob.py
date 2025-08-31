@@ -25,5 +25,12 @@ def test_train_and_infer(tmp_path):
     )
     assert res2.status_code == 200
     data = res2.json()
-    assert "posteriors" in data and "p_up" in data
+    assert (
+        "posteriors" in data
+        and "p_up" in data
+        and "expected_return" in data
+        and "variance" in data
+    )
     assert len(data["posteriors"]) == len(series)
+    assert isinstance(data["expected_return"], float)
+    assert isinstance(data["variance"], float)
