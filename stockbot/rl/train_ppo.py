@@ -32,7 +32,7 @@ from stable_baselines3.common.logger import configure
 
 from stockbot.env.config import EnvConfig, EpisodeConfig
 from stockbot.rl.utils import make_env, Split, episode_rollout
-from stockbot.rl.metrics import total_return, max_drawdown, daily_sharpe
+from stockbot.rl.metrics import total_return, max_drawdown, sharpe, sortino, calmar, turnover
 
 
 # ---------------------------
@@ -305,12 +305,19 @@ def main():
     # Final quick eval (deterministic)
     start_cash = cfg.episode.start_cash if isinstance(cfg.episode, EpisodeConfig) else 100_000.0
     ev = eval_env_fn()  # build non-vec for rollout
-    curve = episode_rollout(ev, model, deterministic=True, seed=args.seed)
+    curve, to = episode_rollout(ev, model, deterministic=True, seed=args.seed)
     tr = total_return(curve, start_cash)
     mdd = max_drawdown(curve)
-    shp = daily_sharpe(curve, start_cash)
+    shp = sharpe(curve, start_cash)
+    sor = sortino(curve, start_cash)
+    cal = calmar(curve, start_cash)
+    to_metric = turnover(to)
     print(f"== Eval ({split.eval[0]}->{split.eval[1]}) ==")
-    print(f"Total Return: {tr:+.3f}  |  MaxDD: {mdd:.3f}  |  Sharpe(daily-ish): {shp:.3f}")
+    print(
+        "Total Return: {:+.3f}  |  MaxDD: {:.3f}  |  Sharpe: {:.3f}  |  Sortino: {:.3f}  |  Calmar: {:.3f}  |  Turnover: {:.3f}".format(
+            tr, mdd, shp, sor, cal, to_metric
+        )
+    )
 
 
 if __name__ == "__main__":

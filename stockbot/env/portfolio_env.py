@@ -88,6 +88,7 @@ class PortfolioTradingEnv(gym.Env):
         self._w_prev_map = None  # for turnover capping in mapping
         self.min_hold_bars = int(getattr(self.cfg.episode, "min_hold_bars", 0))
         self._hold_since = np.zeros(self.N, dtype=np.int32)
+        self._turnover_ep = 0.0
 
     # ---------- helpers ----------
     def _ohlc(self, sym: str, i: int):
@@ -193,6 +194,7 @@ class PortfolioTradingEnv(gym.Env):
         self._last_weights[:] = 0.0
         self._w_prev_map = None
         self._hold_since[:] = 0
+        self._turnover_ep = 0.0
 
         return self._obs(self._i), {"i": self._i, "config": asdict(self.cfg)}
 
@@ -266,6 +268,7 @@ class PortfolioTradingEnv(gym.Env):
 
         # penalties
         turnover = float(np.sum(np.abs(target_w - prev_w)))
+        self._turnover_ep += turnover
         pen_dd = self.cfg.reward.w_drawdown * dd_after
         pen_to = self.cfg.reward.w_turnover * turnover
 
@@ -328,6 +331,7 @@ class PortfolioTradingEnv(gym.Env):
             "pen_vol": float(pen_vol),
             "pen_leverage": float(pen_lev),
             "turnover": float(turnover),
+            "turnover_ep": float(self._turnover_ep),
             "edge_net": float(eq_close_t - eq_prev_close),
             "gross_leverage": float(gross),
             "net_leverage": float(net),
