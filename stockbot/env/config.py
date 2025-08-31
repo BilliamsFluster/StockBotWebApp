@@ -39,6 +39,8 @@ class ExecConfig:
     impact_k: float = 0.0
     lot_size: float = 1.0                 # round quantities to this lot size
     tick_size: float = 0.01               # round prices to this tick size
+    spread_source: Literal["fee_model", "hl"] = "fee_model"
+    vol_lookback: int = 20
 
 
 @dataclass(frozen=True)

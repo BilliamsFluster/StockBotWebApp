@@ -1,5 +1,7 @@
 from typing import List, Dict, Tuple
 import math
+import statistics
+from collections import defaultdict, deque
 from .orders import Order, Fill
 from .config import ExecConfig, FeeModel
 
@@ -7,6 +9,7 @@ class ExecutionModel:
     def __init__(self, exec_cfg: ExecConfig, fees: FeeModel, participation_cap: float | None = None):
         self.cfg = exec_cfg
         self.fees = fees
+        self._hist: Dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=self.cfg.vol_lookback))
 
     def _commission(self, qty: float, price: float) -> float:
         notional = abs(qty) * price
@@ -33,10 +36,12 @@ class ExecutionModel:
                 continue
 
             if o.type == "market":
-                # slippage: base bps + volume participation impact
-                slip_bps = self.fees.slippage_bps + self.cfg.impact_k * (abs(qty) / V) * 1e4
+                participation = abs(qty) / V
+                spread_bps = self._spread_bps(o.symbol, O, H, L, C)
+                vol_bps = self._volatility_bps(o.symbol)
+                slip_bps = (spread_bps + vol_bps) * participation
                 slip = (slip_bps * 1e-4) * math.copysign(1.0, qty)
-                px = C * (1.0 + slip)  # next bar close ± slippage
+                px = C * (1.0 + slip)
             else:
                 # LIMIT: execute if price crosses
                 if qty > 0:  # buy
@@ -57,4 +62,21 @@ class ExecutionModel:
             tick = max(1e-9, float(self.cfg.tick_size))
             px = round(px / tick) * tick
             fills.append(Fill(o.id, o.symbol, qty, px, self._commission(qty, px)))
+        for sym, (_, _, _, close) in next_bar_prices.items():
+            self._hist[sym].append(close)
         return fills
+
+    def _spread_bps(self, sym: str, O: float, H: float, L: float, C: float) -> float:
+        if getattr(self.cfg, "spread_source", "fee_model") == "hl":
+            return ((H - L) / C) * 1e4 if C else 0.0
+        return float(self.fees.slippage_bps)
+
+    def _volatility_bps(self, sym: str) -> float:
+        hist = self._hist[sym]
+        if len(hist) < 2:
+            return 0.0
+        rets = [math.log(hist[i] / hist[i - 1]) for i in range(1, len(hist))]
+        if len(rets) < 2:
+            return 0.0
+        vol = statistics.pstdev(rets)
+        return vol * 1e4

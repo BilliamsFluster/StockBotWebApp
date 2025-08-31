@@ -74,6 +74,8 @@ class ExecModel(BaseModel):
     limit_offset_bps: float = 0.0
     participation_cap: float = 0.1
     impact_k: float = 0.0
+    spread_source: Literal["fee_model", "hl"] = "fee_model"
+    vol_lookback: int = 20
 
 class EpisodeModel(BaseModel):
     lookback: int = 64
