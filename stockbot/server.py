@@ -4,6 +4,7 @@ import os
 from fastapi.staticfiles import StaticFiles
 from api.routes.broker_routes import router as broker_router
 from api.routes.stockbot_routes import router as stockbot_router
+from api.routes.prob_routes import router as prob_router
 from api.controllers.stockbot_controller import RUNS_DIR
 from pathlib import Path
 
@@ -33,6 +34,7 @@ if os.getenv("INCLUDE_JARVIS", "true").lower() not in ("0", "false"):
 
 app.include_router(broker_router,  prefix="/api/stockbot/broker")
 app.include_router(stockbot_router, prefix="/api/stockbot")
+app.include_router(prob_router,    prefix="/api/stockbot/prob")
 
 
 app.mount("/runs", StaticFiles(directory=str(RUNS_DIR), html=False), name="runs")
