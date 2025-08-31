@@ -9,6 +9,7 @@ CLI utilities.
 from .markov_states import MarkovStates, default_states
 from .estimation import fit_hmm, train_model
 from .inference import forward_filter, infer_sequence, load_model
+from .walkforward import evaluate_walkforward, split_walkforward
 
 __all__ = [
     "MarkovStates",
@@ -18,4 +19,6 @@ __all__ = [
     "forward_filter",
     "infer_sequence",
     "load_model",
+    "evaluate_walkforward",
+    "split_walkforward",
 ]
