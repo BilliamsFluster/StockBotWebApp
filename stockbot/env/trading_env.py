@@ -36,8 +36,10 @@ class StockTradingEnv(gym.Env):
         F = len(self._cols)
         self.observation_space = spaces.Dict({
             "window": spaces.Box(low=-np.inf, high=np.inf, shape=(self.lookback, F), dtype=np.float32),
-            "portfolio": spaces.Box(low=np.array([-1,0,0,-1,0], np.float32),
-                                    high=np.array([+1,1,10,+1,1], np.float32),
+            # portfolio: [pos, cash_frac, margin_used, unrealized, drawdown,
+            #             realized, rolling_vol, turnover]
+            "portfolio": spaces.Box(low=np.array([-1,0,0,-1,0,-1,0,0], np.float32),
+                                    high=np.array([+1,1,10,+1,1,1,10,2], np.float32),
                                     dtype=np.float32),
         })
 
@@ -53,6 +55,9 @@ class StockTradingEnv(gym.Env):
         self._shares = 0.0
         self._equity_peak = self._cash
         self._last_price = None
+        self._avg_cost = 0.0
+        self._turnover_last = 0.0
+        self._ret_hist = []
         self._max_steps = episode.max_steps
 
         # NEW: shaping/turnover knobs
@@ -74,13 +79,22 @@ class StockTradingEnv(gym.Env):
         equity = self._cash + self._shares * self._last_price
         self._equity_peak = max(self._equity_peak, equity)
         dd = 0.0 if self._equity_peak <= 0 else 1.0 - equity / self._equity_peak
-        unreal = (self._shares * self._last_price - 0.0) / max(self._cash0, 1e-9)
+        unreal_val = self._shares * (self._last_price - self._avg_cost)
+        unreal = unreal_val / max(self._cash0, 1e-9)
+        realized = (self._cash - self._cash0) / max(self._cash0, 1e-9)
+        margin_used = abs(self._shares * self._last_price) / max(equity, 1e-9)
+        vol = 0.0
+        if len(self._ret_hist) > 1:
+            vol = float(np.std(self._ret_hist[-20:]))
         return np.array([
             float(np.clip(self._pos, -1, 1)),
             float(np.clip(self._cash / max(self._cash0,1e-9), 0, 1)),
-            float(np.clip((equity / max(self._cash0,1e-9)), 0, 10)),
+            float(np.clip(margin_used, 0, 10)),
             float(np.clip(unreal, -1, 1)),
-            float(np.clip(dd, 0, 1))
+            float(np.clip(dd, 0, 1)),
+            float(np.clip(realized, -1, 1)),
+            float(np.clip(vol, 0, 10)),
+            float(np.clip(self._turnover_last, 0, 2)),
         ], dtype=np.float32)
 
     def _obs(self, idx):
@@ -97,6 +111,9 @@ class StockTradingEnv(gym.Env):
         self._shares = 0.0
         self._pos_prev_for_pen = 0.0
         self._last_price = self._price(self._i-1)
+        self._avg_cost = self._last_price
+        self._turnover_last = 0.0
+        self._ret_hist = []
         return self._obs(self._i), {"i": self._i, "config": asdict(self.episode)}
 
     def step(self, action):
@@ -122,18 +139,31 @@ class StockTradingEnv(gym.Env):
                           self.fees.commission_pct_notional * notional)
             # buy: decrease cash; sell: increase cash; always subtract commission
             self._cash -= np.sign(delta) * notional + commission
+            prev_shares = self._shares
             self._shares += delta
+            # update average cost
+            if self._shares == 0:
+                self._avg_cost = 0.0
+            elif prev_shares == 0 or np.sign(prev_shares) != np.sign(self._shares):
+                self._avg_cost = fill_price
+            else:
+                self._avg_cost = (
+                    prev_shares * self._avg_cost + delta * fill_price
+                ) / self._shares
             self._pos = np.clip(target, -1, 1)
 
         self._i += 1
         self._last_price = self._price(self._i-1)
         new_equity = self._cash + self._shares * self._last_price
 
+        ret_step = (new_equity - equity) / max(equity, 1e-9)
+        self._ret_hist.append(float(ret_step))
         base = (new_equity - equity) / max(self._cash0, 1e-9)
 
         # penalties: drawdown & turnover (position change)
         dd = 0.0 if self._equity_peak <= 0 else 1.0 - new_equity / self._equity_peak
         turnover_t = abs(self._pos - self._pos_prev_for_pen)
+        self._turnover_last = turnover_t
         reward = base - self.w_turnover * turnover_t - self.w_drawdown * dd
 
         self._pos_prev_for_pen = self._pos
