@@ -13,13 +13,13 @@ from stable_baselines3 import PPO
 
 from stockbot.env.config import EnvConfig
 from stockbot.rl.utils import make_env, Split, episode_rollout
-from stockbot.rl.metrics import total_return, max_drawdown, daily_sharpe
+from stockbot.rl.metrics import total_return, max_drawdown, sharpe, sortino, calmar, turnover
 
 def baseline_rollout(env, policy_name: str, seed: int = 0):
     obs, info = env.reset(seed=seed)
     done = trunc = False
-    equities=[]
-    import numpy as np
+    equities = []
+    turnovers = []
     rng = np.random.default_rng(seed)
     while not (done or trunc):
         if policy_name == "equal":
@@ -32,7 +32,8 @@ def baseline_rollout(env, policy_name: str, seed: int = 0):
             a = rng.standard_normal(env.action_space.shape[0]).astype(np.float32)
         obs, r, done, trunc, info = env.step(a)
         equities.append(float(info["equity"]))
-    return np.array(equities, dtype=np.float64)
+        turnovers.append(float(info.get("turnover", 0.0)))
+    return np.array(equities, dtype=np.float64), np.array(turnovers, dtype=np.float64)
 
 def main():
     ap = argparse.ArgumentParser()
@@ -54,26 +55,29 @@ def main():
     model = PPO.load(Path(args.model))
 
     # agent
-    curve_agent = episode_rollout(env, model, deterministic=True, seed=args.seed)
+    curve_agent, to_agent = episode_rollout(env, model, deterministic=True, seed=args.seed)
     # baselines (equal, first_long, flat, random)
     env2 = make_env(cfg, split, mode="eval")
-    curve_equal = baseline_rollout(env2, "equal", args.seed)
+    curve_equal, to_equal = baseline_rollout(env2, "equal", args.seed)
     env3 = make_env(cfg, split, mode="eval")
-    curve_first = baseline_rollout(env3, "first_long", args.seed)
+    curve_first, to_first = baseline_rollout(env3, "first_long", args.seed)
     env4 = make_env(cfg, split, mode="eval")
-    curve_flat  = baseline_rollout(env4, "flat", args.seed)
+    curve_flat, to_flat  = baseline_rollout(env4, "flat", args.seed)
 
-    def report(name, curve):
+    def report(name, curve, to_arr):
         tr = total_return(curve, start_cash)
         mdd = max_drawdown(curve)
-        shp = daily_sharpe(curve, start_cash)
-        print(f"{name:12s}  Ret={tr:+.3f}  MaxDD={mdd:.3f}  Sharpe={shp:.3f}")
+        shp = sharpe(curve, start_cash)
+        sor = sortino(curve, start_cash)
+        cal = calmar(curve, start_cash)
+        to_metric = turnover(to_arr)
+        print(f"{name:12s}  Ret={tr:+.3f}  MaxDD={mdd:.3f}  Sharpe={shp:.3f}  Sortino={sor:.3f}  Calmar={cal:.3f}  Turnover={to_metric:.3f}")
 
     print(f"\n== Evaluation {args.eval_start} → {args.eval_end} ==")
-    report("Agent(PPO)", curve_agent)
-    report("Equal",      curve_equal)
-    report("FirstLong",  curve_first)
-    report("Flat",       curve_flat)
+    report("Agent(PPO)", curve_agent, to_agent)
+    report("Equal",      curve_equal, to_equal)
+    report("FirstLong",  curve_first, to_first)
+    report("Flat",       curve_flat, to_flat)
 
 if __name__ == "__main__":
     main()
