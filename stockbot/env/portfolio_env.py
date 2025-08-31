@@ -86,6 +86,8 @@ class PortfolioTradingEnv(gym.Env):
         self._ret_hist: List[float] = []
         self._last_weights = np.zeros(self.N, dtype=np.float32)
         self._w_prev_map = None  # for turnover capping in mapping
+        self.min_hold_bars = int(getattr(self.cfg.episode, "min_hold_bars", 0))
+        self._hold_since = np.zeros(self.N, dtype=np.int32)
 
     # ---------- helpers ----------
     def _ohlc(self, sym: str, i: int):
@@ -142,6 +144,8 @@ class PortfolioTradingEnv(gym.Env):
                 delta = np.clip(w - w_prev, -self.max_step_change, self.max_step_change)
                 w = w_prev + delta
             self._w_prev_map = w
+            cap = float(getattr(self.cfg.margin, "max_position_weight", 1.0))
+            w = np.clip(w, -cap, cap)
             return w.astype(np.float32)
 
         # fallback: original long/short mapping with leverage cap
@@ -150,6 +154,8 @@ class PortfolioTradingEnv(gym.Env):
         cap = float(self.cfg.margin.max_gross_leverage)
         if gross > cap:
             x *= (cap / gross)
+        cap_w = float(getattr(self.cfg.margin, "max_position_weight", 1.0))
+        x = np.clip(x, -cap_w, cap_w)
         return x.astype(np.float32)
 
     # ---------- Gym API ----------
@@ -186,12 +192,18 @@ class PortfolioTradingEnv(gym.Env):
         self._ret_hist.clear()
         self._last_weights[:] = 0.0
         self._w_prev_map = None
+        self._hold_since[:] = 0
 
         return self._obs(self._i), {"i": self._i, "config": asdict(self.cfg)}
 
     def step(self, action):
         a = np.asarray(action, dtype=np.float32)
+        prev_w = self._last_weights.copy()
         target_w = self._map_action_to_weights(a)
+        if self.min_hold_bars > 0:
+            for k in range(self.N):
+                if self._hold_since[k] < self.min_hold_bars and np.sign(target_w[k]) != np.sign(prev_w[k]):
+                    target_w[k] = prev_w[k]
 
         # ---- value at previous close (t-1)
         prices_prev_close = self._prices(self._i - 1)  # CLOSE[t-1]
@@ -253,7 +265,7 @@ class PortfolioTradingEnv(gym.Env):
             r_base = np.log(max(eq_close_t, 1e-9)) - np.log(max(eq_prev_close, 1e-9))
 
         # penalties
-        turnover = float(np.sum(np.abs(target_w - self._last_weights)))
+        turnover = float(np.sum(np.abs(target_w - prev_w)))
         pen_dd = self.cfg.reward.w_drawdown * dd_after
         pen_to = self.cfg.reward.w_turnover * turnover
 
@@ -264,12 +276,21 @@ class PortfolioTradingEnv(gym.Env):
             vol = float(np.std(self._ret_hist[-self.cfg.reward.vol_window:]))
             pen_vol = self.cfg.reward.w_vol * vol
         gross = self.port.gross_exposure(prices_close_t, eq_close_t)
+        net = self.port.net_exposure(prices_close_t, eq_close_t)
         lev_cap = self.cfg.margin.max_gross_leverage
         pen_lev = self.cfg.reward.w_leverage * max(0.0, gross - lev_cap)
 
         r = r_base - pen_dd - pen_to - pen_vol - pen_lev
 
         self._last_weights = target_w
+        for k in range(self.N):
+            if abs(target_w[k] - prev_w[k]) > w_eps:
+                self._hold_since[k] = 0
+            elif target_w[k] != 0:
+                self._hold_since[k] += 1
+            else:
+                self._hold_since[k] = 0
+
         terminated = self._i >= len(self.src.index) - 1
         truncated = False
         cap = self.cfg.episode.horizon or self.cfg.episode.max_steps
@@ -278,6 +299,22 @@ class PortfolioTradingEnv(gym.Env):
 
         stop_frac = getattr(self.cfg.reward, "stop_eq_frac", 0.0)
         if stop_frac > 0 and eq_close_t < stop_frac * self._equity0:
+            terminated = True
+            r -= 1.0
+
+        m = self.cfg.margin
+        if m.max_gross_leverage > 0 and gross > m.max_gross_leverage:
+            terminated = True
+            r -= 1.0
+        if m.max_net_leverage > 0 and abs(net) > m.max_net_leverage:
+            terminated = True
+            r -= 1.0
+        if m.daily_loss_limit > 0:
+            daily_loss = (eq_close_t - eq_prev_close) / max(eq_prev_close, 1e-9)
+            if daily_loss < -m.daily_loss_limit:
+                terminated = True
+                r -= 1.0
+        if m.max_drawdown > 0 and dd_after > m.max_drawdown:
             terminated = True
             r -= 1.0
 
@@ -290,6 +327,10 @@ class PortfolioTradingEnv(gym.Env):
             "pen_drawdown": float(pen_dd),
             "pen_vol": float(pen_vol),
             "pen_leverage": float(pen_lev),
+            "turnover": float(turnover),
+            "edge_net": float(eq_close_t - eq_prev_close),
+            "gross_leverage": float(gross),
+            "net_leverage": float(net),
         }
         return self._obs(self._i), float(r), bool(terminated), bool(truncated), info
 
