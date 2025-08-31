@@ -34,13 +34,16 @@ class WindowCNNExtractor(BaseFeaturesExtractor):
     Dict obs:
       - window: (L, N, F) -> we permute to (B, C=F, H=L, W=N) for Conv2d
       - portfolio: (P,)    -> processed via a small MLP
+      - prob: (Q,)         -> probability/regime features
     """
     def __init__(self, observation_space, out_dim: int = 256, dropout: float = 0.10):
         super().__init__(observation_space, features_dim=out_dim)
         win_space = observation_space["window"]
         port_space = observation_space["portfolio"]
+        prob_space = observation_space.get("prob")
         L, N, F = win_space.shape  # (length, assets, features)
         P = port_space.shape[0]
+        Q = prob_space.shape[0] if prob_space is not None else 0
 
         C = F
         self.cnn = nn.Sequential(
@@ -62,8 +65,19 @@ class WindowCNNExtractor(BaseFeaturesExtractor):
             nn.Dropout(dropout),
         )
 
+        if Q > 0:
+            self.prob_mlp = nn.Sequential(
+                nn.Linear(Q, 32), nn.ReLU(),
+                nn.LayerNorm(32),
+                nn.Dropout(dropout),
+            )
+            proj_in = 64 + 64 + 32
+        else:
+            self.prob_mlp = None
+            proj_in = 64 + 64
+
         self.proj = nn.Sequential(
-            nn.Linear(64 + 64, out_dim), nn.ReLU(),
+            nn.Linear(proj_in, out_dim), nn.ReLU(),
             nn.LayerNorm(out_dim),
             nn.Dropout(dropout),
         )
@@ -73,12 +87,16 @@ class WindowCNNExtractor(BaseFeaturesExtractor):
     def forward(self, obs_dict):
         win = obs_dict["window"]            # (B, L, N, F)
         port = obs_dict["portfolio"]        # (B, P)
+        prob = obs_dict.get("prob")         # (B, Q) or None
 
         # Conv2d expects (B, C, H, W) = (B, F, L, N)
         win = win.permute(0, 3, 1, 2).contiguous()
         feat_win = self.cnn(win).flatten(1)      # (B, 64)
         feat_port = self.port_mlp(port)          # (B, 64)
-        fused = th.cat([feat_win, feat_port], dim=1)
+        feats = [feat_win, feat_port]
+        if prob is not None and self.prob_mlp is not None:
+            feats.append(self.prob_mlp(prob))
+        fused = th.cat(feats, dim=1)
         return self.proj(fused)                  # (B, out_dim)
 
 
@@ -89,6 +107,7 @@ class WindowLSTMExtractor(BaseFeaturesExtractor):
     Dict obs:
       - window: (L, N, F) -> treated as sequence of length L with features N*F
       - portfolio: (P,)   -> processed via a small MLP
+      - prob: (Q,)        -> probability/regime features
     """
     def __init__(
         self,
@@ -101,8 +120,10 @@ class WindowLSTMExtractor(BaseFeaturesExtractor):
         super().__init__(observation_space, features_dim=out_dim)
         win_space = observation_space["window"]
         port_space = observation_space["portfolio"]
+        prob_space = observation_space.get("prob")
         L, N, F = win_space.shape
         P = port_space.shape[0]
+        Q = prob_space.shape[0] if prob_space is not None else 0
 
         in_dim = N * F
         self.lstm = nn.LSTM(
@@ -122,8 +143,19 @@ class WindowLSTMExtractor(BaseFeaturesExtractor):
             nn.Dropout(dropout),
         )
 
+        if Q > 0:
+            self.prob_mlp = nn.Sequential(
+                nn.Linear(Q, 32), nn.ReLU(),
+                nn.LayerNorm(32),
+                nn.Dropout(dropout),
+            )
+            proj_in = hidden_size + 64 + 32
+        else:
+            self.prob_mlp = None
+            proj_in = hidden_size + 64
+
         self.proj = nn.Sequential(
-            nn.Linear(hidden_size + 64, out_dim), nn.ReLU(),
+            nn.Linear(proj_in, out_dim), nn.ReLU(),
             nn.LayerNorm(out_dim),
             nn.Dropout(dropout),
         )
@@ -133,10 +165,14 @@ class WindowLSTMExtractor(BaseFeaturesExtractor):
     def forward(self, obs_dict):
         win = obs_dict["window"]            # (B, L, N, F)
         port = obs_dict["portfolio"]        # (B, P)
+        prob = obs_dict.get("prob")         # (B, Q) or None
         B, L, N, F = win.shape
         win = win.view(B, L, N * F)         # (B, L, N*F)
         _, (h_n, _) = self.lstm(win)
         feat_win = h_n[-1]                  # (B, hidden_size)
         feat_port = self.port_mlp(port)     # (B, 64)
-        fused = th.cat([feat_win, feat_port], dim=1)
+        feats = [feat_win, feat_port]
+        if prob is not None and self.prob_mlp is not None:
+            feats.append(self.prob_mlp(prob))
+        fused = th.cat(feats, dim=1)
         return self.proj(fused)             # (B, out_dim)

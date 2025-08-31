@@ -4,6 +4,7 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 from dataclasses import asdict
+from math import erf, sqrt
 from .config import EpisodeConfig, FeeModel, FeatureConfig
 from .data_adapter import BarWindowSource
 
@@ -34,6 +35,8 @@ class StockTradingEnv(gym.Env):
         self._cols = cols
 
         F = len(self._cols)
+        # probability features: [regime_bull, regime_bear, p_up, mu_sigma, vol]
+        self._prob_dim = 5
         self.observation_space = spaces.Dict({
             "window": spaces.Box(low=-np.inf, high=np.inf, shape=(self.lookback, F), dtype=np.float32),
             # portfolio: [pos, cash_frac, margin_used, unrealized, drawdown,
@@ -41,6 +44,7 @@ class StockTradingEnv(gym.Env):
             "portfolio": spaces.Box(low=np.array([-1,0,0,-1,0,-1,0,0], np.float32),
                                     high=np.array([+1,1,10,+1,1,1,10,2], np.float32),
                                     dtype=np.float32),
+            "prob": spaces.Box(low=-np.inf, high=np.inf, shape=(self._prob_dim,), dtype=np.float32),
         })
 
         if episode.action_space == "discrete":
@@ -97,8 +101,34 @@ class StockTradingEnv(gym.Env):
             float(np.clip(self._turnover_last, 0, 2)),
         ], dtype=np.float32)
 
+    def _prob_vec(self) -> np.ndarray:
+        """Rudimentary probability/volatility features.
+
+        Provides a lightweight approximation of the probability core so that the
+        PPO agent can condition on regime/posterior estimates without requiring
+        a full HMM implementation during tests.  The vector contains:
+            [p_bull, p_bear, p_up, mu_over_sigma, vol]
+        where p_bull/p_bear are logistic transforms of the recent return mean.
+        """
+        if len(self._ret_hist) < 2:
+            return np.zeros(self._prob_dim, dtype=np.float32)
+        window = np.array(self._ret_hist[-20:], dtype=np.float64)
+        mu = float(window.mean())
+        sigma = float(window.std() + 1e-6)
+        mu_over_sigma = float(mu / sigma)
+        # logistic mapping for regime posteriors
+        p_bull = 1.0 / (1.0 + np.exp(-mu_over_sigma))
+        p_bear = 1.0 - p_bull
+        # Gaussian CDF for next-step up probability
+        p_up = 0.5 * (1 + erf(mu / (sigma * sqrt(2.0))))
+        return np.array([p_bull, p_bear, p_up, mu_over_sigma, sigma], dtype=np.float32)
+
     def _obs(self, idx):
-        return {"window": self._window_obs(idx), "portfolio": self._portfolio_vec()}
+        return {
+            "window": self._window_obs(idx),
+            "portfolio": self._portfolio_vec(),
+            "prob": self._prob_vec(),
+        }
 
     # ---------- Gym API ----------
     def reset(self, *, seed=None, options=None):
