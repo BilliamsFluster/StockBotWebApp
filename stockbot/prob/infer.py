@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from typing import List
 
-from .model import infer_sequence
+from .inference import infer_sequence
 
 
 def _load_series(path: str) -> List[float]:

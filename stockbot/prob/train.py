@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from typing import List
 
-from .model import train_model
+from .estimation import train_model
 
 
 def _load_series(path: str) -> List[float]:

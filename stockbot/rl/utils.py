@@ -5,13 +5,26 @@ import numpy as np
 import gymnasium as gym
 from stable_baselines3.common.monitor import Monitor
 
-from stockbot.env.config import EnvConfig
-from stockbot.env.data_adapter import BarWindowSource, PanelSource
-from stockbot.env.trading_env import StockTradingEnv
-from stockbot.env.portfolio_env import PortfolioTradingEnv
-from stockbot.env.wrappers import as_float32
-from stockbot.env.obs_norm import ObsNorm
-from stockbot.ingestion.yfinance_ingestion import YFinanceProvider
+try:  # pragma: no cover - allow running with or without package prefix
+    from stockbot.env.config import EnvConfig
+    from stockbot.env.data_adapter import BarWindowSource, PanelSource
+    from stockbot.env.trading_env import StockTradingEnv
+    from stockbot.env.portfolio_env import PortfolioTradingEnv
+    from stockbot.env.wrappers import as_float32
+    from stockbot.env.obs_norm import ObsNorm
+    from stockbot.ingestion.yfinance_ingestion import YFinanceProvider
+except ModuleNotFoundError:  # when repository root not on sys.path
+    import sys
+    from pathlib import Path
+
+    sys.path.append(str(Path(__file__).resolve().parents[2]))
+    from env.config import EnvConfig
+    from env.data_adapter import BarWindowSource, PanelSource
+    from env.trading_env import StockTradingEnv
+    from env.portfolio_env import PortfolioTradingEnv
+    from env.wrappers import as_float32
+    from env.obs_norm import ObsNorm
+    from ingestion.yfinance_ingestion import YFinanceProvider
 
 @dataclass
 class Split:
