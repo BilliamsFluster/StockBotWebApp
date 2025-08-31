@@ -98,12 +98,10 @@ def make_strategy(name: str, env: gym.Env, **kwargs):
 
 def episode_rollout(env: gym.Env, agent: Any, deterministic: bool = True, seed: int = 0):
     """
-    Run one episode and return equity curve (np.ndarray).
+    Run one episode and return (equity curve, turnover per step).
     'agent' may be a Strategy or an SB3 model with .predict().
     """
-    # Lazy wrap SB3 models as Strategy if package present; else call predict directly.
     if not hasattr(agent, "predict"):
-        # Strategy-like (must have predict)
         raise TypeError("agent must have a .predict(obs, deterministic=...) method")
 
     obs, info = env.reset(seed=seed)
@@ -113,10 +111,12 @@ def episode_rollout(env: gym.Env, agent: Any, deterministic: bool = True, seed: 
     done = False
     trunc = False
     equities = []
+    turnovers = []
     while not (done or trunc):
         action, *_ = (agent.predict(obs, deterministic=deterministic),)
         if isinstance(action, tuple):
             action = action[0]
         obs, r, done, trunc, info = env.step(action)
         equities.append(float(info.get("equity", np.nan)))
-    return np.array(equities, dtype=np.float64)
+        turnovers.append(float(info.get("turnover", 0.0)))
+    return np.array(equities, dtype=np.float64), np.array(turnovers, dtype=np.float64)

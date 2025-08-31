@@ -13,7 +13,7 @@ from stable_baselines3 import PPO
 
 from stockbot.env.config import EnvConfig
 from stockbot.rl.utils import make_env, Split, episode_rollout
-from stockbot.rl.metrics import total_return, max_drawdown, daily_sharpe
+from stockbot.rl.metrics import total_return, max_drawdown, sharpe, sortino, calmar, turnover
 
 def main():
     ap = argparse.ArgumentParser()
@@ -34,11 +34,14 @@ def main():
 
     from stockbot.env.config import EpisodeConfig
     start_cash = cfg.episode.start_cash if isinstance(cfg.episode, EpisodeConfig) else 100_000.0
-    curve = episode_rollout(eval_env, model, deterministic=True, seed=42)
+    curve, to = episode_rollout(eval_env, model, deterministic=True, seed=42)
     print("\n== Smoke Test Metrics (eval split) ==")
     print(f"TotalReturn: {total_return(curve, start_cash):+.3f}")
     print(f"MaxDrawdown: {max_drawdown(curve):.3f}")
-    print(f"Sharpe(d):   {daily_sharpe(curve, start_cash):.3f}")
+    print(f"Sharpe:      {sharpe(curve, start_cash):.3f}")
+    print(f"Sortino:     {sortino(curve, start_cash):.3f}")
+    print(f"Calmar:      {calmar(curve, start_cash):.3f}")
+    print(f"Turnover:    {turnover(to):.3f}")
 
 if __name__ == "__main__":
     main()
