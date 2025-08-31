@@ -1,19 +1,28 @@
-"""
-One-shot smoke test for Milestone 2:
- - builds envs from YAML
- - quick PPO train (small timesteps)
- - evaluates & prints metrics
-Run:
-  python -m stockbot.rl.smoke_test --config stockbot/env/env.example.yaml
+"""Smoke test for PPO training and evaluation.
+
+This module is intended for manual experimentation and is skipped during
+automated unit testing to avoid heavy dependencies and side effects.
 """
 from __future__ import annotations
-import argparse, tempfile
+
+import argparse
+import tempfile
 from pathlib import Path
+
+import pytest
+
+pytest.skip("smoke test module not executed during automated tests", allow_module_level=True)
+
 from stable_baselines3 import PPO
 
-from stockbot.env.config import EnvConfig
-from stockbot.rl.utils import make_env, Split, episode_rollout
-from stockbot.rl.metrics import total_return, max_drawdown, sharpe, sortino, calmar, turnover
+try:  # pragma: no cover
+    from stockbot.env.config import EnvConfig
+    from stockbot.rl.utils import make_env, Split, episode_rollout
+    from stockbot.rl.metrics import total_return, max_drawdown, sharpe, sortino, calmar, turnover
+except ModuleNotFoundError:  # executed when repo root not on sys.path
+    from env.config import EnvConfig
+    from rl.utils import make_env, Split, episode_rollout
+    from rl.metrics import total_return, max_drawdown, sharpe, sortino, calmar, turnover
 
 def main():
     ap = argparse.ArgumentParser()
