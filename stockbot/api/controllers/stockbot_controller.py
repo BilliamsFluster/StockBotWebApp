@@ -186,6 +186,20 @@ def _store_run(rec: RunRecord) -> None:
     except Exception:
         pass
 
+def _get_run_record(run_id: str) -> RunRecord:
+    r = RUNS.get(run_id)
+    if r:
+        return r
+    try:
+        data = RUN_REGISTRY.get(run_id)
+        if data:
+            r = RunRecord(**data)
+            RUNS[run_id] = r
+            return r
+    except Exception:
+        pass
+    raise HTTPException(status_code=404, detail="Run not found")
+
 # -------------- Helpers ---------------
 
 def _sanitize_tag(tag: str) -> str:
@@ -303,9 +317,7 @@ def _tb_etag(out_dir: Path, extra: str = "") -> str:
 
 
 def tb_list_tags_for_run(run_id: str, request: Request | None = None):
-    r = RUNS.get(run_id)
-    if not r:
-        raise HTTPException(status_code=404, detail="Run not found")
+    r = _get_run_record(run_id)
     out_dir = Path(r.out_dir)
     accs = _load_event_accumulators(out_dir)
     scalars: set[str] = set()
@@ -332,9 +344,7 @@ def tb_list_tags_for_run(run_id: str, request: Request | None = None):
 
 
 def tb_scalar_series_for_run(run_id: str, tag: str) -> dict:
-    r = RUNS.get(run_id)
-    if not r:
-        raise HTTPException(status_code=404, detail="Run not found")
+    r = _get_run_record(run_id)
     out_dir = Path(r.out_dir)
     accs = _load_event_accumulators(out_dir)
     points: list[dict] = []
@@ -369,9 +379,7 @@ def tb_scalar_series_for_run(run_id: str, tag: str) -> dict:
 
 
 def tb_histogram_series_for_run(run_id: str, tag: str, request: Request | None = None):
-    r = RUNS.get(run_id)
-    if not r:
-        raise HTTPException(status_code=404, detail="Run not found")
+    r = _get_run_record(run_id)
     out_dir = Path(r.out_dir)
     accs = _load_event_accumulators(out_dir)
     points: list[dict] = []
@@ -413,9 +421,7 @@ def tb_histogram_series_for_run(run_id: str, tag: str, request: Request | None =
     points.sort(key=lambda p: (p.get("step", 0), p.get("wall_time", 0.0)))
     body = {"tag": tag, "points": points}
     # ETag keyed by tag
-    r = RUNS.get(run_id)
-    out_dir = Path(r.out_dir) if r else None
-    etag = _tb_etag(out_dir, extra=f"hist:{tag}") if out_dir else None
+    etag = _tb_etag(out_dir, extra=f"hist:{tag}")
     if request is not None and etag:
         inm = request.headers.get("if-none-match")
         if inm and inm == etag:
@@ -430,9 +436,7 @@ def tb_grad_matrix_for_run(run_id: str, request: Request | None = None):
     """Aggregate per-layer grad norms logged as scalars under prefix grads/by_layer/.
     Returns { layers: [...], steps: [...], values: number[][] }
     """
-    r = RUNS.get(run_id)
-    if not r:
-        raise HTTPException(status_code=404, detail="Run not found")
+    r = _get_run_record(run_id)
     out_dir = Path(r.out_dir)
     accs = _load_event_accumulators(out_dir)
 
@@ -498,9 +502,7 @@ def tb_grad_matrix_for_run(run_id: str, request: Request | None = None):
 
 def tb_scalars_batch_for_run(run_id: str, tags: list[str], request: Request | None = None):
     """Batch-fetch multiple scalar tags for a run: returns { tag: [{step,wall_time,value}, ...], ... }"""
-    r = RUNS.get(run_id)
-    if not r:
-        raise HTTPException(status_code=404, detail="Run not found")
+    r = _get_run_record(run_id)
     out_dir = Path(r.out_dir)
     accs = _load_event_accumulators(out_dir)
     result: dict[str, list[dict]] = {t: [] for t in tags}
@@ -765,8 +767,9 @@ async def start_backtest_job(req: BacktestRequest, bg: BackgroundTasks):
 
     # If run_id is present, start with snapshot & model, then only override with non-template values
     if getattr(req, "run_id", None):
-        prev = RUNS.get(req.run_id)
-        if not prev:
+        try:
+            prev = _get_run_record(req.run_id)
+        except HTTPException:
             raise HTTPException(status_code=400, detail="run_id not found")
 
         prev_out = Path(prev.out_dir)
@@ -853,9 +856,7 @@ def list_runs():
         ]
 
 def get_run(run_id: str):
-    r = RUNS.get(run_id)
-    if not r:
-        raise HTTPException(status_code=404, detail="Not found")
+    r = _get_run_record(run_id)
     return {
         "id": r.id,
         "type": r.type,
@@ -868,9 +869,7 @@ def get_run(run_id: str):
     }
 
 def _artifact_map_for_run(run_id: str) -> Dict[str, Path]:
-    r = RUNS.get(run_id)
-    if not r:
-        raise HTTPException(status_code=404, detail="Not found")
+    r = _get_run_record(run_id)
     return _artifact_paths(Path(r.out_dir))
 
 def get_artifacts(run_id: str):
@@ -891,9 +890,7 @@ SAFE_NAME_MAP = {
 }
 
 def get_artifact_file(run_id: str, name: str):
-    r = RUNS.get(run_id)
-    if not r:
-        raise HTTPException(status_code=404, detail="Not found")
+    r = _get_run_record(run_id)
     rel = SAFE_NAME_MAP.get(name)
     if not rel:
         raise HTTPException(status_code=404, detail="Unknown artifact")
@@ -904,9 +901,7 @@ def get_artifact_file(run_id: str, name: str):
 
 # Cancel a running job by pid
 def cancel_run(run_id: str):
-    r = RUNS.get(run_id)
-    if not r:
-        raise HTTPException(status_code=404, detail="Run not found")
+    r = _get_run_record(run_id)
     if r.status in ("SUCCEEDED", "FAILED", "CANCELLED"):
         return JSONResponse({"ok": True, "status": r.status})
     pid = r.pid
@@ -926,9 +921,7 @@ def cancel_run(run_id: str):
 
 # Bundle everything into a ZIP and stream it
 def bundle_zip(run_id: str, include_model: bool = True) -> FileResponse:
-    r = RUNS.get(run_id)
-    if not r:
-        raise HTTPException(status_code=404, detail="Run not found")
+    r = _get_run_record(run_id)
 
     out_dir = Path(r.out_dir)
     paths = _artifact_paths(out_dir)

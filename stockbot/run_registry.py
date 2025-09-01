@@ -1,7 +1,7 @@
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 class RunRegistry:
     """Simple SQLite-backed registry for training/backtest runs."""
@@ -70,3 +70,23 @@ class RunRegistry:
             )
             cols = [col[0] for col in cur.description]
             return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    def get(self, run_id: str) -> Optional[Dict[str, Any]]:
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.execute(
+                """
+                SELECT id, type, status, out_dir, created_at, started_at, finished_at, meta, error
+                FROM runs WHERE id = ?
+                """,
+                (run_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            cols = [col[0] for col in cur.description]
+            data = dict(zip(cols, row))
+            try:
+                data["meta"] = json.loads(data.get("meta") or "{}")
+            except Exception:
+                data["meta"] = {}
+            return data
