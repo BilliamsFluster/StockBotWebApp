@@ -1,194 +1,163 @@
-Overview
+# StockBot Trading Pipeline
 
-StockBot is a web‑based deep‑reinforcement‑learning (DRL) trading system. It allows users to train a neural policy on historical data, back‑test it and download artefacts. The pipeline integrates a front‑end UI, a Node/Express proxy, a FastAPI service written in Python and a training/back‑testing engine built on stable‑baselines3 (SB3). This document provides a technical overview of the pipeline, explains the reinforcement‑learning environment and model architecture, and discusses tuning hyper‑parameters and reward shaping to achieve profitable behaviour.
+## Overview
 
-Pipeline Architecture
-1. Front‑end (React/Next.js)
+StockBot is a web-based deep-reinforcement-learning trading platform. Users can train policies on historical data, run backtests, and download artifacts or start live trading sessions. The system is composed of a Next.js/React front-end, a Node/Express backend that handles authentication and data access, and a Python FastAPI service that orchestrates reinforcement-learning tasks built on stable-baselines3 (SB3). This document describes the pipeline, the reinforcement-learning environment and model architecture, and guidelines for tuning hyper-parameters and shaping rewards.
 
-The user interacts through a React UI exposing “New Training” and “New Backtest” forms. Each form collects parameters (symbols, date range, policy type, etc.) and sends them to the back‑end via POST requests. The front‑end polls run status and downloads artefacts via REST endpoints.
+```mermaid
+flowchart LR
+  UI[Next.js UI] --> API[Node/Express API]
+  API --> FastAPI[FastAPI Service]
+  FastAPI --> Engine[SB3 Training/Backtest]
+  FastAPI --> Broker[(Broker APIs)]
+```
 
-2. Node Proxy
+## Pipeline Architecture
 
-An Express server acts as a thin proxy between the front‑end and the Python service. Each route checks authentication, forwards the request to FastAPI using Axios and streams responses back. This decouples the front‑end from the Python backend.
+### 1. Front-end (Next.js/React)
+- Presents **New Training** and **New Backtest** forms.
+- Submits parameters (symbols, date ranges, policy type, etc.) to the backend.
+- Streams job status via REST or WebSocket and allows downloading run artifacts.
 
-3. FastAPI Service
+### 2. Backend API (Node/Express)
+- Acts as the primary API gateway with JWT authentication and MongoDB persistence.
+- Forwards training, backtest and live trading requests to the FastAPI service via Axios.
+- Proxies WebSocket connections for real-time run status and exposes routes for run management, TensorBoard data and AI insights.
+- Hosts broker endpoints for Schwab and Alpaca integration.
 
-FastAPI handles training and back‑test orchestration:
+### 3. FastAPI Service
+- Orchestrates reinforcement-learning tasks and broker operations.
+
+**Training endpoint** (`/api/stockbot/train`)
+- Merges overrides into an `EnvConfig` snapshot, infers train/eval splits, logs metadata and launches a Python subprocess.
+- Subprocess runs `stockbot/rl/train_ppo.py`; environment variables are prepared and stdout/stderr are streamed to `job.log`.
+- Run status, artifact paths and bundles are exposed via REST and WebSocket/SSE.
+
+**Back-test endpoint** (`/api/stockbot/backtest`)
+- Loads a saved model or baseline and builds an evaluation environment from the same configuration snapshot.
+- Executes a deterministic episode (`stockbot/backtest/run.py`) producing equity, orders and trade CSVs plus summary metrics.
 
-Training endpoint (/api/stockbot/train):
+**Live trading endpoints** (`/api/stockbot/trade/*`)
+- Start or stop trading sessions and query current status using a deployed policy against broker APIs.
+
+### 4. Training Engine (SB3 PPO)
+- Invoked as `python -m stockbot.rl.train_ppo`.
+- Loads YAML configuration into an `EnvConfig` dataclass defining symbols, date range, features and reward weights.
+- Infers train/eval splits (last calendar year or 80/20 split).
+- Builds environments via `make_env`, choosing `StockTradingEnv` or `PortfolioTradingEnv`, optionally wrapping with `ObsNorm` and `Monitor`.
+- Creates policy: choose MLP, `WindowCNN`, or `WindowLSTM` feature extractors. `WindowLSTMExtractor` processes `(L,N,F)` windows through an LSTM to provide temporal memory.
+- Configures PPO hyper-parameters (`n_steps`, `learning_rate`, `gamma`, `gae_lambda`, `clip_range`, `ent_coef`, `vf_coef`, `max_grad_norm`, `dropout`, etc.).
+- Trains via `model.learn` with `EvalCallback`, TensorBoard diagnostics and optional early stop (`StopTrainingOnRewardThreshold`).
+ - Saves final policy as `ppo_policy.zip` and logs to TensorBoard/CSV.
+
+## Request Parameters
+
+### Training (`/api/stockbot/train`)
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `symbols` | list[str] | Ticker symbols to include in the environment. |
+| `start_date` / `end_date` | str | ISO dates delimiting the data slice. |
+| `policy` | str | Feature extractor: `mlp`, `window_cnn`, or `window_lstm`. |
+| `total_timesteps` | int | Number of environment steps for learning. |
+| `eval_freq` | int | Steps between evaluation runs and model checkpoints. |
+| `seed` | int | Random seed for reproducibility. |
 
-Merges user‑provided overrides into a YAML snapshot (see EnvConfig), infers train/eval splits when not provided, logs run metadata and queues a Python subprocess.
+### Backtest (`/api/stockbot/backtest`)
 
-Launches a subprocess for the SB3 training script (stockbot/rl/train_ppo.py). Environment variables are adjusted and stdout/stderr is piped to job.log.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `model_path` | str | Path to a saved policy or baseline name. |
+| `symbols` | list[str] | Optional override of tickers for evaluation. |
+| `start_date` / `end_date` | str | Optional date range override. |
+| `deterministic` | bool | Use deterministic actions during evaluation. |
 
-Exposes run status, artefact paths and zip bundle.
+Common environment parameters referenced above are defined in the YAML snapshot (`EnvConfig`): `lookback`, `invest_max`, `max_step_change`, `rebalance_eps` and reward weights (`w_turnover`, `w_drawdown`, `w_vol`, `w_leverage`).
 
-Back‑test endpoint (/api/stockbot/backtest):
+## Reinforcement-Learning Environment
 
-Accepts a saved model path or baseline name and optional overrides (symbols/dates). Uses the same configuration snapshot to build an evaluation environment.
+### Markov Decision Process
 
-Runs a deterministic episode via stockbot/backtest/run.py, saving equity.csv, orders.csv and trades.csv and computing metrics (return, Sharpe ratio, drawdown, hit rate, etc.).
+Reinforcement learning assumes the environment is a Markov decision process: at each step the agent observes a state, chooses an action, receives a reward and transitions to a new state. The Markov property states that the next state and reward depend only on the current state and action.
 
-4. Training Engine (SB3 PPO)
+### Environment Builder
 
-The training engine is invoked as a subprocess (python -m stockbot.rl.train_ppo). Main steps:
+`make_env` builds either `StockTradingEnv` (single asset) or `PortfolioTradingEnv` (multi‑asset) using market data from the YAML configuration (via the YFinance provider). Observations are returned as a dictionary:
 
-Load environment configuration (YAML) into an EnvConfig dataclass. This defines symbols, date range, features and reward shaping weights.
+- **window** – tensor `(lookback, N, F)` with the last `lookback` bars for `N` assets and `F` features (OHLCV plus indicators).
+- **portfolio** – vector summarizing cash fraction, gross leverage, current drawdown and current weights.
 
-Infer train/eval split: if dates are not specified, the last calendar year is used for evaluation and earlier data for training. For shorter spans the split is 80/20.
+Actions differ by environment:
 
-Build environments: using make_env, which selects either StockTradingEnv (single asset) or PortfolioTradingEnv (multiple assets), optionally wraps with ObsNorm for observation normalization, then wraps with a Monitor to record episode returns.
+- `StockTradingEnv`: `action_space="weights"` or `"discrete"`. Continuous mode uses a scalar in [-1,+1] representing the target position (short/flat/long); discrete mode maps {0,1,2} to short/flat/long.
+- `PortfolioTradingEnv`: action vector of length `N` (or `N+1` depending on mapping). Logits map to weights via:
+  - **simplex_cash** (default) – sigmoid gate controls investment fraction and softmax yields non‑negative weights summing to ≤ `invest_max`; a turnover cap (`max_step_change`) limits thrashing.
+  - **tanh_leverage** – logits pass through `tanh` allowing long/short exposure; weights may be negative but are clipped to obey a gross leverage limit (`invest_max` ignored).
 
-Create policy: choose between MLP, WindowCNN or WindowLSTM features extractor. For example, WindowLSTMExtractor flattens a (L,N,F) window into a sequence and uses an LSTM to learn long‑term dependencies. This mitigates the Markov assumption by giving the agent memory of previous observations.
+Reward shaping is configured in YAML. Base reward is delta NAV or log NAV. Optional penalties:
 
-Configure PPO hyper‑parameters: n_steps, learning_rate, gamma, gae_lambda, clip_range, entropy_coefficient, vf_coef, max_grad_norm, dropout, etc. These influence the stability and exploration of policy updates. Details are discussed below.
-
-Train: call model.learn(total_timesteps) with an EvalCallback (periodically evaluates on the eval env and saves the best model) and an optional diagnostic callback that logs gradient norms and action histograms to TensorBoard. A StopTrainingOnRewardThreshold may terminate training if a huge reward is reached.
-
-Save model and logs: final policy is saved as ppo_policy.zip; logs go to TensorBoard and CSV files.
-
-5. Reinforcement‑Learning Environment
-Markov Decision Process (MDP)
-
-Reinforcement learning assumes the environment is a Markov decision process: at each discrete time step the agent receives a state, chooses an action, receives a reward and the environment transitions to a new state according to a probability distribution. The Markov property states that the next state and reward depend only on the current state and action; the present state encapsulates all necessary information to predict the future
-blog.mlq.ai
-.
-
-Environment Builder
-
-make_env builds either StockTradingEnv (single asset) or PortfolioTradingEnv (multi‑asset). Both use market data from the YAML configuration (obtained via the YFinance provider) and produce a Dict observation with two keys:
-
-window: a tensor of shape (lookback, N, F) containing the last lookback bars for each of N assets and F features (OHLCV and technical indicators).
-
-portfolio: a vector summarizing account state: cash fraction, gross leverage, current drawdown, and current weights.
-
-Actions differ by env type:
-
-StockTradingEnv uses action_space='weights' or 'discrete'. In continuous mode, the action is a scalar between −1 and +1 representing target position (short/flat/long). In discrete mode, 0=short,1=flat,2=long.
-
-PortfolioTradingEnv uses an action vector of length N (or N+1 depending on the mapping mode). Each component is a logit that maps to target weights through one of two modes:
-
-simplex_cash mapping (default): an extra gate controls total investment fraction (via a sigmoid), and a softmax over the remaining logits yields non‑negative weights that sum to ≤ invest_max, leaving the rest in cash. A turnover cap clamps per‑step change to max_step_change to reduce thrashing.
-
-tanh_leverage mapping: maps logits through a tanh to allow both long and short positions; weights may be negative but are clipped to respect a maximum gross leverage. invest_max is ignored.
-
-Reward shaping is configurable via the reward section of the YAML. The base reward is either delta NAV (change in net asset value relative to initial capital) or log NAV (difference of log equity). Penalties can be added for:
-
-Drawdown (w_drawdown) — multiplies current drawdown; encourages the agent to avoid large equity drops.
-
-Turnover (w_turnover) — penalises the sum of absolute changes in weights; reduces over‑trading.
-
-Volatility (w_vol) — penalises recent return volatility over a window; encourages smoother returns.
-
-Leverage (w_leverage) — penalises gross exposure beyond a leverage cap.
-
-6. Back‑testing Engine
-
-stockbot/backtest/run.py loads a saved model or baseline strategy and runs a deterministic episode in the evaluation environment. It records equity, cash and weights at each time step and writes CSV files. It also reconstructs orders and trades for multi‑asset portfolios. Metrics computed include total return, annualised volatility, Sharpe ratio, Sortino ratio, maximum drawdown, turnover, hit rate and average trade P&L. This enables side‑by‑side comparison of RL policies with simple baselines (equal weight, flat, buy‑and‑hold, etc.).
-
-Hyper‑parameter Tuning
-Major PPO Parameters
-
-n_steps: number of environment steps per update. Larger values produce more stable gradient estimates at the cost of memory and slower updates. In our final runs we used n_steps=4096, giving the agent a longer horizon for advantage estimation.
-
-batch_size: mini‑batch size for SGD. Should divide n_steps. A rule of thumb is batch_size ≈ n_steps/4.
-
-learning_rate: step size for gradient descent. Too high causes noisy updates and gradient clipping (observed when grad norms saturate); too low slows learning. We found 3e‑5 to 5e‑5 effective after initial runs at 1e‑4 caused clipped gradients.
-
-gamma: discount factor for future rewards. A value close to 1 (e.g., 0.995–0.997) encourages the agent to consider long‑term returns; lower values emphasise immediate P&L.
-
-gae_lambda: Generalised Advantage Estimation parameter. Balances bias and variance of the advantage estimator. Values near 1 (e.g., 0.98–0.985) produce smoother updates.
-
-clip_range: PPO clip parameter controlling how far policy updates can deviate from the old policy. Values between 0.15 and 0.3 are common. Too small can slow learning; too large can cause instability.
-
-entropy_coefficient (ent_coef): encourages exploration by adding the policy entropy to the loss. A higher value (0.02–0.05) increases exploration and prevents premature convergence; a low value lets the agent exploit more.
-
-vf_coef: weight of the value function loss in the total loss. Increasing this (0.8–1.0) helps the critic fit the return distribution, leading to better advantage estimates.
-
-max_grad_norm: gradient‑norm clipping threshold. Prevents exploding gradients. We set it to 1.0 after noticing gradients saturating at 0.5 with lower thresholds.
-
-dropout: dropout probability in the feature extractor’s MLP or CNN/LSTM networks. It regularises the network and reduces over‑fitting.
-
-seed: random seed for reproducibility.
-
-Environment and Reward Parameters
-
-mapping_mode (episode.mapping_mode): chooses how actions map to portfolio weights. simplex_cash produces long‑only allocations with a cash position; tanh_leverage allows shorting but may lead to larger swings. In our early runs we used simplex_cash with invest_max=0.85, which kept 15 % cash, resulting in conservative behaviour and negative absolute returns when both assets declined. Switching to tanh_leverage with shorting ability can improve performance in down markets.
-
-invest_max: maximum fraction of equity to allocate to assets in the simplex_cash mapping. Lower values (e.g., 0.70) hold more cash and reduce risk, but limit potential upside.
-
-max_step_change: caps per‑step changes in target weights to reduce turnover. Smaller values (0.08–0.10) encourage smoother rebalancing.
-
-rebalance_eps: minimum change in weight before placing an order. Setting rebalance_eps=0.02 prevents micro‑trades below 2 % of equity.
-
-w_turnover, w_drawdown, w_vol: reward penalties. Higher w_drawdown (e.g., 0.1) strongly discourages large drawdowns; w_turnover (e.g., 0.001) penalises rebalancing and reduces high‑frequency trading; w_vol penalises volatility of returns over a window.
-
-lookback: number of past bars included in the observation window. Increasing lookback gives the agent more context but may increase state dimension.
-
-Model Architectures
-
-WindowCNNExtractor: treats the (L,N,F) window as a multi‑channel image and applies 2D convolutions across the time and asset dimensions. Suitable when N is small (2–5) and the agent needs to learn local patterns of features. It then merges features with portfolio information via a small MLP.
-
-WindowLSTMExtractor: flattens the window to (L, N*F) and feeds it into an LSTM to capture long‑term dependencies, addressing the non‑stationary and partially observable nature of financial time series. It is useful when the Markov property is violated and the agent benefits from memory.
-
-MLP: a default SB3 extractor that flattens the observation and feeds it into a feed‑forward network. Suitable for simple cases or when feature extraction is done externally.
-
-Diagnostics and Debugging
-
-The Milvus RL debugging guide suggests that poor performance often originates from mis‑specified rewards or environment bugs, poor exploration and unstable updates
-milvus.io
-. Recommended practices include:
-
-Inspect reward signals — verify that the reward aligns with the financial objective and is correctly computed. Mis‑aligned rewards produce undesirable behaviour.
-
-Verify environment transitions — ensure that state updates (cash, positions, equity) are correct. Unit‑test environment functions separately.
-
-Monitor exploration/exploitation — plot policy entropy and action histograms; adjust ent_coef to encourage exploration when entropy collapses too quickly
-milvus.io
-.
-
-Tune hyper‑parameters — adjust learning rate, batch size, discount factor and clip range to stabilise training when returns oscillate or gradient norms explode
-milvus.io
-. In our experiments, lowering the learning rate, increasing n_steps and raising vf_coef improved stability.
-
-Winning Example: Tuning Summary
-
-Our best run used the CNN extractor (window_cnn) with the following hyper‑parameters:
-
-Learning rate 3e‑5
-
-n_steps = 4096, batch_size = 1024
-
-gamma = 0.997, gae_lambda = 0.985
-
-clip_range = 0.15, ent_coef = 0.04, vf_coef = 1.0
-
-max_grad_norm = 1.0
-
-Environment mapping simplex_cash with invest_max = 0.70, max_step_change = 0.08, rebalance_eps = 0.02
-
-Reward penalties w_turnover = 0.001 and w_drawdown = 0.10
-
-This configuration encouraged longer‑term planning (high gamma), careful updates (small learning_rate and moderate clip_range), and strong risk control. The resulting policy held positions longer, traded infrequently and achieved positive risk‑adjusted returns on out‑of‑sample assets (e.g., XOM/CVX). However, because simplex_cash prohibits short selling, the model still lost money during broad market downturns; enabling shorting (via tanh_leverage) or adding hedging assets can improve performance in bearish periods.
-
-Conclusion and Recommendations
-
-StockBot demonstrates how to integrate deep reinforcement learning into a full web application for trading. The system comprises a front‑end for user interaction, a proxy, a FastAPI orchestration layer, and a training/back‑testing engine based on stable‑baselines3. A well‑designed environment captures market data and portfolio state, while configurable reward shaping and action mapping allow fine control over the agent’s behaviour. Hyper‑parameter tuning is critical: lower learning rates, higher discount factors, appropriate batch sizes and moderate entropy encourage stable learning, while reward penalties for drawdown and turnover reduce risk and over‑trading. The Markov property implies that future state and reward depend only on the current state and action, but financial data are often non‑stationary; therefore, using LSTM extractors or including exogenous features (economic indicators, regime probabilities) helps the agent cope with partial observability
-blog.mlq.ai
-.
-
-In summary, to train a profitable RL trading agent:
-
-Design the environment carefully: include sufficient features (technical indicators, volatility measures) and use a mapping mode that matches your strategy (long‑only vs. long/short). Adjust invest_max and max_step_change to balance risk and opportunity.
-
-Shape the reward: penalise drawdown, turnover and volatility to align the agent’s incentives with risk‑adjusted returns.
-
-Tune hyper‑parameters: start with smaller learning rates and larger n_steps, monitor gradient norms and policy entropy, and adjust gamma, gae_lambda and clip_range to stabilise training.
-
-Compare against baselines: always back‑test against simple benchmarks (equal weight, buy‑and‑hold) and evaluate on multiple assets and time periods. Use walk‑forward testing to detect over‑fitting.
-
-Use diagnostic tools: plot rewards, gradient norms, entropy and weight histograms in TensorBoard and verify environment logic via unit tests.
-milvus.io
- Continuous monitoring helps catch issues early.
-
-With these guidelines and the provided pipeline, researchers and practitioners can experiment with various architectures, reward functions and market universes to develop more robust and profitable trading strategies.
+- `w_drawdown` – multiplies current drawdown to discourage large equity drops.
+- `w_turnover` – penalizes absolute weight changes to reduce over-trading.
+- `w_vol` – penalizes recent return volatility.
+- `w_leverage` – penalizes gross exposure beyond leverage cap.
+
+## Back-testing Engine
+
+`stockbot/backtest/run.py` loads a saved policy or baseline strategy and runs a deterministic episode in the evaluation environment. It records equity, cash and weights each step, writes CSVs, reconstructs orders/trades and computes metrics: total return, annualized volatility, Sharpe/Sortino ratios, max drawdown, turnover, hit rate and average trade P&L. Policies can be compared against baselines such as equal-weight or buy‑and‑hold.
+
+## Hyper-parameter Tuning
+
+### Major PPO Parameters
+- `n_steps` – environment steps per update. Larger values stabilize gradient estimates at the cost of memory; `4096` used in final runs.
+- `batch_size` – SGD mini-batch size; should divide `n_steps`, typically `n_steps/4`.
+- `learning_rate` – step size for gradient descent. `3e-5`–`5e-5` effective after `1e-4` caused clipping.
+- `gamma` – discount factor; `0.995`–`0.997` encourages long-term returns.
+- `gae_lambda` – bias/variance trade-off for GAE; `0.98`–`0.985` yields smoother updates.
+- `clip_range` – PPO clip parameter; `0.15`–`0.3`.
+- `ent_coef` – entropy coefficient (`0.02`–`0.05`) to encourage exploration.
+- `vf_coef` – weight on value loss (`0.8`–`1.0`) for better advantage estimates.
+- `max_grad_norm` – gradient clipping threshold (`1.0` to prevent explosions).
+- `dropout` – regularizes feature extractor networks.
+- `seed` – reproducibility.
+
+### Environment and Reward Parameters
+- `mapping_mode` – `simplex_cash` for long-only with cash; `tanh_leverage` allows shorting.
+- `invest_max` – max fraction of equity invested (simplex_cash).
+- `max_step_change` – caps per-step weight changes.
+- `rebalance_eps` – minimum weight change before rebalancing.
+- `w_turnover`, `w_drawdown`, `w_vol` – reward penalties for turnover, drawdown and volatility.
+- `lookback` – number of past bars in the observation window.
+
+## Model Architectures
+- **WindowCNNExtractor** – treats `(L,N,F)` window as multi‑channel image for 2D convolutions before merging with portfolio features.
+- **WindowLSTMExtractor** – flattens to `(L, N*F)` and feeds into LSTM for long-term dependencies.
+- **MLP** – default SB3 extractor for simple use cases.
+
+## Diagnostics and Debugging
+The Milvus RL debugging guide recommends:
+
+- Inspect reward signals to ensure they align with the trading objective.
+- Verify environment transitions (cash, positions, equity) with unit tests.
+- Monitor exploration/exploitation by plotting policy entropy and action histograms; adjust `ent_coef` if entropy collapses.
+- Tune hyper-parameters when returns oscillate or gradients explode. Lowering learning rate, increasing `n_steps` and raising `vf_coef` improved stability in experiments.
+
+## Winning Example: Tuning Summary
+Best run used the CNN extractor (`window_cnn`) with:
+
+- `learning_rate = 3e‑5`
+- `n_steps = 4096`, `batch_size = 1024`
+- `gamma = 0.997`, `gae_lambda = 0.985`
+- `clip_range = 0.15`, `ent_coef = 0.04`, `vf_coef = 1.0`
+- `max_grad_norm = 1.0`
+- Environment mapping `simplex_cash` with `invest_max = 0.70`, `max_step_change = 0.08`, `rebalance_eps = 0.02`
+- Reward penalties `w_turnover = 0.001`, `w_drawdown = 0.10`
+
+This configuration encouraged long-term planning, careful policy updates and strong risk control. The policy held positions longer, traded infrequently and achieved positive risk-adjusted returns on out-of-sample assets (e.g., XOM/CVX). However, because `simplex_cash` prohibits short selling, the model lost money during broad downturns; enabling shorting (`tanh_leverage`) or adding hedging assets can improve bear-market performance.
+
+## Visualization and Graphs
+
+Training runs log metrics to **TensorBoard**, producing graphs for episodic reward, value/policy loss, entropy and gradient norms. The `DiagnosticsCallback` optionally adds action histograms and weight distributions.  
+Backtests output `equity.csv` and `drawdown.csv` for plotting equity curves, drawdown profiles and per-asset weight trajectories. These visualizations help users assess policy behavior and compare against baseline strategies.
+
+## Conclusion and Recommendations
+StockBot integrates deep reinforcement learning into a full web application. A carefully designed environment and reward structure, combined with appropriate hyper-parameter tuning, are essential for profitable behaviour. Use baselines for comparison, monitor diagnostics (rewards, gradients, entropy, weight histograms) and validate environment logic with unit tests. With the provided pipeline, researchers and practitioners can experiment with architectures, reward functions and market universes to craft robust trading strategies.

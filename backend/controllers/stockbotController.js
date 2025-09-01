@@ -60,6 +60,23 @@ export async function getRunProxy(req, res) {
   }
 }
 
+/** DELETE /api/stockbot/runs/:id */
+export async function deleteRunProxy(req, res) {
+  try {
+    const url = `${STOCKBOT_URL}/api/stockbot/runs/${encodeURIComponent(req.params.id)}`;
+    const { data } = await axios.delete(url);
+    // Some services may return an empty body; default to 204 in that case
+    if (data === undefined || data === null) {
+      return res.status(204).send();
+    }
+    return res.json(data);
+  } catch (e) {
+    const status = e.response?.status || 500;
+    const body = e.response?.data || { error: errMsg(e) };
+    return res.status(status).json(body);
+  }
+}
+
 /** GET /api/stockbot/runs/:id/artifacts */
 export async function getRunArtifactsProxy(req, res) {
   try {

@@ -84,3 +84,4 @@ stockbot/models
 stockbot/data/memory/default.json
 stockbot/venv/
 stockbot/runs/
+.idea/

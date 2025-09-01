@@ -52,7 +52,9 @@ class PortfolioTradingEnv(gym.Env):
         F = len(self._cols)
         self.observation_space = spaces.Dict({
             "window": spaces.Box(low=-np.inf, high=np.inf, shape=(self.lookback, self.N, F), dtype=np.float32),
-            "portfolio": spaces.Box(low=-np.inf, high=np.inf, shape=(3 + self.N,), dtype=np.float32)
+            # portfolio: [cash_frac, margin_used, drawdown, unrealized, realized,
+            #             rolling_vol, turnover] + weights (N)
+            "portfolio": spaces.Box(low=-np.inf, high=np.inf, shape=(7 + self.N,), dtype=np.float32)
         })
 
         # --- Mapping/turnover knobs (driven via episode.* or env.*)
@@ -89,6 +91,7 @@ class PortfolioTradingEnv(gym.Env):
         self.min_hold_bars = int(getattr(self.cfg.episode, "min_hold_bars", 0))
         self._hold_since = np.zeros(self.N, dtype=np.int32)
         self._turnover_ep = 0.0
+        self._turnover_last = 0.0
 
     # ---------- helpers ----------
     def _ohlc(self, sym: str, i: int):
@@ -110,11 +113,18 @@ class PortfolioTradingEnv(gym.Env):
     def _portfolio_obs(self, prices: Dict[str, float]) -> np.ndarray:
         eq = self.port.value(prices)
         cash_frac = float(np.clip(self.port.cash / max(eq, 1e-9), -10, 10))
-        gross = self.port.gross_exposure(prices, eq)
+        margin_used = self.port.gross_exposure(prices, eq)
         dd = self.port.drawdown(eq)
+        unreal = self.port.unrealized_pnl(prices) / max(self._equity0, 1e-9)
+        realized = (eq - self._equity0 - self.port.unrealized_pnl(prices)) / max(self._equity0, 1e-9)
+        vol = 0.0
+        if len(self._ret_hist) > 1:
+            window = getattr(self.cfg.reward, "vol_window", 20)
+            vol = float(np.std(self._ret_hist[-window:]))
+        turnover = float(self._turnover_last)
         w = self.port.weights(prices)
         weights = np.array([w.get(s, 0.0) for s in self.syms], dtype=np.float32)
-        return np.concatenate([[cash_frac, gross, dd], weights]).astype(np.float32)
+        return np.concatenate([[cash_frac, margin_used, dd, unreal, realized, vol, turnover], weights]).astype(np.float32)
 
     def _obs(self, i):
         prices = self._prices(i - 1)
@@ -268,6 +278,7 @@ class PortfolioTradingEnv(gym.Env):
 
         # penalties
         turnover = float(np.sum(np.abs(target_w - prev_w)))
+        self._turnover_last = turnover
         self._turnover_ep += turnover
         pen_dd = self.cfg.reward.w_drawdown * dd_after
         pen_to = self.cfg.reward.w_turnover * turnover

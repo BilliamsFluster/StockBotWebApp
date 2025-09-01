@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any, List, Optional, Dict, Literal
 import secrets
 import yaml
+import shutil
 
 from fastapi import BackgroundTasks, HTTPException, UploadFile, File, WebSocket
 from fastapi.responses import JSONResponse, FileResponse
@@ -37,6 +38,10 @@ def _guess_project_root() -> Path:
 PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", _guess_project_root()))
 RUNS_DIR = PROJECT_ROOT / "stockbot" / "runs"
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
+
+from run_registry import RunRegistry
+
+RUN_REGISTRY = RunRegistry(RUNS_DIR / "runs.db")
 
 print(f"[StockBotController] PROJECT_ROOT = {PROJECT_ROOT}")  # helpful log
 
@@ -174,6 +179,28 @@ class RunRecord(BaseModel):
 
 RUNS: Dict[str, RunRecord] = {}
 
+def _store_run(rec: RunRecord) -> None:
+    """Persist run record to memory and registry."""
+    RUNS[rec.id] = rec
+    try:
+        RUN_REGISTRY.save(rec)
+    except Exception:
+        pass
+
+def _get_run_record(run_id: str) -> RunRecord:
+    r = RUNS.get(run_id)
+    if r:
+        return r
+    try:
+        data = RUN_REGISTRY.get(run_id)
+        if data:
+            r = RunRecord(**data)
+            RUNS[run_id] = r
+            return r
+    except Exception:
+        pass
+    raise HTTPException(status_code=404, detail="Run not found")
+
 # -------------- Helpers ---------------
 
 def _sanitize_tag(tag: str) -> str:
@@ -291,9 +318,7 @@ def _tb_etag(out_dir: Path, extra: str = "") -> str:
 
 
 def tb_list_tags_for_run(run_id: str, request: Request | None = None):
-    r = RUNS.get(run_id)
-    if not r:
-        raise HTTPException(status_code=404, detail="Run not found")
+    r = _get_run_record(run_id)
     out_dir = Path(r.out_dir)
     accs = _load_event_accumulators(out_dir)
     scalars: set[str] = set()
@@ -320,9 +345,7 @@ def tb_list_tags_for_run(run_id: str, request: Request | None = None):
 
 
 def tb_scalar_series_for_run(run_id: str, tag: str) -> dict:
-    r = RUNS.get(run_id)
-    if not r:
-        raise HTTPException(status_code=404, detail="Run not found")
+    r = _get_run_record(run_id)
     out_dir = Path(r.out_dir)
     accs = _load_event_accumulators(out_dir)
     points: list[dict] = []
@@ -357,9 +380,7 @@ def tb_scalar_series_for_run(run_id: str, tag: str) -> dict:
 
 
 def tb_histogram_series_for_run(run_id: str, tag: str, request: Request | None = None):
-    r = RUNS.get(run_id)
-    if not r:
-        raise HTTPException(status_code=404, detail="Run not found")
+    r = _get_run_record(run_id)
     out_dir = Path(r.out_dir)
     accs = _load_event_accumulators(out_dir)
     points: list[dict] = []
@@ -401,9 +422,7 @@ def tb_histogram_series_for_run(run_id: str, tag: str, request: Request | None =
     points.sort(key=lambda p: (p.get("step", 0), p.get("wall_time", 0.0)))
     body = {"tag": tag, "points": points}
     # ETag keyed by tag
-    r = RUNS.get(run_id)
-    out_dir = Path(r.out_dir) if r else None
-    etag = _tb_etag(out_dir, extra=f"hist:{tag}") if out_dir else None
+    etag = _tb_etag(out_dir, extra=f"hist:{tag}")
     if request is not None and etag:
         inm = request.headers.get("if-none-match")
         if inm and inm == etag:
@@ -418,9 +437,7 @@ def tb_grad_matrix_for_run(run_id: str, request: Request | None = None):
     """Aggregate per-layer grad norms logged as scalars under prefix grads/by_layer/.
     Returns { layers: [...], steps: [...], values: number[][] }
     """
-    r = RUNS.get(run_id)
-    if not r:
-        raise HTTPException(status_code=404, detail="Run not found")
+    r = _get_run_record(run_id)
     out_dir = Path(r.out_dir)
     accs = _load_event_accumulators(out_dir)
 
@@ -486,9 +503,7 @@ def tb_grad_matrix_for_run(run_id: str, request: Request | None = None):
 
 def tb_scalars_batch_for_run(run_id: str, tags: list[str], request: Request | None = None):
     """Batch-fetch multiple scalar tags for a run: returns { tag: [{step,wall_time,value}, ...], ... }"""
-    r = RUNS.get(run_id)
-    if not r:
-        raise HTTPException(status_code=404, detail="Run not found")
+    r = _get_run_record(run_id)
     out_dir = Path(r.out_dir)
     accs = _load_event_accumulators(out_dir)
     result: dict[str, list[dict]] = {t: [] for t in tags}
@@ -591,7 +606,7 @@ def _build_env_overrides(req: TrainRequest) -> Dict[str, Any]:
 def _run_subprocess_sync(args: List[str], rec: RunRecord):
     rec.status = "RUNNING"
     rec.started_at = datetime.utcnow().isoformat()
-    RUNS[rec.id] = rec
+    _store_run(rec)
 
     python_bin = sys.executable
     out_dir = Path(rec.out_dir)
@@ -643,7 +658,7 @@ def _run_subprocess_sync(args: List[str], rec: RunRecord):
             rec.status = "FAILED"
             rec.error = repr(e)
 
-    RUNS[rec.id] = rec
+    _store_run(rec)
 
 # --------------- API ----------------
 
@@ -675,7 +690,7 @@ async def start_train_job(req: TrainRequest, bg: BackgroundTasks):
             "config_snapshot": str(snapshot_path),
         },
     )
-    RUNS[run_id] = rec
+    _store_run(rec)
 
     # build args targeting the SNAPSHOT (not the original)
     args = [
@@ -753,8 +768,9 @@ async def start_backtest_job(req: BacktestRequest, bg: BackgroundTasks):
 
     # If run_id is present, start with snapshot & model, then only override with non-template values
     if getattr(req, "run_id", None):
-        prev = RUNS.get(req.run_id)
-        if not prev:
+        try:
+            prev = _get_run_record(req.run_id)
+        except HTTPException:
             raise HTTPException(status_code=400, detail="run_id not found")
 
         prev_out = Path(prev.out_dir)
@@ -806,7 +822,7 @@ async def start_backtest_job(req: BacktestRequest, bg: BackgroundTasks):
             "resolved_policy": policy,
         },
     )
-    RUNS[run_id] = rec
+    _store_run(rec)
 
     args = [
         "-m", "stockbot.backtest.run",
@@ -823,23 +839,25 @@ async def start_backtest_job(req: BacktestRequest, bg: BackgroundTasks):
     return JSONResponse({"job_id": run_id})
 
 def list_runs():
-    rows = sorted(RUNS.values(), key=lambda r: r.created_at, reverse=True)
-    return [
-        {
-            "id": r.id,
-            "type": r.type,
-            "status": r.status,
-            "out_dir": r.out_dir,
-            "created_at": r.created_at,
-            "started_at": r.started_at,
-            "finished_at": r.finished_at,
-        } for r in rows
-    ]
+    try:
+        return RUN_REGISTRY.list()
+    except Exception:
+        rows = sorted(RUNS.values(), key=lambda r: r.created_at, reverse=True)
+        return [
+            {
+                "id": r.id,
+                "type": r.type,
+                "status": r.status,
+                "out_dir": r.out_dir,
+                "created_at": r.created_at,
+                "started_at": r.started_at,
+                "finished_at": r.finished_at,
+            }
+            for r in rows
+        ]
 
 def get_run(run_id: str):
-    r = RUNS.get(run_id)
-    if not r:
-        raise HTTPException(status_code=404, detail="Not found")
+    r = _get_run_record(run_id)
     return {
         "id": r.id,
         "type": r.type,
@@ -852,9 +870,7 @@ def get_run(run_id: str):
     }
 
 def _artifact_map_for_run(run_id: str) -> Dict[str, Path]:
-    r = RUNS.get(run_id)
-    if not r:
-        raise HTTPException(status_code=404, detail="Not found")
+    r = _get_run_record(run_id)
     return _artifact_paths(Path(r.out_dir))
 
 def get_artifacts(run_id: str):
@@ -875,9 +891,7 @@ SAFE_NAME_MAP = {
 }
 
 def get_artifact_file(run_id: str, name: str):
-    r = RUNS.get(run_id)
-    if not r:
-        raise HTTPException(status_code=404, detail="Not found")
+    r = _get_run_record(run_id)
     rel = SAFE_NAME_MAP.get(name)
     if not rel:
         raise HTTPException(status_code=404, detail="Unknown artifact")
@@ -888,31 +902,45 @@ def get_artifact_file(run_id: str, name: str):
 
 # Cancel a running job by pid
 def cancel_run(run_id: str):
-    r = RUNS.get(run_id)
-    if not r:
-        raise HTTPException(status_code=404, detail="Run not found")
+    r = _get_run_record(run_id)
     if r.status in ("SUCCEEDED", "FAILED", "CANCELLED"):
         return JSONResponse({"ok": True, "status": r.status})
     pid = r.pid
     if not pid:
         r.status = "CANCELLED"
-        RUNS[run_id] = r
+        _store_run(r)
         return JSONResponse({"ok": True, "status": r.status})
     try:
         import signal, os
         os.kill(int(pid), signal.SIGTERM)
         r.status = "CANCELLED"
         r.finished_at = datetime.utcnow().isoformat()
-        RUNS[run_id] = r
+        _store_run(r)
         return JSONResponse({"ok": True, "status": r.status})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to cancel: {e}")
 
+def delete_run(run_id: str):
+    r = _get_run_record(run_id)
+    if r.status in ("RUNNING", "QUEUED", "PENDING"):
+        raise HTTPException(status_code=400, detail="Cannot delete active run")
+    try:
+        if r.out_dir:
+            out_path = Path(r.out_dir)
+            if out_path.exists():
+                shutil.rmtree(out_path, ignore_errors=True)
+    except Exception:
+        pass
+    try:
+        RUN_REGISTRY.delete(run_id)
+    except Exception:
+        pass
+    RUNS.pop(run_id, None)
+    return JSONResponse({"ok": True})
+
 # Bundle everything into a ZIP and stream it
 def bundle_zip(run_id: str, include_model: bool = True) -> FileResponse:
-    r = RUNS.get(run_id)
-    if not r:
-        raise HTTPException(status_code=404, detail="Run not found")
+    r = _get_run_record(run_id)
 
     out_dir = Path(r.out_dir)
     paths = _artifact_paths(out_dir)

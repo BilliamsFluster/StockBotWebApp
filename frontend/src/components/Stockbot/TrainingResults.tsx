@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { TooltipLabel } from "./shared/TooltipLabel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import api from "@/api/client";
+import { deleteRun } from "@/api/stockbot";
 import type { RunSummary, Metrics, RunArtifacts } from "./lib/types";
 import { parseCSV, drawdownFromEquity } from "./lib/csv";
 import { formatPct, formatSigned } from "./lib/formats";
@@ -174,6 +175,21 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   };
 
   const onLoad = async () => { await reload(); await loadArtifacts(); await loadSeedAggregates(); };
+
+  const onDeleteRun = async () => {
+    if (!runId) return;
+    if (!window.confirm("Delete this run?")) return;
+    try {
+
+      await deleteRun(runId);
+
+      const next = runs.filter((r) => r.id !== runId);
+      setRuns(next);
+      setRunId(next[0]?.id || "");
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const loadArtifacts = async () => {
     try {
@@ -474,6 +490,9 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
               className="w-48"
             />
             <Button size="sm" onClick={onLoad} disabled={!runId || loading}>{loading ? "Loading…" : "Load"}</Button>
+            <Button size="sm" variant="destructive" onClick={onDeleteRun} disabled={!runId || loading}>
+              Delete
+            </Button>
           </div>
           <div className="flex items-center gap-2 rounded border px-2 py-1">
             <TooltipLabel className="text-sm" tooltip="Automatically reload metrics">

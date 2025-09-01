@@ -38,6 +38,10 @@ class Portfolio:
         eq = max(1e-9, self.value(prices))
         return {sym: (pos.qty*prices[sym])/eq for sym,pos in self.positions.items()}
 
+    def unrealized_pnl(self, prices: Dict[str, float]) -> float:
+        """Compute unrealized PnL across all positions."""
+        return sum((pos.qty * (prices[sym] - pos.avg_cost)) for sym, pos in self.positions.items())
+
     def apply_fills(self, fills: list[Fill]):
         for f in fills:
             pos = self.positions.setdefault(f.symbol, Position())
