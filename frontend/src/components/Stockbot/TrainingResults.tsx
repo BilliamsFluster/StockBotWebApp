@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { TooltipLabel } from "./shared/TooltipLabel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import api from "@/api/client";
+import { deleteRun } from "@/api/stockbot";
 import type { RunSummary, Metrics, RunArtifacts } from "./lib/types";
 import { parseCSV, drawdownFromEquity } from "./lib/csv";
 import { formatPct, formatSigned } from "./lib/formats";
@@ -179,7 +180,9 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
     if (!runId) return;
     if (!window.confirm("Delete this run?")) return;
     try {
-      await api.delete(`/stockbot/runs/${runId}`);
+
+      await deleteRun(runId);
+
       const next = runs.filter((r) => r.id !== runId);
       setRuns(next);
       setRunId(next[0]?.id || "");

@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import api from "@/api/client";
+import { deleteRun } from "@/api/stockbot";
 import { RunSummary } from "./lib/types";
 import StatusChip from "./shared/StatusChip";
 import {
@@ -56,7 +57,9 @@ export default function Dashboard({
   const onDelete = async (id: string) => {
     if (!window.confirm("Delete this run?")) return;
     try {
-      await api.delete(`/stockbot/runs/${id}`);
+
+      await deleteRun(id);
+
       const nextRuns = runs.filter((r) => r.id !== id);
       setRuns(nextRuns);
       saveRecentRuns(nextRuns);

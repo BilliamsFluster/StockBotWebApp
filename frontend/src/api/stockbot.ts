@@ -15,6 +15,10 @@ export async function downloadRunBundle(runId: string, includeModel = true): Pro
   return data as Blob;
 }
 
+export async function deleteRun(runId: string): Promise<void> {
+  await api.delete(`/stockbot/runs/${encodeURIComponent(runId)}`);
+}
+
 export async function getAiInsights() {
   const { data } = await api.get<{ insights: string[] }>('/stockbot/insights');
   return data;
