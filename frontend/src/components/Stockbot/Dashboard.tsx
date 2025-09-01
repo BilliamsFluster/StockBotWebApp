@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import api from "@/api/client";
+import { deleteRun } from "@/api/stockbot";
 import { RunSummary } from "./lib/types";
 import StatusChip from "./shared/StatusChip";
 import {
@@ -12,6 +13,7 @@ import {
   saveRecentRuns,
   loadSavedRuns,
   toggleSavedRun,
+  saveSavedRuns,
 } from "./lib/runs";
 
 export default function Dashboard({
@@ -50,6 +52,21 @@ export default function Dashboard({
   const onToggleSave = (r: RunSummary) => {
     const next = toggleSavedRun(r);
     setSaved(next);
+  };
+
+  const onDelete = async (id: string) => {
+    if (!window.confirm("Delete this run?")) return;
+    try {
+      await deleteRun(id);
+      const nextRuns = runs.filter((r) => r.id !== id);
+      setRuns(nextRuns);
+      saveRecentRuns(nextRuns);
+      const nextSaved = saved.filter((r) => r.id !== id);
+      setSaved(nextSaved);
+      saveSavedRuns(nextSaved);
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   return (
@@ -97,6 +114,9 @@ export default function Dashboard({
                   <Button size="sm" variant="outline" onClick={() => onToggleSave(r)}>
                     Save
                   </Button>
+                  <Button size="sm" variant="destructive" onClick={() => onDelete(r.id)}>
+                    Delete
+                  </Button>
                 </TableCell>
               </TableRow>
             ))}
@@ -138,6 +158,9 @@ export default function Dashboard({
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => onToggleSave(r)}>
                     Remove
+                  </Button>
+                  <Button size="sm" variant="destructive" onClick={() => onDelete(r.id)}>
+                    Delete
                   </Button>
                 </TableCell>
               </TableRow>
