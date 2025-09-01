@@ -57,7 +57,9 @@ export default function Dashboard({
   const onDelete = async (id: string) => {
     if (!window.confirm("Delete this run?")) return;
     try {
+
       await deleteRun(id);
+
       const nextRuns = runs.filter((r) => r.id !== id);
       setRuns(nextRuns);
       saveRecentRuns(nextRuns);

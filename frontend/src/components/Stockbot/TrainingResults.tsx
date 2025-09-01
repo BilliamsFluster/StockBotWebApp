@@ -180,7 +180,9 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
     if (!runId) return;
     if (!window.confirm("Delete this run?")) return;
     try {
+
       await deleteRun(runId);
+
       const next = runs.filter((r) => r.id !== runId);
       setRuns(next);
       setRunId(next[0]?.id || "");
