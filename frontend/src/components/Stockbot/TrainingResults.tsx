@@ -175,6 +175,19 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
 
   const onLoad = async () => { await reload(); await loadArtifacts(); await loadSeedAggregates(); };
 
+  const onDeleteRun = async () => {
+    if (!runId) return;
+    if (!window.confirm("Delete this run?")) return;
+    try {
+      await api.delete(`/stockbot/runs/${runId}`);
+      const next = runs.filter((r) => r.id !== runId);
+      setRuns(next);
+      setRunId(next[0]?.id || "");
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const loadArtifacts = async () => {
     try {
       const { data: art } = await api.get<RunArtifacts>(`/stockbot/runs/${runId}/artifacts`);
@@ -474,6 +487,9 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
               className="w-48"
             />
             <Button size="sm" onClick={onLoad} disabled={!runId || loading}>{loading ? "Loading…" : "Load"}</Button>
+            <Button size="sm" variant="destructive" onClick={onDeleteRun} disabled={!runId || loading}>
+              Delete
+            </Button>
           </div>
           <div className="flex items-center gap-2 rounded border px-2 py-1">
             <TooltipLabel className="text-sm" tooltip="Automatically reload metrics">

@@ -19,6 +19,7 @@ from api.controllers.stockbot_controller import (
     save_policy_upload,
     bundle_zip,
     cancel_run,
+    delete_run,
 )
 from api.controllers.insights_controller import InsightsRequest, generate_insights
 from api.controllers.highlights_controller import HighlightsRequest, generate_highlights
@@ -103,6 +104,11 @@ def get_run_tb_scalars_batch(run_id: str, tags: str, request: Request):
 @router.post("/runs/{run_id}/cancel")
 def post_cancel_run(run_id: str):
     return cancel_run(run_id)
+
+
+@router.delete("/runs/{run_id}")
+def delete_run_route(run_id: str):
+    return delete_run(run_id)
 
 
 # Optional: WebSocket live status (parallel to SSE stream)
