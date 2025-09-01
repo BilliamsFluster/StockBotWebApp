@@ -38,6 +38,10 @@ PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", _guess_project_root()))
 RUNS_DIR = PROJECT_ROOT / "stockbot" / "runs"
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
+from run_registry import RunRegistry
+
+RUN_REGISTRY = RunRegistry(RUNS_DIR / "runs.db")
+
 print(f"[StockBotController] PROJECT_ROOT = {PROJECT_ROOT}")  # helpful log
 
 def _resolve_under_project(path: str | Path) -> Path:
@@ -173,6 +177,14 @@ class RunRecord(BaseModel):
     pid: Optional[int] = None
 
 RUNS: Dict[str, RunRecord] = {}
+
+def _store_run(rec: RunRecord) -> None:
+    """Persist run record to memory and registry."""
+    RUNS[rec.id] = rec
+    try:
+        RUN_REGISTRY.save(rec)
+    except Exception:
+        pass
 
 # -------------- Helpers ---------------
 
@@ -591,7 +603,7 @@ def _build_env_overrides(req: TrainRequest) -> Dict[str, Any]:
 def _run_subprocess_sync(args: List[str], rec: RunRecord):
     rec.status = "RUNNING"
     rec.started_at = datetime.utcnow().isoformat()
-    RUNS[rec.id] = rec
+    _store_run(rec)
 
     python_bin = sys.executable
     out_dir = Path(rec.out_dir)
@@ -643,7 +655,7 @@ def _run_subprocess_sync(args: List[str], rec: RunRecord):
             rec.status = "FAILED"
             rec.error = repr(e)
 
-    RUNS[rec.id] = rec
+    _store_run(rec)
 
 # --------------- API ----------------
 
@@ -675,7 +687,7 @@ async def start_train_job(req: TrainRequest, bg: BackgroundTasks):
             "config_snapshot": str(snapshot_path),
         },
     )
-    RUNS[run_id] = rec
+    _store_run(rec)
 
     # build args targeting the SNAPSHOT (not the original)
     args = [
@@ -806,7 +818,7 @@ async def start_backtest_job(req: BacktestRequest, bg: BackgroundTasks):
             "resolved_policy": policy,
         },
     )
-    RUNS[run_id] = rec
+    _store_run(rec)
 
     args = [
         "-m", "stockbot.backtest.run",
@@ -823,18 +835,22 @@ async def start_backtest_job(req: BacktestRequest, bg: BackgroundTasks):
     return JSONResponse({"job_id": run_id})
 
 def list_runs():
-    rows = sorted(RUNS.values(), key=lambda r: r.created_at, reverse=True)
-    return [
-        {
-            "id": r.id,
-            "type": r.type,
-            "status": r.status,
-            "out_dir": r.out_dir,
-            "created_at": r.created_at,
-            "started_at": r.started_at,
-            "finished_at": r.finished_at,
-        } for r in rows
-    ]
+    try:
+        return RUN_REGISTRY.list()
+    except Exception:
+        rows = sorted(RUNS.values(), key=lambda r: r.created_at, reverse=True)
+        return [
+            {
+                "id": r.id,
+                "type": r.type,
+                "status": r.status,
+                "out_dir": r.out_dir,
+                "created_at": r.created_at,
+                "started_at": r.started_at,
+                "finished_at": r.finished_at,
+            }
+            for r in rows
+        ]
 
 def get_run(run_id: str):
     r = RUNS.get(run_id)
@@ -896,14 +912,14 @@ def cancel_run(run_id: str):
     pid = r.pid
     if not pid:
         r.status = "CANCELLED"
-        RUNS[run_id] = r
+        _store_run(r)
         return JSONResponse({"ok": True, "status": r.status})
     try:
         import signal, os
         os.kill(int(pid), signal.SIGTERM)
         r.status = "CANCELLED"
         r.finished_at = datetime.utcnow().isoformat()
-        RUNS[run_id] = r
+        _store_run(r)
         return JSONResponse({"ok": True, "status": r.status})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to cancel: {e}")
