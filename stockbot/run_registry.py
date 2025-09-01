@@ -90,3 +90,9 @@ class RunRegistry:
             except Exception:
                 data["meta"] = {}
             return data
+
+    def delete(self, run_id: str) -> None:
+        """Remove a run record from the registry."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+            conn.commit()
