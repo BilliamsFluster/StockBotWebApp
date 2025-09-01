@@ -6,6 +6,7 @@ import {
   startBacktestProxy,
   listRunsProxy,
   getRunProxy,
+  deleteRunProxy,
   uploadPolicyProxy,
   getRunArtifactsProxy,
   getRunArtifactFileProxy,
@@ -42,6 +43,7 @@ router.get("/trade/status", protectRoute, getLiveTradingStatusProxy);
 // Query jobs
 router.get("/runs", protectRoute, listRunsProxy);
 router.get("/runs/:id", protectRoute, getRunProxy);
+router.delete("/runs/:id", protectRoute, deleteRunProxy);
 router.get("/runs/:id/artifacts", protectRoute, getRunArtifactsProxy);
 
 // Stream a specific artifact (metrics, equity, trades, orders, summary, config, model, job_log)
