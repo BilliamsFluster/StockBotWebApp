@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any, List, Optional, Dict, Literal
 import secrets
 import yaml
+import shutil
 
 from fastapi import BackgroundTasks, HTTPException, UploadFile, File, WebSocket
 from fastapi.responses import JSONResponse, FileResponse
@@ -918,6 +919,24 @@ def cancel_run(run_id: str):
         return JSONResponse({"ok": True, "status": r.status})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to cancel: {e}")
+
+def delete_run(run_id: str):
+    r = _get_run_record(run_id)
+    if r.status in ("RUNNING", "QUEUED", "PENDING"):
+        raise HTTPException(status_code=400, detail="Cannot delete active run")
+    try:
+        if r.out_dir:
+            out_path = Path(r.out_dir)
+            if out_path.exists():
+                shutil.rmtree(out_path, ignore_errors=True)
+    except Exception:
+        pass
+    try:
+        RUN_REGISTRY.delete(run_id)
+    except Exception:
+        pass
+    RUNS.pop(run_id, None)
+    return JSONResponse({"ok": True})
 
 # Bundle everything into a ZIP and stream it
 def bundle_zip(run_id: str, include_model: bool = True) -> FileResponse:
