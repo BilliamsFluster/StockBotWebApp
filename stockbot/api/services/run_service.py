@@ -43,6 +43,7 @@ class RunService:
         except Exception:
             pass
 
+
     # --- Run registry helpers ---
     def _store_run(self, rec: RunRecord) -> None:
         self.runs[rec.id] = rec
@@ -73,6 +74,7 @@ class RunService:
                     self.runs[rid] = RunRecord(**data)
         except Exception:
             pass
+
         return list(self.runs.values())
 
     # --- YAML helpers ---
@@ -183,6 +185,7 @@ class RunService:
     def start_train(self, req: TrainRequest, bg: BackgroundTasks) -> RunRecord:
         run_id = req.run_id or req.out_tag or secrets.token_hex(8)
         out_dir = _choose_outdir(req.out_dir, run_id)
+
         rec = RunRecord(
             id=run_id,
             type="train",
@@ -232,6 +235,7 @@ class RunService:
     def start_backtest(self, req: BacktestRequest, bg: BackgroundTasks) -> RunRecord:
         run_id = req.run_id or req.out_tag or secrets.token_hex(8)
         out_dir = _choose_outdir(req.out_dir, run_id)
+
         rec = RunRecord(
             id=run_id,
             type="backtest",

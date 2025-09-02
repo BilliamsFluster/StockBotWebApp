@@ -69,6 +69,7 @@ class TrainRequest(BaseModel):
     out_tag: Optional[str] = None
     out_dir: Optional[str] = None
     run_id: Optional[str] = None
+
     train_start: Optional[str] = None
     train_end: Optional[str] = None
     eval_start: Optional[str] = None
