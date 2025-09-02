@@ -41,12 +41,12 @@ router = APIRouter()
 
 @router.post("/train")
 async def post_train(req: TrainRequest, bg: BackgroundTasks):
-    return await start_train_job(req, bg)
+    return start_train_job(req, bg)
 
 
 @router.post("/backtest")
 async def post_backtest(req: BacktestRequest, bg: BackgroundTasks):
-    return await start_backtest_job(req, bg)
+    return start_backtest_job(req, bg)
 
 
 @router.get("/runs")
