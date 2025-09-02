@@ -1,42 +1,35 @@
-from fastapi import APIRouter, BackgroundTasks, File, UploadFile, Depends, Request, WebSocket, HTTPException, status
-from fastapi.responses import StreamingResponse
+from __future__ import annotations
+
 import asyncio
 import os
-from api.controllers.stockbot_controller import (
-    TrainRequest,
-    BacktestRequest,
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File, WebSocket, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+
+from api.models.run_models import BacktestRequest, TrainRequest
+from api.services.run_service import (
     start_train_job,
     start_backtest_job,
     list_runs,
     get_run,
     get_artifacts,
     get_artifact_file,
+    bundle_zip,
+    cancel_run,
+    delete_run,
+    save_policy_upload,
+    RUNS,
+)
+from api.utils.tb_utils import (
     tb_list_tags_for_run,
     tb_scalar_series_for_run,
     tb_histogram_series_for_run,
     tb_grad_matrix_for_run,
     tb_scalars_batch_for_run,
-    save_policy_upload,
-    bundle_zip,
-    cancel_run,
-    delete_run,
 )
 from api.controllers.insights_controller import InsightsRequest, generate_insights
 from api.controllers.highlights_controller import HighlightsRequest, generate_highlights
 
-
-'''def verify_api_key(request: Request): -- security will be implemented soon
-    expected = os.getenv("STOCKBOT_API_KEY")
-    if not expected:
-        raise RuntimeError("STOCKBOT_API_KEY not configured")
-    api_key = request.headers.get("X-API-Key")
-    if api_key != expected:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
-
-
-router = APIRouter(dependencies=[Depends(verify_api_key)])'''
 router = APIRouter()
-
 
 
 @router.post("/train")
@@ -87,7 +80,7 @@ def get_run_tb_scalars(run_id: str, tag: str):
 
 @router.get("/runs/{run_id}/tb/histograms")
 def get_run_tb_histograms(run_id: str, tag: str, request: Request):
-    return tb_histogram_series_for_run(run_id, tag)
+    return tb_histogram_series_for_run(run_id, tag, request)
 
 
 @router.get("/runs/{run_id}/tb/grad-matrix")
@@ -111,12 +104,10 @@ def delete_run_route(run_id: str):
     return delete_run(run_id)
 
 
-# Optional: WebSocket live status (parallel to SSE stream)
 @router.websocket("/runs/{run_id}/ws")
 async def ws_run_status(ws: WebSocket, run_id: str):
     await ws.accept()
     try:
-        from api.controllers.stockbot_controller import RUNS  # lazy import
         last = None
         while True:
             rec = RUNS.get(run_id)
@@ -150,9 +141,6 @@ async def ws_run_status(ws: WebSocket, run_id: str):
 
 @router.get("/runs/{run_id}/stream")
 async def stream_run_status(run_id: str):
-    """Server-Sent Events stream of run status until terminal; emits JSON per event."""
-    from api.controllers.stockbot_controller import RUNS  # lazy import to avoid cycles
-
     async def event_gen():
         last = None
         while True:
@@ -174,7 +162,6 @@ async def stream_run_status(run_id: str):
                 import json
                 yield "data: " + json.dumps(payload) + "\n\n"
                 last = payload
-            # break if terminal
             if rec.status in ("SUCCEEDED", "FAILED", "CANCELLED"):
                 return
             await asyncio.sleep(1.0)
@@ -195,4 +182,3 @@ def post_insights(req: InsightsRequest):
 @router.post("/highlights")
 def post_highlights(req: HighlightsRequest):
     return generate_highlights(req)
-
