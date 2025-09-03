@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,6 +47,9 @@ const statTriple = (arr: number[]) => {
   const q3 = s[Math.floor((s.length - 1) * 3 / 4)];
   return { median, q1, q3 };
 };
+
+// Lazily load heavy Plotly component on the client only
+const PlotlySurface = dynamic(() => import("./PlotlySurface"), { ssr: false });
 
 export default function TrainingResults({ initialRunId }: { initialRunId?: string }) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
@@ -437,8 +441,6 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   const epLenTag = useMemo(() => pickFirst(["rollout/ep_len_mean"], (tags?.scalars || available)), [tags, available]);
 
   // 3D Gradient Surface (Plotly)
-  // Render via factory wrapper to keep bundle light
-  const PlotlySurface = useMemo(() => require("./PlotlySurface").default, []);
   const gradientSurface = useMemo(() => {
     const gm = gradMatrix;
     if (!gm || !gm.layers?.length || !gm.steps?.length) return null;
@@ -704,7 +706,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
           <>
             <div className="grid lg:grid-cols-2 gap-6">
               <ChartCard title="Gradient Norm" tag={gradTag} color="#ef4444" />
-              {gradMatrix && gradMatrix.layers.length > 0 && gradMatrix.steps.length > 0 && (
+              {gradMatrix?.layers && gradMatrix?.steps && gradMatrix.layers.length > 0 && gradMatrix.steps.length > 0 && (
                 <Card className="p-4 space-y-2">
                   <div className="font-semibold">Gradient Norms Heatmap (layers × updates)</div>
                   <Heatmap gm={gradMatrix} />

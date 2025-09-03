@@ -13,15 +13,13 @@ import secrets
 import yaml
 import shutil
 
-from fastapi import BackgroundTasks, HTTPException, UploadFile, File, WebSocket
+from fastapi import BackgroundTasks, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse, FileResponse
-from pydantic import BaseModel, Field
-from tensorboard.backend.event_processing.event_accumulator import (
-    EventAccumulator,
-)
-import time
-import hashlib
 from fastapi import Request
+from pydantic import BaseModel, Field
+
+from .run_utils import RunManager, RunRecord
+from . import tensorboard_utils as tb_utils
 
 # ---------------- Paths ----------------
 
@@ -39,9 +37,7 @@ PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", _guess_project_root()))
 RUNS_DIR = PROJECT_ROOT / "stockbot" / "runs"
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
-from run_registry import RunRegistry
-
-RUN_REGISTRY = RunRegistry(RUNS_DIR / "runs.db")
+RUN_MANAGER = RunManager(RUNS_DIR)
 
 print(f"[StockBotController] PROJECT_ROOT = {PROJECT_ROOT}")  # helpful log
 
@@ -57,9 +53,6 @@ if os.environ.get("STOCKBOT_EXTRA_OUT_ROOT"):
     ALLOWED_OUTPUT_ROOTS.append(Path(os.environ["STOCKBOT_EXTRA_OUT_ROOT"]).resolve())
 
 # ---------------- Types ----------------
-
-RunType = Literal["train", "backtest"]
-RunStatus = Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"]
 
 # --- UI-driven sub-configs that mirror your EnvConfig schema ---
 class FeesModel(BaseModel):
@@ -165,42 +158,6 @@ class BacktestRequest(BaseModel):
     run_id: Optional[str] = None
     normalize: bool = True  # NEW: eval-side normalization toggle
 
-class RunRecord(BaseModel):
-    id: str
-    type: RunType
-    status: RunStatus
-    out_dir: str
-    created_at: str
-    started_at: Optional[str] = None
-    finished_at: Optional[str] = None
-    meta: Optional[dict] = None
-    error: Optional[str] = None
-    pid: Optional[int] = None
-
-RUNS: Dict[str, RunRecord] = {}
-
-def _store_run(rec: RunRecord) -> None:
-    """Persist run record to memory and registry."""
-    RUNS[rec.id] = rec
-    try:
-        RUN_REGISTRY.save(rec)
-    except Exception:
-        pass
-
-def _get_run_record(run_id: str) -> RunRecord:
-    r = RUNS.get(run_id)
-    if r:
-        return r
-    try:
-        data = RUN_REGISTRY.get(run_id)
-        if data:
-            r = RunRecord(**data)
-            RUNS[run_id] = r
-            return r
-    except Exception:
-        pass
-    raise HTTPException(status_code=404, detail="Run not found")
-
 # -------------- Helpers ---------------
 
 def _sanitize_tag(tag: str) -> str:
@@ -236,315 +193,22 @@ def _choose_outdir(req_out_dir: Optional[str], out_tag: Optional[str]) -> Path:
     final.mkdir(parents=True, exist_ok=True)
     return final
 
-def _artifact_paths(out_dir: Path) -> Dict[str, Path]:
-    report = out_dir / "report"
-    return {
-        "metrics":  report / "metrics.json",
-        "equity":   report / "equity.csv",
-        "orders":   report / "orders.csv",
-        "trades":   report / "trades.csv",
-        "summary":  report / "summary.json",
-        "config":   out_dir / "config.snapshot.yaml",
-        "model":    out_dir / "ppo_policy.zip",
-        "job_log":  out_dir / "job.log",
-    }
-
-# ---------------- TensorBoard utilities ----------------
-def _find_tb_event_dirs(out_dir: Path) -> list[Path]:
-    """
-    Return a list of directories under out_dir that contain TensorBoard event files.
-    We check out_dir itself, a common subdir 'tb', and any immediate subdirectories.
-    """
-    candidates: list[Path] = []
-    # explicit known locations
-    for p in [out_dir, out_dir / "tb", out_dir / "tensorboard"]:
-        if p.exists() and p.is_dir():
-            candidates.append(p)
-    # include single-level children as well (SB3 may create runs like <out_dir>/PPO_1)
-    try:
-        for child in out_dir.iterdir():
-            if child.is_dir():
-                candidates.append(child)
-    except Exception:
-        pass
-
-    # de-duplicate while preserving order
-    seen = set()
-    uniq: list[Path] = []
-    for c in candidates:
-        if str(c) in seen:
-            continue
-        seen.add(str(c))
-        uniq.append(c)
-
-    def has_events(d: Path) -> bool:
-        try:
-            for f in d.iterdir():
-                if f.is_file() and f.name.startswith("events.out.tfevents"):
-                    return True
-        except Exception:
-            return False
-        return False
-
-    return [d for d in uniq if has_events(d)]
-
-
-def _load_event_accumulators(out_dir: Path) -> list[EventAccumulator]:
-    accs: list[EventAccumulator] = []
-    for d in _find_tb_event_dirs(out_dir):
-        try:
-            acc = EventAccumulator(str(d))
-            acc.Reload()
-            accs.append(acc)
-        except Exception:
-            # ignore broken dirs
-            continue
-    return accs
-
-
-def _tb_etag(out_dir: Path, extra: str = "") -> str:
-    """Generate a weak ETag based on event file mtimes + sizes under out_dir/tb.*"""
-    parts: list[str] = []
-    for d in _find_tb_event_dirs(out_dir):
-        try:
-            for f in d.iterdir():
-                if f.is_file() and f.name.startswith("events.out.tfevents"):
-                    st = f.stat()
-                    parts.append(f"{f.name}:{int(st.st_mtime_ns)}:{st.st_size}")
-        except Exception:
-            continue
-    h = hashlib.sha1(("|".join(sorted(parts)) + "|" + extra).encode()).hexdigest()
-    return f"W/\"{h}\""
-
+# ---------------- TensorBoard API wrappers ----------------
 
 def tb_list_tags_for_run(run_id: str, request: Request | None = None):
-    r = _get_run_record(run_id)
-    out_dir = Path(r.out_dir)
-    accs = _load_event_accumulators(out_dir)
-    scalars: set[str] = set()
-    histos: set[str] = set()
-    for acc in accs:
-        try:
-            tags = acc.Tags()
-        except Exception:
-            continue
-        for t in tags.get("scalars", []) or []:
-            scalars.add(t)
-        for t in tags.get("histograms", []) or []:
-            histos.add(t)
-    body = {"scalars": sorted(scalars), "histograms": sorted(histos)}
-    etag = _tb_etag(out_dir, extra="tags")
-    if request is not None:
-        inm = request.headers.get("if-none-match")
-        if inm and inm == etag:
-            # 304 with empty body is fine; FastAPI will send default
-            raise HTTPException(status_code=304, detail="Not Modified")
-    resp = JSONResponse(body)
-    resp.headers["ETag"] = etag
-    return resp
+    return tb_utils.list_tags(RUN_MANAGER, run_id, request)
 
-
-def tb_scalar_series_for_run(run_id: str, tag: str) -> dict:
-    r = _get_run_record(run_id)
-    out_dir = Path(r.out_dir)
-    accs = _load_event_accumulators(out_dir)
-    points: list[dict] = []
-    for acc in accs:
-        try:
-            evs = acc.Scalars(tag)
-        except KeyError:
-            continue
-        except Exception:
-            continue
-        for ev in evs:
-            # TensorBoard scalar event has .step, .wall_time, .value
-            try:
-                points.append({
-                    "step": int(getattr(ev, "step", 0) or 0),
-                    "wall_time": float(getattr(ev, "wall_time", 0.0) or 0.0),
-                    "value": float(getattr(ev, "value", 0.0) or 0.0),
-                })
-            except Exception:
-                continue
-    # sort & de-dupe (keep earliest per step)
-    points.sort(key=lambda p: (p["step"], p["wall_time"]))
-    seen_steps = set()
-    dedup: list[dict] = []
-    for p in points:
-        s = p["step"]
-        if s in seen_steps:
-            continue
-        seen_steps.add(s)
-        dedup.append(p)
-    return {"tag": tag, "points": dedup}
-
+def tb_scalar_series_for_run(run_id: str, tag: str) -> Dict[str, Any]:
+    return tb_utils.scalar_series(RUN_MANAGER, run_id, tag)
 
 def tb_histogram_series_for_run(run_id: str, tag: str, request: Request | None = None):
-    r = _get_run_record(run_id)
-    out_dir = Path(r.out_dir)
-    accs = _load_event_accumulators(out_dir)
-    points: list[dict] = []
-    for acc in accs:
-        try:
-            evs = acc.Histograms(tag)
-        except KeyError:
-            continue
-        except Exception:
-            continue
-        for ev in evs:
-            try:
-                hv = getattr(ev, "histogram_value", None) or getattr(ev, "value", None)
-                item = {
-                    "step": int(getattr(ev, "step", 0) or 0),
-                    "wall_time": float(getattr(ev, "wall_time", 0.0) or 0.0),
-                    "min": float(getattr(hv, "min", 0.0) or 0.0) if hv else None,
-                    "max": float(getattr(hv, "max", 0.0) or 0.0) if hv else None,
-                    "num": float(getattr(hv, "num", 0.0) or 0.0) if hv else None,
-                    "sum": float(getattr(hv, "sum", 0.0) or 0.0) if hv else None,
-                    "sum_squares": float(getattr(hv, "sum_squares", 0.0) or 0.0) if hv else None,
-                }
-                # Attempt buckets
-                buckets = []
-                try:
-                    for b in getattr(hv, "buckets", []) or []:  # type: ignore[attr-defined]
-                        left = getattr(b, "left", None)
-                        right = getattr(b, "right", None)
-                        count = getattr(b, "count", None)
-                        if left is not None and right is not None and count is not None:
-                            buckets.append([float(left), float(right), float(count)])
-                except Exception:
-                    buckets = []
-                if buckets:
-                    item["buckets"] = buckets
-                points.append(item)
-            except Exception:
-                continue
-    points.sort(key=lambda p: (p.get("step", 0), p.get("wall_time", 0.0)))
-    body = {"tag": tag, "points": points}
-    # ETag keyed by tag
-    etag = _tb_etag(out_dir, extra=f"hist:{tag}")
-    if request is not None and etag:
-        inm = request.headers.get("if-none-match")
-        if inm and inm == etag:
-            raise HTTPException(status_code=304, detail="Not Modified")
-    resp = JSONResponse(body)
-    if etag:
-        resp.headers["ETag"] = etag
-    return resp
-
+    return tb_utils.histogram_series(RUN_MANAGER, run_id, tag, request)
 
 def tb_grad_matrix_for_run(run_id: str, request: Request | None = None):
-    """Aggregate per-layer grad norms logged as scalars under prefix grads/by_layer/.
-    Returns { layers: [...], steps: [...], values: number[][] }
-    """
-    r = _get_run_record(run_id)
-    out_dir = Path(r.out_dir)
-    accs = _load_event_accumulators(out_dir)
+    return tb_utils.grad_matrix(RUN_MANAGER, run_id, request)
 
-    # Collect layer names
-    layer_names: set[str] = set()
-    per_layer: dict[str, dict[int, float]] = {}
-    for acc in accs:
-        try:
-            tags = acc.Tags().get("scalars", []) or []
-        except Exception:
-            continue
-        for t in tags:
-            if isinstance(t, str) and t.startswith("grads/by_layer/"):
-                layer = t.split("grads/by_layer/", 1)[1]
-                if not layer:
-                    continue
-                layer_names.add(layer)
-                # Load series for this layer
-                try:
-                    evs = acc.Scalars(t)
-                except Exception:
-                    continue
-                layer_map = per_layer.setdefault(layer, {})
-                for ev in evs:
-                    try:
-                        s = int(getattr(ev, "step", 0) or 0)
-                        v = float(getattr(ev, "value", 0.0) or 0.0)
-                        if s not in layer_map:
-                            layer_map[s] = v
-                    except Exception:
-                        continue
-
-    if not layer_names:
-        body = {"layers": [], "steps": [], "values": []}
-        return JSONResponse(body)
-
-    layers = sorted(layer_names)
-    # Collect all steps
-    step_set: set[int] = set()
-    for layer, m in per_layer.items():
-        step_set.update(m.keys())
-    steps = sorted(step_set)
-
-    # Build matrix rows
-    values: list[list[float | None]] = []
-    for s in steps:
-        row: list[float | None] = []
-        for layer in layers:
-            v = per_layer.get(layer, {}).get(s)
-            row.append(v if isinstance(v, (int, float)) else None)
-        values.append(row)
-
-    body = {"layers": layers, "steps": steps, "values": values}
-    etag = _tb_etag(out_dir, extra="grad_matrix")
-    if request is not None:
-        inm = request.headers.get("if-none-match")
-        if inm and inm == etag:
-            raise HTTPException(status_code=304, detail="Not Modified")
-    resp = JSONResponse(body)
-    resp.headers["ETag"] = etag
-    return resp
-
-
-def tb_scalars_batch_for_run(run_id: str, tags: list[str], request: Request | None = None):
-    """Batch-fetch multiple scalar tags for a run: returns { tag: [{step,wall_time,value}, ...], ... }"""
-    r = _get_run_record(run_id)
-    out_dir = Path(r.out_dir)
-    accs = _load_event_accumulators(out_dir)
-    result: dict[str, list[dict]] = {t: [] for t in tags}
-    for tag in tags:
-        pts: list[dict] = []
-        for acc in accs:
-            try:
-                evs = acc.Scalars(tag)
-            except KeyError:
-                continue
-            except Exception:
-                continue
-            for ev in evs:
-                try:
-                    pts.append({
-                        "step": int(getattr(ev, "step", 0) or 0),
-                        "wall_time": float(getattr(ev, "wall_time", 0.0) or 0.0),
-                        "value": float(getattr(ev, "value", 0.0) or 0.0),
-                    })
-                except Exception:
-                    continue
-        pts.sort(key=lambda p: (p["step"], p["wall_time"]))
-        # de-dupe per step
-        seen = set()
-        dedup = []
-        for p in pts:
-            s = p["step"]
-            if s in seen:
-                continue
-            seen.add(s)
-            dedup.append(p)
-        result[tag] = dedup
-    body = {"series": result}
-    etag = _tb_etag(out_dir, extra=(",".join(sorted(tags))))
-    if request is not None:
-        inm = request.headers.get("if-none-match")
-        if inm and inm == etag:
-            raise HTTPException(status_code=304, detail="Not Modified")
-    resp = JSONResponse(body)
-    resp.headers["ETag"] = etag
-    return resp
+def tb_scalars_batch_for_run(run_id: str, tags: List[str], request: Request | None = None):
+    return tb_utils.scalars_batch(RUN_MANAGER, run_id, tags, request)
 
 def _deep_merge(dst: Dict[str, Any], src: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -606,7 +270,7 @@ def _build_env_overrides(req: TrainRequest) -> Dict[str, Any]:
 def _run_subprocess_sync(args: List[str], rec: RunRecord):
     rec.status = "RUNNING"
     rec.started_at = datetime.utcnow().isoformat()
-    _store_run(rec)
+    RUN_MANAGER.store(rec)
 
     python_bin = sys.executable
     out_dir = Path(rec.out_dir)
@@ -658,7 +322,7 @@ def _run_subprocess_sync(args: List[str], rec: RunRecord):
             rec.status = "FAILED"
             rec.error = repr(e)
 
-    _store_run(rec)
+    RUN_MANAGER.store(rec)
 
 # --------------- API ----------------
 
@@ -690,7 +354,7 @@ async def start_train_job(req: TrainRequest, bg: BackgroundTasks):
             "config_snapshot": str(snapshot_path),
         },
     )
-    _store_run(rec)
+    RUN_MANAGER.store(rec)
 
     # build args targeting the SNAPSHOT (not the original)
     args = [
@@ -769,7 +433,7 @@ async def start_backtest_job(req: BacktestRequest, bg: BackgroundTasks):
     # If run_id is present, start with snapshot & model, then only override with non-template values
     if getattr(req, "run_id", None):
         try:
-            prev = _get_run_record(req.run_id)
+            prev = RUN_MANAGER.get(req.run_id)
         except HTTPException:
             raise HTTPException(status_code=400, detail="run_id not found")
 
@@ -822,7 +486,7 @@ async def start_backtest_job(req: BacktestRequest, bg: BackgroundTasks):
             "resolved_policy": policy,
         },
     )
-    _store_run(rec)
+    RUN_MANAGER.store(rec)
 
     args = [
         "-m", "stockbot.backtest.run",
@@ -839,25 +503,10 @@ async def start_backtest_job(req: BacktestRequest, bg: BackgroundTasks):
     return JSONResponse({"job_id": run_id})
 
 def list_runs():
-    try:
-        return RUN_REGISTRY.list()
-    except Exception:
-        rows = sorted(RUNS.values(), key=lambda r: r.created_at, reverse=True)
-        return [
-            {
-                "id": r.id,
-                "type": r.type,
-                "status": r.status,
-                "out_dir": r.out_dir,
-                "created_at": r.created_at,
-                "started_at": r.started_at,
-                "finished_at": r.finished_at,
-            }
-            for r in rows
-        ]
+    return RUN_MANAGER.list()
 
 def get_run(run_id: str):
-    r = _get_run_record(run_id)
+    r = RUN_MANAGER.get(run_id)
     return {
         "id": r.id,
         "type": r.type,
@@ -869,12 +518,8 @@ def get_run(run_id: str):
         "error": r.error,
     }
 
-def _artifact_map_for_run(run_id: str) -> Dict[str, Path]:
-    r = _get_run_record(run_id)
-    return _artifact_paths(Path(r.out_dir))
-
 def get_artifacts(run_id: str):
-    paths = _artifact_map_for_run(run_id)
+    paths = RUN_MANAGER.artifact_map_for_run(run_id)
     def mkapi(name: str, p: Path):
         return f"/api/stockbot/runs/{run_id}/files/{name}" if p.exists() else None
     return {k: mkapi(k, v) for k, v in paths.items()}
@@ -891,7 +536,7 @@ SAFE_NAME_MAP = {
 }
 
 def get_artifact_file(run_id: str, name: str):
-    r = _get_run_record(run_id)
+    r = RUN_MANAGER.get(run_id)
     rel = SAFE_NAME_MAP.get(name)
     if not rel:
         raise HTTPException(status_code=404, detail="Unknown artifact")
@@ -902,26 +547,26 @@ def get_artifact_file(run_id: str, name: str):
 
 # Cancel a running job by pid
 def cancel_run(run_id: str):
-    r = _get_run_record(run_id)
+    r = RUN_MANAGER.get(run_id)
     if r.status in ("SUCCEEDED", "FAILED", "CANCELLED"):
         return JSONResponse({"ok": True, "status": r.status})
     pid = r.pid
     if not pid:
         r.status = "CANCELLED"
-        _store_run(r)
+        RUN_MANAGER.store(r)
         return JSONResponse({"ok": True, "status": r.status})
     try:
         import signal, os
         os.kill(int(pid), signal.SIGTERM)
         r.status = "CANCELLED"
         r.finished_at = datetime.utcnow().isoformat()
-        _store_run(r)
+        RUN_MANAGER.store(r)
         return JSONResponse({"ok": True, "status": r.status})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to cancel: {e}")
 
 def delete_run(run_id: str):
-    r = _get_run_record(run_id)
+    r = RUN_MANAGER.get(run_id)
     if r.status in ("RUNNING", "QUEUED", "PENDING"):
         raise HTTPException(status_code=400, detail="Cannot delete active run")
     try:
@@ -931,19 +576,15 @@ def delete_run(run_id: str):
                 shutil.rmtree(out_path, ignore_errors=True)
     except Exception:
         pass
-    try:
-        RUN_REGISTRY.delete(run_id)
-    except Exception:
-        pass
-    RUNS.pop(run_id, None)
+    RUN_MANAGER.remove(run_id)
     return JSONResponse({"ok": True})
 
 # Bundle everything into a ZIP and stream it
 def bundle_zip(run_id: str, include_model: bool = True) -> FileResponse:
-    r = _get_run_record(run_id)
+    r = RUN_MANAGER.get(run_id)
 
     out_dir = Path(r.out_dir)
-    paths = _artifact_paths(out_dir)
+    paths = RUN_MANAGER.artifact_paths(out_dir)
 
     tmp = NamedTemporaryFile(prefix=f"stockbot_{run_id}_", suffix=".zip", delete=False)
     tmp_path = Path(tmp.name)
