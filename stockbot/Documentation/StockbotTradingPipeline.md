@@ -50,6 +50,20 @@ flowchart LR
 - Trains via `model.learn` with `EvalCallback`, TensorBoard diagnostics and optional early stop (`StopTrainingOnRewardThreshold`).
  - Saves final policy as `ppo_policy.zip` and logs to TensorBoard/CSV.
 
+## Data & Feature Pipeline
+
+The trading pipeline depends on a consistent stream of feature‑rich market data.
+
+- **Providers** – `stockbot/ingestion/yfinance_ingestion.py` fetches adjusted OHLCV bars from YFinance. Provider contracts live
+  in `ingestion_base.py` and describe rate limits and capabilities.
+- **Feature engineering** – `stockbot/env/data_adapter.py` computes log returns, RSI, moving averages, MACD, stochastics, ATR and
+  volume z‑scores. When `FeatureConfig.use_custom_pipeline` is enabled, the optional
+  `stockbot/ingestion/feature_engineering.py` adds richer indicators and pandas_ta hooks.
+- **Data adapters** – `BarWindowSource` builds feature windows per symbol while `PanelSource` aligns multi‑asset panels and drops
+  rows with missing features.
+- **Normalization & casting** – `ObsNorm` tracks running mean/variance and freezes stats for evaluation. The `as_float32` wrapper
+  guarantees observation dtypes and shapes remain consistent.
+
 ## Request Parameters
 
 ### Training (`/api/stockbot/train`)
@@ -75,6 +89,19 @@ flowchart LR
 Common environment parameters referenced above are defined in the YAML snapshot (`EnvConfig`): `lookback`, `invest_max`, `max_step_change`, `rebalance_eps` and reward weights (`w_turnover`, `w_drawdown`, `w_vol`, `w_leverage`).
 
 ## Reinforcement-Learning Environment
+
+Environment configuration lives in dataclasses under `stockbot/env/config.py` and is serialized to YAML. Key components:
+
+- **FeeModel** – commissions, borrow fees and slippage.
+- **MarginConfig** – leverage caps, position limits and kill switches.
+- **ExecConfig** – order type, limit offsets, participation caps and impact parameter.
+- **RewardConfig** – base reward mode plus penalties for drawdown, turnover, volatility and leverage.
+- **EpisodeConfig** – lookback window, start cash and behavior knobs such as `action_space` (`weights`, `orders` or `discrete`),
+  `allow_short`, mapping mode (`simplex_cash` or `tanh_leverage`), `invest_max`, `max_step_change`, `rebalance_eps` and
+  `min_hold_bars`.
+- **FeatureConfig** – indicator list, `use_custom_pipeline` flag and `window` length.
+
+A snapshot matching these dataclasses is stored with each run (`env.example.yaml`).
 
 ### Markov Decision Process
 
