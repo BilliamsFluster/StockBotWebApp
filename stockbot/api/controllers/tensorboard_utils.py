@@ -184,47 +184,50 @@ def histogram_series(run_manager: RunManager, run_id: str, tag: str, request: Re
 
 
 def grad_matrix(run_manager: RunManager, run_id: str, request: Request | None = None):
+    """Return a compact gradient matrix (layers × steps) for a training run."""
     r = run_manager.get(run_id)
     out_dir = Path(r.out_dir)
     accs = _load_event_accumulators(out_dir)
+
+    prefix = "grads/by_layer/"
+    layer_series: Dict[str, Dict[int, float]] = {}
+    steps_set: set[int] = set()
     tags: List[str] = []
+
     for acc in accs:
         try:
             for t in acc.Tags().get("scalars", []) or []:
-                if t.startswith("grads/by_layer/"):
+                if t.startswith(prefix):
                     tags.append(t)
+                    layer = t[len(prefix) :]
+                    series = layer_series.setdefault(layer, {})
+                    try:
+                        evs = acc.Scalars(t)
+                    except KeyError:
+                        continue
+                    except Exception:
+                        continue
+                    for ev in evs:
+                        try:
+                            step = int(getattr(ev, "step", 0) or 0)
+                            val = float(getattr(ev, "value", 0.0) or 0.0)
+                        except Exception:
+                            continue
+                        series[step] = val
+                        steps_set.add(step)
         except Exception:
             continue
-    result: Dict[str, List[Dict[str, Any]]] = {}
-    for tag in tags:
-        pts: List[Dict[str, Any]] = []
-        for acc in accs:
-            try:
-                evs = acc.Scalars(tag)
-            except KeyError:
-                continue
-            except Exception:
-                continue
-            for ev in evs:
-                try:
-                    pts.append({
-                        "step": int(getattr(ev, "step", 0) or 0),
-                        "wall_time": float(getattr(ev, "wall_time", 0.0) or 0.0),
-                        "value": float(getattr(ev, "value", 0.0) or 0.0),
-                    })
-                except Exception:
-                    continue
-        pts.sort(key=lambda p: (p["step"], p["wall_time"]))
-        seen = set()
-        dedup = []
-        for p in pts:
-            s = p["step"]
-            if s in seen:
-                continue
-            seen.add(s)
-            dedup.append(p)
-        result[tag] = dedup
-    body = {"series": result}
+
+    layers = sorted(layer_series.keys())
+    steps = sorted(steps_set)
+    values: List[List[float | None]] = []
+    for s in steps:
+        row: List[float | None] = []
+        for layer in layers:
+            row.append(layer_series.get(layer, {}).get(s))
+        values.append(row)
+
+    body = {"layers": layers, "steps": steps, "values": values}
     etag = _tb_etag(out_dir, extra=(",".join(sorted(tags))))
     if request is not None:
         inm = request.headers.get("if-none-match")
