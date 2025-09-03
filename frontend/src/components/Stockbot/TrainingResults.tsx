@@ -704,7 +704,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
           <>
             <div className="grid lg:grid-cols-2 gap-6">
               <ChartCard title="Gradient Norm" tag={gradTag} color="#ef4444" />
-              {gradMatrix && gradMatrix.layers.length > 0 && gradMatrix.steps.length > 0 && (
+              {gradMatrix?.layers && gradMatrix?.steps && gradMatrix.layers.length > 0 && gradMatrix.steps.length > 0 && (
                 <Card className="p-4 space-y-2">
                   <div className="font-semibold">Gradient Norms Heatmap (layers × updates)</div>
                   <Heatmap gm={gradMatrix} />
