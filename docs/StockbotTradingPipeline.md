@@ -10,10 +10,11 @@ StockBot consists of three services and a training engine.
 
 ```mermaid
 flowchart LR
-  FE[Frontend (Next.js/React)] --> BE[Backend API (Node/Express)]
-  BE --> FA[FastAPI Service]
-  FA --> TE[Training Engine (SB3 PPO)]
-  BE --> Brokers[[Schwab / Alpaca Brokers]]
+  FE["Frontend (Next.js/React)"] --> BE["Backend API (Node/Express)"]
+  BE --> FA["FastAPI Service"]
+  FA --> TE["Training Engine (SB3 PPO)"]
+  BE --> Brokers[["Schwab / Alpaca Brokers"]]
+
 
 ```
 
@@ -138,11 +139,12 @@ Reinforcement learning models the environment as a Markov decision process: the 
 ```mermaid
 flowchart TB
   subgraph Observation
-      W[Window: (lookback, N, F)]
-      P[Portfolio vector]
+    W["Window: (lookback, N, F)"]
+    P["Portfolio vector"]
   end
-  A[Agent Action] -->|weights or logits| Env[Environment]
+  A["Agent Action"] -->|weights or logits| Env["Environment"]
   Env --> Observation
+
 ```
 
 * **Observations**
