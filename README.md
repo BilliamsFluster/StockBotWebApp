@@ -10,6 +10,8 @@ The project consists of three interconnected services:
 - **Backend** – Node.js/Express API layer with MongoDB
 - **StockBot** – Python FastAPI service for trading logic and AI
 
+For a detailed walkthrough of how these components interact during training, backtesting, and live trading, see the [StockBot Trading Pipeline](docs/stockbot-trading-pipeline.md) guide.
+
 ## ✨ Key Features
 
 ### 🤖 AI Assistant "Jarvis"
