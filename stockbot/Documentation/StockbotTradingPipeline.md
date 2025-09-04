@@ -5,11 +5,36 @@
 StockBot is a web-based deep-reinforcement-learning trading platform. Users can train policies on historical data, run backtests, and download artifacts or start live trading sessions. The system is composed of a Next.js/React front-end, a Node/Express backend that handles authentication and data access, and a Python FastAPI service that orchestrates reinforcement-learning tasks built on stable-baselines3 (SB3). This document describes the pipeline, the reinforcement-learning environment and model architecture, and guidelines for tuning hyper-parameters and shaping rewards.
 
 ```mermaid
-flowchart LR
+flowchart TD
   UI[Next.js UI] --> API[Node/Express API]
   API --> FastAPI[FastAPI Service]
-  FastAPI --> Engine[SB3 Training/Backtest]
-  FastAPI --> Broker[(Broker APIs)]
+
+  subgraph DataPipeline
+    Provider[YFinance Provider] --> Raw[Raw OHLCV Bars]
+    Raw --> FE[Feature Engineering]
+    FE -->|log returns, RSI, MAs, MACD, Stoch, ATR, vol z-score| Features
+    Features --> Norm[ObsNorm/float32]
+  end
+
+  subgraph ProbCore
+    Norm --> HMM[HMM Regime Engine]
+  end
+
+  subgraph RLCore
+    Norm --> Env[Trading Env]
+    HMM --> Env
+    Env --> Train[SB3 PPO Training]
+    Train --> Policy[Trained Policy]
+    Policy --> Backtest[Deterministic Backtest]
+    Policy --> Live[Live Trading]
+    Backtest --> Reports[Equity/Trades CSV]
+    Live --> Broker[(Broker APIs)]
+  end
+
+  FastAPI --> Train
+  FastAPI --> Backtest
+  FastAPI --> Live
+  FastAPI --> HMM
 ```
 
 ## Pipeline Architecture
