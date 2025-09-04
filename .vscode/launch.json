@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Attach to debugpy (StockBot)",
+      "type": "python",
+      "request": "attach",
+      "connect": { "host": "localhost", "port": 5678 },
+      "justMyCode": false,
+      "subProcess": true,
+      "redirectOutput": true
+    }
+  ]
+}

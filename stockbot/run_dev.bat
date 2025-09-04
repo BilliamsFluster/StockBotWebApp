@@ -28,7 +28,8 @@ IF %ERRORLEVEL% NEQ 0 (
 REM --- Step 4: Start the server using the venv's Python ---
 echo.
 echo --- Starting Uvicorn server... ---
-python -m uvicorn server:app --reload --host 0.0.0.0 --port 5002
+venv\Scripts\python.exe -Xfrozen_modules=off -m debugpy --listen localhost:5678 ^
+  -m uvicorn server:app --host 0.0.0.0 --port 5002
 
 :end
 REM --- Keep the window open to see errors ---
