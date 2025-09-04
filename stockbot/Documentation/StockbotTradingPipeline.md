@@ -1,230 +1,174 @@
 # StockBot Trading Pipeline
 
-## Overview
+**Last updated:** September 4, 2025 (America/New_York)
 
-StockBot is a web-based deep-reinforcement-learning trading platform. Users can train policies on historical data, run backtests, and download artifacts or start live trading sessions. The system is composed of a Next.js/React front-end, a Node/Express backend that handles authentication and data access, and a Python FastAPI service that orchestrates reinforcement-learning tasks built on stable-baselines3 (SB3). This document describes the pipeline, the reinforcement-learning environment and model architecture, and guidelines for tuning hyper-parameters and shaping rewards.
+StockBot is a web‑based deep‑reinforcement‑learning trading platform. Users can train policies on historical data, run backtests and start live trading sessions. The system comprises a Next.js/React front‑end, a Node/Express backend (auth, runs, artifacts, broker auth) and a Python FastAPI service that orchestrates stable‑baselines3 (SB3) training/backtests and live execution.
 
 ```mermaid
 flowchart TD
-  UI[Next.js UI] --> API[Node/Express API]
-  API --> FastAPI[FastAPI Service]
-
-  subgraph DataPipeline
-    Provider[YFinance Provider] --> Raw[Raw OHLCV Bars]
-    Raw --> FE[Feature Engineering]
-    FE -->|log returns, RSI, MAs, MACD, Stoch, ATR, vol z-score| Features
-    Features --> Norm[ObsNorm/float32]
+  %% ========= L1: USER/UI =========
+  subgraph UI["Frontend (Next.js/React)"]
+    UI_Dash["/dashboard\n(run list, status)"]
+    UI_NewTrain["/training/new\n(wizard)"]
+    UI_NewBT["/backtest/new\n(form)"]
+    UI_Run["/runs/:id\n(metrics, logs, artifacts)"]
+    UI_Live["/live\n(start/stop, positions)"]
+    UI_Broker["/settings/brokers\n(Schwab/Alpaca OAuth)"]
   end
 
-  subgraph ProbCore
-    Norm --> HMM[HMM Regime Engine]
+  %% ========= L2: BACKEND =========
+  subgraph BE["Node/Express API + MongoDB"]
+    BE_Auth["/api/auth/*\nJWT, users"]
+    BE_Runs["/api/runs/*\ncreate/list/get"]
+    BE_Train["POST /api/stockbot/train\nproxy->FastAPI"]
+    BE_BT["POST /api/stockbot/backtest\nproxy->FastAPI"]
+    BE_LiveStart["POST /api/stockbot/live/start\nproxy->FastAPI"]
+    BE_LiveStop["POST /api/stockbot/live/stop\nproxy->FastAPI"]
+    BE_LiveStat["GET /api/stockbot/live/status"]
+    BE_Artifacts["GET /api/artifacts/:runId/*\nzip, csv, tb"]
+    BE_WS["wss://.../runs/:id\nstatus stream"]
+    BE_BrokerAuth["/api/broker/{schwab|alpaca}/*\nOAuth"]
+    BE_ProbTrain["POST /api/prob/train\nproxy->FastAPI"]
+    BE_ProbInfer["POST /api/prob/infer\nproxy->FastAPI"]
+    DB[("MongoDB\nruns, users,\nmodels, tokens")]
+    FS[("Artifacts FS/S3\nruns/<id>/...")]
   end
 
-  subgraph RLCore
-    Norm --> Env[Trading Env]
-    HMM --> Env
-    Env --> Train[SB3 PPO Training]
-    Train --> Policy[Trained Policy]
-    Policy --> Backtest[Deterministic Backtest]
-    Policy --> Live[Live Trading]
-    Backtest --> Reports[Equity/Trades CSV]
-    Live --> Broker[(Broker APIs)]
+  %% ========= L3: ORCHESTRATOR =========
+  subgraph FA["FastAPI Orchestrator"]
+    FA_Train["POST /api/stockbot/train\nspawn train job"]
+    FA_BT["POST /api/stockbot/backtest\nspawn bt job"]
+    FA_LiveStart["POST /api/stockbot/live/start\nstart loop"]
+    FA_LiveStop["POST /api/stockbot/live/stop\nstop loop"]
+    FA_LiveStat["GET /api/stockbot/live/status"]
+    FA_ProbTrain["POST /api/prob/train\nHMM fit"]
+    FA_ProbInfer["POST /api/prob/infer\nHMM infer"]
+    FA_WS["ws://.../jobs/:id\nstdout/logs"]
   end
 
-  FastAPI --> Train
-  FastAPI --> Backtest
-  FastAPI --> Live
-  FastAPI --> HMM
+  %% ========= L4: ENGINES =========
+  subgraph PIPE["Data & Feature Pipeline"]
+    ING["Provider\n(YFinance, Alpaca, Schwab)"]
+    RAW["Raw OHLCV"]
+    FE["Feature Eng.\nreturns, RSI, MAs,\nMACD, Stoch, ATR, vol z"]
+    NORM["ObsNorm\n(mean/var freeze)"]
+    HMM["HMM/Regime\nfit/infer (optional)"]
+  end
+
+  subgraph RL["RL Core (SB3)"]
+    ENV["Env Builder\nStock/Portfolio\nmapping, fees, limits"]
+    PPO["PPO Learn\n(MLP/CNN/LSTM)"]
+    EVAL["EvalCallback\nchkpt, early-stop"]
+    POL["Policy.zip\n(on disk)"]
+    BT["Deterministic Backtest"]
+    REP["Reports:\nequity.csv, trades.csv,\nsummary.json, tb/"]
+  end
+
+  subgraph EXEC["Live Execution Engine"]
+    SIG["Signal Gen.\nπ(o)->weights/actions"]
+    RISK["Risk Mgmt\nmax lev, dd kill,\nposition/turnover caps"]
+    OMS["Order Builder\nMKT/LMT/TWAP, offsets"]
+    ADAPT["Broker Adapter\n(Schwab/Alpaca)"]
+    BROKER[("Broker API\nfills, pos, cash")]
+    PNL["Portfolio State\nNAV, dd, exposure"]
+  end
+
+  %% ========= WIRES =========
+  UI_Dash -->|fetch runs| BE_Runs
+  UI_NewTrain -->|submit| BE_Train
+  UI_NewBT -->|submit| BE_BT
+  UI_Run -->|subscribe| BE_WS
+  UI_Live -->|start/stop/status| BE_LiveStart & BE_LiveStop & BE_LiveStat
+  UI_Broker -->|OAuth flows| BE_BrokerAuth
+
+  BE_Train --> FA_Train
+  BE_BT --> FA_BT
+  BE_LiveStart --> FA_LiveStart
+  BE_LiveStop --> FA_LiveStop
+  BE_LiveStat --> FA_LiveStat
+  BE_ProbTrain --> FA_ProbTrain
+  BE_ProbInfer --> FA_ProbInfer
+  BE_Runs <-.-> DB
+  BE_Artifacts <-.-> FS
+
+  FA_Train -->|spawn| ING
+  FA_Train --> ENV
+  ING --> RAW --> FE --> NORM --> ENV
+  FA_ProbTrain --> FE
+  FE --> HMM
+  HMM --> ENV
+  ENV --> PPO --> EVAL --> POL
+  PPO -->|tb/metrics| REP
+  POL --> BT --> REP
+  REP -.-> FS
+  FA_WS -.-> BE_WS
+
+  FA_LiveStart --> ING
+  FA_LiveStart --> ENV
+  POL --> SIG
+  ENV --> SIG --> RISK --> OMS --> ADAPT --> BROKER --> PNL --> SIG
+  PNL -->|telemetry| FA_LiveStat
+  FA_LiveStop -.-> EXEC
 ```
 
-## Pipeline Architecture
+<!-- More content will be appended after writing this core section -->
 
-### 1. Front-end (Next.js/React)
-- Presents **New Training** and **New Backtest** forms.
-- Submits parameters (symbols, date ranges, policy type, etc.) to the backend.
-- Streams job status via REST or WebSocket and allows downloading run artifacts.
+## 1) Front‑End (Next.js/React)
 
-### 2. Backend API (Node/Express)
-- Acts as the primary API gateway with JWT authentication and MongoDB persistence.
-- Forwards training, backtest and live trading requests to the FastAPI service via Axios.
-- Proxies WebSocket connections for real-time run status and exposes routes for run management, TensorBoard data and AI insights.
-- Hosts broker endpoints for Schwab and Alpaca integration.
+### Pages
+- `/dashboard`: run list, latest status, quick links.
+- `/training/new`: multi‑step wizard; client‑side validation; preview YAML snapshot.
+- `/backtest/new`: model selector + evaluation slice.
+- `/runs/:id`: live logs (WS/SSE), charts (equity/drawdown), artifacts download.
+- `/live`: start/stop, current positions, PnL, exposure, recent fills.
+- `/settings/brokers`: Schwab/Alpaca OAuth connect + token state.
 
-### 3. FastAPI Service
-- Orchestrates reinforcement-learning tasks and broker operations.
+### Patterns
+- TanStack Query for data fetching/caching.
+- WebSocket to `/runs/:id` for status/log lines.
+- File downloads proxied by backend (`/api/artifacts/:runId/*`).
 
-**Training endpoint** (`/api/stockbot/train`)
-- Merges overrides into an `EnvConfig` snapshot, infers train/eval splits, logs metadata and launches a Python subprocess.
-- Subprocess runs `stockbot/rl/train_ppo.py`; environment variables are prepared and stdout/stderr are streamed to `job.log`.
-- Run status, artifact paths and bundles are exposed via REST and WebSocket/SSE.
+## 2) Backend API (Node/Express)
 
-**Back-test endpoint** (`/api/stockbot/backtest`)
-- Loads a saved model or baseline and builds an evaluation environment from the same configuration snapshot.
-- Executes a deterministic episode (`stockbot/backtest/run.py`) producing equity, orders and trade CSVs plus summary metrics.
+### Auth & Users
+| Route              | Method | Purpose        |
+|-------------------|--------|----------------|
+| /api/auth/login   | POST   | JWT issue      |
+| /api/auth/refresh | POST   | Refresh token  |
+| /api/auth/me      | GET    | Current user   |
 
-**Live trading endpoints** (`/api/stockbot/trade/*`)
-- Start or stop trading sessions and query current status using a deployed policy against broker APIs.
+### Runs & Artifacts
+| Route                            | Method | Purpose        |
+|----------------------------------|--------|----------------|
+| /api/runs                        | GET    | List runs      |
+| /api/runs                        | POST   | Create metadata|
+| /api/runs/:id                    | GET    | Get run        |
+| /api/artifacts/:id/zip           | GET    | Zip bundle     |
+| /api/artifacts/:id/:path*        | GET    | Direct file    |
 
-### 4. Training Engine (SB3 PPO)
-- Invoked as `python -m stockbot.rl.train_ppo`.
-- Loads YAML configuration into an `EnvConfig` dataclass defining symbols, date range, features and reward weights.
-- Infers train/eval splits (last calendar year or 80/20 split).
-- Builds environments via `make_env`, choosing `StockTradingEnv` or `PortfolioTradingEnv`, optionally wrapping with `ObsNorm` and `Monitor`.
-- Creates policy: choose MLP, `WindowCNN`, or `WindowLSTM` feature extractors. `WindowLSTMExtractor` processes `(L,N,F)` windows through an LSTM to provide temporal memory.
-- Configures PPO hyper-parameters (`n_steps`, `learning_rate`, `gamma`, `gae_lambda`, `clip_range`, `ent_coef`, `vf_coef`, `max_grad_norm`, `dropout`, etc.).
-- Trains via `model.learn` with `EvalCallback`, TensorBoard diagnostics and optional early stop (`StopTrainingOnRewardThreshold`).
- - Saves final policy as `ppo_policy.zip` and logs to TensorBoard/CSV.
+### Orchestration (proxied to FastAPI)
+| Route                        | Method | Purpose           |
+|-----------------------------|--------|--------------------|
+| /api/stockbot/train         | POST   | Start train job    |
+| /api/stockbot/backtest      | POST   | Start backtest     |
+| /api/stockbot/live/start    | POST   | Launch loop        |
+| /api/stockbot/live/stop     | POST   | Stop loop          |
+| /api/stockbot/live/status   | GET    | Live state         |
+| /api/prob/train             | POST   | Fit HMM            |
+| /api/prob/infer             | POST   | Infer regimes      |
 
-## Data & Feature Pipeline
+### Brokers
+| Route                                | Method | Purpose        |
+|--------------------------------------|--------|----------------|
+| /api/broker/schwab/auth              | GET    | OAuth start    |
+| /api/broker/schwab/callback          | GET    | OAuth callback |
+| /api/broker/alpaca/auth              | GET    | OAuth start    |
+| /api/broker/alpaca/callback          | GET    | OAuth callback |
 
-The trading pipeline depends on a consistent stream of feature‑rich market data.
+### Persistence
+- **MongoDB**: users, runs, live_sessions, tokens, models.
+- **Artifacts**: runs/<runId>/env.yaml, policy.zip, equity.csv, trades.csv, summary.json, tb/, job.log.
 
-- **Providers** – `stockbot/ingestion/yfinance_ingestion.py` fetches adjusted OHLCV bars from YFinance. Provider contracts live
-  in `ingestion_base.py` and describe rate limits and capabilities.
-- **Feature engineering** – `stockbot/env/data_adapter.py` computes log returns, RSI, moving averages, MACD, stochastics, ATR and
-  volume z‑scores. When `FeatureConfig.use_custom_pipeline` is enabled, the optional
-  `stockbot/ingestion/feature_engineering.py` adds richer indicators and pandas_ta hooks.
-- **Data adapters** – `BarWindowSource` builds feature windows per symbol while `PanelSource` aligns multi‑asset panels and drops
-  rows with missing features.
-- **Normalization & casting** – `ObsNorm` tracks running mean/variance and freezes stats for evaluation. The `as_float32` wrapper
-  guarantees observation dtypes and shapes remain consistent.
+### Streaming
+- `wss://.../runs/:id`: job status + log tails (proxied from FastAPI’s `/jobs/:id`).
 
-## Request Parameters
-
-### Training (`/api/stockbot/train`)
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `symbols` | list[str] | Ticker symbols to include in the environment. |
-| `start_date` / `end_date` | str | ISO dates delimiting the data slice. |
-| `policy` | str | Feature extractor: `mlp`, `window_cnn`, or `window_lstm`. |
-| `total_timesteps` | int | Number of environment steps for learning. |
-| `eval_freq` | int | Steps between evaluation runs and model checkpoints. |
-| `seed` | int | Random seed for reproducibility. |
-
-### Backtest (`/api/stockbot/backtest`)
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `model_path` | str | Path to a saved policy or baseline name. |
-| `symbols` | list[str] | Optional override of tickers for evaluation. |
-| `start_date` / `end_date` | str | Optional date range override. |
-| `deterministic` | bool | Use deterministic actions during evaluation. |
-
-Common environment parameters referenced above are defined in the YAML snapshot (`EnvConfig`): `lookback`, `invest_max`, `max_step_change`, `rebalance_eps` and reward weights (`w_turnover`, `w_drawdown`, `w_vol`, `w_leverage`).
-
-## Reinforcement-Learning Environment
-
-Environment configuration lives in dataclasses under `stockbot/env/config.py` and is serialized to YAML. Key components:
-
-- **FeeModel** – commissions, borrow fees and slippage.
-- **MarginConfig** – leverage caps, position limits and kill switches.
-- **ExecConfig** – order type, limit offsets, participation caps and impact parameter.
-- **RewardConfig** – base reward mode plus penalties for drawdown, turnover, volatility and leverage.
-- **EpisodeConfig** – lookback window, start cash and behavior knobs such as `action_space` (`weights`, `orders` or `discrete`),
-  `allow_short`, mapping mode (`simplex_cash` or `tanh_leverage`), `invest_max`, `max_step_change`, `rebalance_eps` and
-  `min_hold_bars`.
-- **FeatureConfig** – indicator list, `use_custom_pipeline` flag and `window` length.
-
-A snapshot matching these dataclasses is stored with each run (`env.example.yaml`).
-
-### Markov Decision Process
-
-Reinforcement learning assumes the environment is a Markov decision process: at each step the agent observes a state, chooses an action, receives a reward and transitions to a new state. The Markov property states that the next state and reward depend only on the current state and action.
-
-### Environment Builder
-
-`make_env` builds either `StockTradingEnv` (single asset) or `PortfolioTradingEnv` (multi‑asset) using market data from the YAML configuration (via the YFinance provider). Observations are returned as a dictionary:
-
-- **window** – tensor `(lookback, N, F)` with the last `lookback` bars for `N` assets and `F` features (OHLCV plus indicators).
-- **portfolio** – vector summarizing cash fraction, gross leverage, current drawdown and current weights.
-
-Actions differ by environment:
-
-- `StockTradingEnv`: `action_space="weights"` or `"discrete"`. Continuous mode uses a scalar in [-1,+1] representing the target position (short/flat/long); discrete mode maps {0,1,2} to short/flat/long.
-- `PortfolioTradingEnv`: action vector of length `N` (or `N+1` depending on mapping). Logits map to weights via:
-  - **simplex_cash** (default) – sigmoid gate controls investment fraction and softmax yields non‑negative weights summing to ≤ `invest_max`; a turnover cap (`max_step_change`) limits thrashing.
-  - **tanh_leverage** – logits pass through `tanh` allowing long/short exposure; weights may be negative but are clipped to obey a gross leverage limit (`invest_max` ignored).
-
-Reward shaping is configured in YAML. Base reward is delta NAV or log NAV. Optional penalties:
-
-- `w_drawdown` – multiplies current drawdown to discourage large equity drops.
-- `w_turnover` – penalizes absolute weight changes to reduce over-trading.
-- `w_vol` – penalizes recent return volatility.
-- `w_leverage` – penalizes gross exposure beyond leverage cap.
-
-## Back-testing Engine
-
-`stockbot/backtest/run.py` loads a saved policy or baseline strategy and runs a deterministic episode in the evaluation environment. It records equity, cash and weights each step, writes CSVs, reconstructs orders/trades and computes metrics: total return, annualized volatility, Sharpe/Sortino ratios, max drawdown, turnover, hit rate and average trade P&L. Policies can be compared against baselines such as equal-weight or buy‑and‑hold.
-
-## Probabilistic Core (Markov/HMM Regimes)
-
-A standalone module estimates market regimes and one‑step‑ahead edge using a Hidden Markov Model.
-
-- **State design** – `stockbot/prob/markov_states.py` enumerates discrete regimes (e.g., up/down/flat) and provides optional discretization helpers.
-- **Transition & emissions** – `stockbot/prob/estimation.py` fits the transition matrix and Gaussian emission parameters via maximum likelihood, saving artifacts such as `transition.npy`, `emissions.pkl` and `state_meta.json`.
-- **Inference & forecasting** – `stockbot/prob/inference.py` performs forward filtering to produce posterior regime probabilities, expected next return and volatility.
-- **APIs** – FastAPI routes `/prob/train` and `/prob/infer` expose training and inference endpoints for the probability engine.
-- **Walk‑forward evaluation** – `stockbot/prob/walkforward.py` executes rolling train/test splits and reports log‑likelihood metrics.
-
-This probabilistic engine produces interpretable regime probabilities that can augment or substitute for reinforcement‑learning policies.
-
-## Hyper-parameter Tuning
-
-
-
-
-### Major PPO Parameters
-- `n_steps` – environment steps per update. Larger values stabilize gradient estimates at the cost of memory; `4096` used in final runs.
-- `batch_size` – SGD mini-batch size; should divide `n_steps`, typically `n_steps/4`.
-- `learning_rate` – step size for gradient descent. `3e-5`–`5e-5` effective after `1e-4` caused clipping.
-- `gamma` – discount factor; `0.995`–`0.997` encourages long-term returns.
-- `gae_lambda` – bias/variance trade-off for GAE; `0.98`–`0.985` yields smoother updates.
-- `clip_range` – PPO clip parameter; `0.15`–`0.3`.
-- `ent_coef` – entropy coefficient (`0.02`–`0.05`) to encourage exploration.
-- `vf_coef` – weight on value loss (`0.8`–`1.0`) for better advantage estimates.
-- `max_grad_norm` – gradient clipping threshold (`1.0` to prevent explosions).
-- `dropout` – regularizes feature extractor networks.
-- `seed` – reproducibility.
-
-### Environment and Reward Parameters
-- `mapping_mode` – `simplex_cash` for long-only with cash; `tanh_leverage` allows shorting.
-- `invest_max` – max fraction of equity invested (simplex_cash).
-- `max_step_change` – caps per-step weight changes.
-- `rebalance_eps` – minimum weight change before rebalancing.
-- `w_turnover`, `w_drawdown`, `w_vol` – reward penalties for turnover, drawdown and volatility.
-- `lookback` – number of past bars in the observation window.
-
-## Model Architectures
-- **WindowCNNExtractor** – treats `(L,N,F)` window as multi‑channel image for 2D convolutions before merging with portfolio features.
-- **WindowLSTMExtractor** – flattens to `(L, N*F)` and feeds into LSTM for long-term dependencies.
-- **MLP** – default SB3 extractor for simple use cases.
-
-## Diagnostics and Debugging
-The Milvus RL debugging guide recommends:
-
-- Inspect reward signals to ensure they align with the trading objective.
-- Verify environment transitions (cash, positions, equity) with unit tests.
-- Monitor exploration/exploitation by plotting policy entropy and action histograms; adjust `ent_coef` if entropy collapses.
-- Tune hyper-parameters when returns oscillate or gradients explode. Lowering learning rate, increasing `n_steps` and raising `vf_coef` improved stability in experiments.
-
-## Winning Example: Tuning Summary
-Best run used the CNN extractor (`window_cnn`) with:
-
-- `learning_rate = 3e‑5`
-- `n_steps = 4096`, `batch_size = 1024`
-- `gamma = 0.997`, `gae_lambda = 0.985`
-- `clip_range = 0.15`, `ent_coef = 0.04`, `vf_coef = 1.0`
-- `max_grad_norm = 1.0`
-- Environment mapping `simplex_cash` with `invest_max = 0.70`, `max_step_change = 0.08`, `rebalance_eps = 0.02`
-- Reward penalties `w_turnover = 0.001`, `w_drawdown = 0.10`
-
-This configuration encouraged long-term planning, careful policy updates and strong risk control. The policy held positions longer, traded infrequently and achieved positive risk-adjusted returns on out-of-sample assets (e.g., XOM/CVX). However, because `simplex_cash` prohibits short selling, the model lost money during broad downturns; enabling shorting (`tanh_leverage`) or adding hedging assets can improve bear-market performance.
-
-## Visualization and Graphs
-
-Training runs log metrics to **TensorBoard**, producing graphs for episodic reward, value/policy loss, entropy and gradient norms. The `DiagnosticsCallback` optionally adds action histograms and weight distributions.  
-Backtests output `equity.csv` and `drawdown.csv` for plotting equity curves, drawdown profiles and per-asset weight trajectories. These visualizations help users assess policy behavior and compare against baseline strategies.
-
-## Conclusion and Recommendations
-StockBot integrates deep reinforcement learning into a full web application. A carefully designed environment and reward structure, combined with appropriate hyper-parameter tuning, are essential for profitable behaviour. Use baselines for comparison, monitor diagnostics (rewards, gradients, entropy, weight histograms) and validate environment logic with unit tests. With the provided pipeline, researchers and practitioners can experiment with architectures, reward functions and market universes to craft robust trading strategies.
