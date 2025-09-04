@@ -300,7 +300,7 @@ function HighlightCard({ title, items }: { title: string; items?: string[] }) {
       <CardContent>
         {items && items.length ? (
           <div>
-            <ScrollArea className={`${maxHeight} pr-4`}>
+            <div className="overflow-y-auto pr-4" style={{ maxHeight: expanded ? '20rem' : '10rem' }}>
               <ul className="space-y-2 text-sm list-disc pl-4">
                 {items.map((item, i) => (
                   <li key={i} className="leading-relaxed">
@@ -308,7 +308,7 @@ function HighlightCard({ title, items }: { title: string; items?: string[] }) {
                   </li>
                 ))}
               </ul>
-            </ScrollArea>
+            </div>
             {items.length > 4 && (
               <Button
                 variant="ghost"
