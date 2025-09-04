@@ -132,7 +132,22 @@ Reward shaping is configured in YAML. Base reward is delta NAV or log NAV. Optio
 
 `stockbot/backtest/run.py` loads a saved policy or baseline strategy and runs a deterministic episode in the evaluation environment. It records equity, cash and weights each step, writes CSVs, reconstructs orders/trades and computes metrics: total return, annualized volatility, Sharpe/Sortino ratios, max drawdown, turnover, hit rate and average trade P&L. Policies can be compared against baselines such as equal-weight or buy‑and‑hold.
 
+## Probabilistic Core (Markov/HMM Regimes)
+
+A standalone module estimates market regimes and one‑step‑ahead edge using a Hidden Markov Model.
+
+- **State design** – `stockbot/prob/markov_states.py` enumerates discrete regimes (e.g., up/down/flat) and provides optional discretization helpers.
+- **Transition & emissions** – `stockbot/prob/estimation.py` fits the transition matrix and Gaussian emission parameters via maximum likelihood, saving artifacts such as `transition.npy`, `emissions.pkl` and `state_meta.json`.
+- **Inference & forecasting** – `stockbot/prob/inference.py` performs forward filtering to produce posterior regime probabilities, expected next return and volatility.
+- **APIs** – FastAPI routes `/prob/train` and `/prob/infer` expose training and inference endpoints for the probability engine.
+- **Walk‑forward evaluation** – `stockbot/prob/walkforward.py` executes rolling train/test splits and reports log‑likelihood metrics.
+
+This probabilistic engine produces interpretable regime probabilities that can augment or substitute for reinforcement‑learning policies.
+
 ## Hyper-parameter Tuning
+
+
+
 
 ### Major PPO Parameters
 - `n_steps` – environment steps per update. Larger values stabilize gradient estimates at the cost of memory; `4096` used in final runs.
