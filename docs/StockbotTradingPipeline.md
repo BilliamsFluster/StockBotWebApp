@@ -10,10 +10,11 @@ StockBot consists of three services and a training engine.
 
 ```mermaid
 flowchart LR
-    FE[Frontend (Next.js/React)] --> BE[Backend API (Node/Express)]
-    BE --> FA[FastAPI Service]
-    FA --> TE[Training Engine (SB3 PPO)]
-    BE --> Brokers[[Schwab / Alpaca Brokers]]
+  FE[Frontend (Next.js/React)] --> BE[Backend API (Node/Express)]
+  BE --> FA[FastAPI Service]
+  FA --> TE[Training Engine (SB3 PPO)]
+  BE --> Brokers[[Schwab / Alpaca Brokers]]
+
 ```
 
 * **Frontend** – collects user input for training and backtesting and streams job status.
@@ -70,10 +71,10 @@ Market data flows through a series of adapters and feature engines.
 
 ```mermaid
 flowchart LR
-    YF[YFinance Provider] --> FE[Feature Engineering]
-    FE --> DS[Data Sources]
-    DS --> Norm[Normalization & Casting]
-    Norm --> Env[Trading Environment]
+  YF[YFinance Provider] --> FE[Feature Engineering]
+  FE --> DS[Data Sources]
+  DS --> Norm[Normalization & Casting]
+  Norm --> Env[Trading Environment]
 ```
 
 * **Providers** – `stockbot/ingestion/yfinance_ingestion.py` fetches adjusted OHLCV bars from Yahoo Finance. Provider interfaces live in `ingestion_base.py` and define rate limits and capabilities.
@@ -136,12 +137,12 @@ Reinforcement learning models the environment as a Markov decision process: the 
 
 ```mermaid
 flowchart TB
-    subgraph Observation
-        W[Window: (lookback, N, F)]
-        P[Portfolio vector]
-    end
-    A[Agent Action] -->|weights or logits| Env[Environment]
-    Env --> Observation
+  subgraph Observation
+      W[Window: (lookback, N, F)]
+      P[Portfolio vector]
+  end
+  A[Agent Action] -->|weights or logits| Env[Environment]
+  Env --> Observation
 ```
 
 * **Observations**
