@@ -38,4 +38,17 @@ def prepare_from_payload(payload: Dict) -> Tuple[np.ndarray, Dict]:
     )
     lookback = ds.get("lookback", 2)
     X, meta = build_features(parquet_map, lookback, spec)
+
+    regime = payload.get("regime")
+    if regime:
+        from stockbot.signals.hmm_regime import HMMConfig, GaussianDiagHMM  # lazy import
+
+        cfg = regime.get("config", {})
+        hmm = GaussianDiagHMM(HMMConfig(**cfg))
+        T = X.shape[0]
+        X2d = X.reshape(T, -1)
+        hmm.fit(X2d)
+        meta["regime_posteriors"] = hmm.predict_proba(X2d)
+        meta["hmm_model"] = hmm
+
     return X, meta
