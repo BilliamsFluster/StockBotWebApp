@@ -13,8 +13,8 @@ interface DatasetProps {
   setStart: (v: string) => void;
   end: string;
   setEnd: (v: string) => void;
-  interval: string;
-  setInterval: (v: string) => void;
+  interval: "1d" | "1h" | "15m";
+  setInterval: (v: "1d" | "1h" | "15m") => void;
   adjusted: boolean;
   setAdjusted: (v: boolean) => void;
   lookback: number;
@@ -106,30 +106,32 @@ export function DatasetSection({
   );
 }
 
-interface InputGroupProps {
+type InputGroupValue = string | "1d" | "1h" | "15m";
+
+interface InputGroupProps<T extends InputGroupValue = string> {
   label: string;
   tooltip: string;
-  value: string;
-  onChange: (v: string) => void;
+  value: T;
+  onChange: (v: T) => void;
   placeholder?: string;
   type?: string;
 }
 
-function InputGroup({
+function InputGroup<T extends InputGroupValue = string>({
   label,
   tooltip,
   value,
   onChange,
   placeholder,
   type = "text",
-}: InputGroupProps) {
+}: InputGroupProps<T>) {
   return (
     <div className="flex flex-col gap-1">
       <TooltipLabel tooltip={tooltip}>{label}</TooltipLabel>
       <Input
         type={type}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => onChange(e.target.value as T)}
         placeholder={placeholder}
         className="w-full"
       />

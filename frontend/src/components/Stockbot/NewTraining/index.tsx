@@ -14,19 +14,26 @@ import { CostsExecutionSection } from "./CostsExecutionSection";
 import { CVStressSection } from "./CVStressSection";
 import { RegimeSection } from "./RegimeSection";
 import { ModelSection } from "./ModelSection";
-import { SizingSection } from "./SizingSection";
-import { RewardLoggingSection } from "./RewardLoggingSection";
+import { SizingSection, DEFAULT_SIZING } from "./SizingSection";
+import { RewardLoggingSection, DEFAULT_REWARD  } from "./RewardLoggingSection";
 import { DownloadsSection } from "./DownloadsSection";
 import { buildTrainPayload, type TrainPayload } from "./payload";
 
 const TERMINAL: Array<JobStatusResponse["status"]> = ["SUCCEEDED", "FAILED", "CANCELLED"];
+const ppoDivisible = (n: number, b: number) => n > 0 && b > 0 && n % b === 0;
 
-export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: (id: string) => void; onCancel: () => void; }) {
+export default function NewTraining({
+  onJobCreated,
+  onCancel,
+}: {
+  onJobCreated: (id: string) => void;
+  onCancel: () => void;
+}) {
   // ===== Dataset =====
   const [symbols, setSymbols] = useState("AAPL,MSFT,SPY");
   const [start, setStart] = useState("2015-01-01");
   const [end, setEnd] = useState("2025-01-01");
-  const [interval, setInterval] = useState("1d");
+  const [interval, setInterval] = useState<"1d" | "1h" | "15m">("1d");
   const [adjusted, setAdjusted] = useState(true);
   const [lookback, setLookback] = useState(64);
   const [trainSplit, setTrainSplit] = useState("last_year");
@@ -45,7 +52,8 @@ export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: 
   const [makerRebateBps, setMakerRebateBps] = useState(-0.2);
   const [halfSpreadBps, setHalfSpreadBps] = useState(0.5);
   const [impactK, setImpactK] = useState(8.0);
-  const [fillPolicy, setFillPolicy] = useState<"next_open" | "vwap_window">("next_open");
+  const [fillPolicy, setFillPolicy] =
+    useState<"next_open" | "vwap_window">("next_open");
   const [vwapMinutes, setVwapMinutes] = useState(15);
   const [maxParticipation, setMaxParticipation] = useState(0.1);
 
@@ -56,11 +64,13 @@ export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: 
   // ===== Regime =====
   const [regimeEnabled, setRegimeEnabled] = useState(true);
   const [regimeStates, setRegimeStates] = useState(3);
-  const [regimeFeatures, setRegimeFeatures] = useState("ret,vol,dispersion");
+  const [regimeFeatures, setRegimeFeatures] =
+    useState("ret,vol,dispersion");
   const [appendBeliefs, setAppendBeliefs] = useState(true);
 
   // ===== Model =====
-  const [policy, setPolicy] = useState<"mlp" | "window_cnn" | "window_lstm">("window_cnn");
+  const [policy, setPolicy] =
+    useState<"mlp" | "window_cnn" | "window_lstm">("window_cnn");
   const [totalTimesteps, setTotalTimesteps] = useState(1_000_000);
   const [nSteps, setNSteps] = useState(4096);
   const [batchSize, setBatchSize] = useState(1024);
@@ -74,30 +84,44 @@ export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: 
   const [dropout, setDropout] = useState(0.1);
   const [seed, setSeed] = useState<number | undefined>(undefined);
 
-  // ===== Sizing =====
-  const [mappingMode, setMappingMode] = useState<"simplex_cash" | "tanh_leverage">("simplex_cash");
-  const [investMax, setInvestMax] = useState(0.7);
-  const [grossLevCap, setGrossLevCap] = useState(1.5);
-  const [maxStepChange, setMaxStepChange] = useState(0.08);
-  const [rebalanceEps, setRebalanceEps] = useState(0.02);
-  const [kellyEnabled, setKellyEnabled] = useState(true);
-  const [kellyLambda, setKellyLambda] = useState(0.5);
-  const [kellyFMax, setKellyFMax] = useState(1.0);
-  const [kellyEmaAlpha, setKellyEmaAlpha] = useState(0.9);
-  const [volEnabled, setVolEnabled] = useState(true);
-  const [volTarget, setVolTarget] = useState(0.1);
-  const [volMin, setVolMin] = useState(0.0);
-  const [clampMin, setClampMin] = useState(0.0);
-  const [clampMax, setClampMax] = useState(0.0);
-  const [dailyLoss, setDailyLoss] = useState(1.0);
-  const [perNameCap, setPerNameCap] = useState(0.1);
+  // ===== Sizing (init from defaults) =====
+  const [mappingMode, setMappingMode] =
+    useState<"simplex_cash" | "tanh_leverage">(DEFAULT_SIZING.mappingMode);
+  const [investMax, setInvestMax] = useState(DEFAULT_SIZING.investMax);
+  const [grossLevCap, setGrossLevCap] = useState(DEFAULT_SIZING.grossLevCap);
+  const [maxStepChange, setMaxStepChange] =
+    useState(DEFAULT_SIZING.maxStepChange);
+  const [rebalanceEps, setRebalanceEps] =
+    useState(DEFAULT_SIZING.rebalanceEps);
+
+  const [kellyEnabled, setKellyEnabled] =
+    useState(DEFAULT_SIZING.kellyEnabled);
+  const [kellyLambda, setKellyLambda] = useState(DEFAULT_SIZING.kellyLambda);
+  const [kellyFMax, setKellyFMax] = useState(DEFAULT_SIZING.kellyFMax);
+  const [kellyEmaAlpha, setKellyEmaAlpha] =
+    useState(DEFAULT_SIZING.kellyEmaAlpha);
+
+  const [volEnabled, setVolEnabled] = useState(DEFAULT_SIZING.volEnabled);
+  const [volTarget, setVolTarget] = useState(DEFAULT_SIZING.volTarget);
+  const [volMin, setVolMin] = useState(DEFAULT_SIZING.volMin);
+  const [clampMin, setClampMin] = useState(DEFAULT_SIZING.clampMin);
+  const [clampMax, setClampMax] = useState(DEFAULT_SIZING.clampMax);
+
+  const [dailyLoss, setDailyLoss] = useState(DEFAULT_SIZING.dailyLoss);
+  const [perNameCap, setPerNameCap] = useState(DEFAULT_SIZING.perNameCap);
 
   // ===== Reward & Logging =====
-  const [rewardBase, setRewardBase] = useState<"delta_nav" | "log_nav">("log_nav");
-  const [wDrawdown, setWDrawdown] = useState(0.1);
-  const [wTurnover, setWTurnover] = useState(0.001);
-  const [wVol, setWVol] = useState(0.0);
-  const [wLeverage, setWLeverage] = useState(0.0);
+  const [rewardBase, setRewardBase] =
+    useState<"delta_nav" | "log_nav">(
+      (DEFAULT_REWARD?.rewardMode as "delta_nav" | "log_nav") ?? "log_nav"
+    );
+  const [wDrawdown, setWDrawdown] =
+    useState(DEFAULT_REWARD?.wDrawdown ?? 0.10);
+  const [wTurnover, setWTurnover] =
+    useState(DEFAULT_REWARD?.wTurnover ?? 0.005);
+  const [wVol, setWVol] = useState(DEFAULT_REWARD?.wVol ?? 0.0);
+  const [wLeverage, setWLeverage] =
+    useState(DEFAULT_REWARD?.wLeverage ?? 0.0);
   const [saveTb, setSaveTb] = useState(true);
   const [saveActions, setSaveActions] = useState(true);
   const [saveRegime, setSaveRegime] = useState(true);
@@ -157,7 +181,7 @@ export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: 
     };
 
     try {
-      const wsUrl = buildUrl(`/api/stockbot/runs/${jobId}/ws`).replace(/^http/, 'ws');
+      const wsUrl = buildUrl(`/api/stockbot/runs/${jobId}/ws`).replace(/^http/, "ws");
       ws = new WebSocket(wsUrl);
       ws.onmessage = (ev) => {
         try {
@@ -171,13 +195,17 @@ export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: 
                 setArtifacts(a);
               } catch {}
             })();
-            try { ws && ws.close(); } catch {}
+            try {
+              ws && ws.close();
+            } catch {}
             running = false;
           }
         } catch {}
       };
       ws.onerror = () => {
-        try { ws && ws.close(); } catch {}
+        try {
+          ws && ws.close();
+        } catch {}
         const url = buildUrl(`/api/stockbot/runs/${jobId}/stream`);
         es = new EventSource(url);
         es.onmessage = (ev) => {
@@ -197,18 +225,32 @@ export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: 
             }
           } catch {}
         };
-        es.onerror = () => { es && es.close(); schedule(0); };
+        es.onerror = () => {
+          es && es.close();
+          schedule(0);
+        };
       };
     } catch {
       schedule(0);
     }
 
-    return () => { running = false; clearTimeout(timer); try { es && es.close(); } catch {}; try { ws && ws.close(); } catch {}; };
+    return () => {
+      running = false;
+      clearTimeout(timer);
+      try {
+        es && es.close();
+      } catch {}
+      try {
+        ws && ws.close();
+      } catch {}
+    };
   }, [jobId]);
 
   const cancelThisRun = async () => {
     if (!jobId) return;
-    try { await api.post(`/stockbot/runs/${jobId}/cancel`); } catch {}
+    try {
+      await api.post(`/stockbot/runs/${jobId}/cancel`);
+    } catch {}
   };
 
   // ===== Submit =====
@@ -220,9 +262,29 @@ export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: 
     setStatus(null);
     setJobId(null);
 
+    // ---- Preflight guards ----
+    if (!ppoDivisible(nSteps, batchSize)) {
+      setError("PPO: batch_size should divide n_steps (or n_steps × n_envs).");
+      setSubmitting(false);
+      setProgress(null);
+      return;
+    }
+    if (volEnabled && clampMin === 0 && clampMax === 0) {
+      setError("Vol target clamps are 0/0 → exposure will pin near zero. Use e.g. min=0.25, max=2.0.");
+      setSubmitting(false);
+      setProgress(null);
+      return;
+    }
+    if (mappingMode === "tanh_leverage" && grossLevCap <= 1.0) {
+      setError("tanh_leverage requires gross_leverage_cap > 1.0 to be useful.");
+      setSubmitting(false);
+      setProgress(null);
+      return;
+    }
+
     try {
       const payload: TrainPayload = buildTrainPayload({
-        symbols,
+        symbols: symbols.split(",").map(s => s.trim()).join(","), // normalize
         start,
         end,
         interval,
@@ -309,10 +371,14 @@ export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: 
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold">New Training</h3>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" onClick={onCancel} disabled={submitting && !TERMINAL.includes(status?.status as any)}>
+          <Button
+            variant="ghost"
+            onClick={onCancel}
+            disabled={submitting && !TERMINAL.includes(status?.status as any)}
+          >
             Cancel
           </Button>
-          <Button onClick={onSubmit} disabled={submitting || isRunning}> 
+          <Button onClick={onSubmit} disabled={submitting || isRunning}>
             {submitting && !status ? "Submitting…" : isRunning ? "Running…" : "Start Training"}
           </Button>
         </div>
@@ -354,6 +420,7 @@ export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: 
           trainEvalSplit={trainSplit}
           setTrainEvalSplit={setTrainSplit}
         />
+
         <FeaturesSection
           featureSet={featureSet}
           setFeatureSet={setFeatureSet}
@@ -368,6 +435,7 @@ export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: 
           embargo={embargo}
           setEmbargo={setEmbargo}
         />
+
         <CostsExecutionSection
           commissionPerShare={commissionPerShare}
           setCommissionPerShare={setCommissionPerShare}
@@ -386,7 +454,9 @@ export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: 
           maxParticipation={maxParticipation}
           setMaxParticipation={setMaxParticipation}
         />
+
         <CVStressSection nFolds={cvFolds} setNFolds={setCvFolds} embargo={cvEmbargo} setEmbargo={setCvEmbargo} />
+
         <RegimeSection
           enabled={regimeEnabled}
           setEnabled={setRegimeEnabled}
@@ -397,6 +467,7 @@ export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: 
           append={appendBeliefs}
           setAppend={setAppendBeliefs}
         />
+
         <ModelSection
           policy={policy}
           setPolicy={setPolicy}
@@ -425,6 +496,7 @@ export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: 
           seed={seed}
           setSeed={setSeed}
         />
+
         <SizingSection
           mappingMode={mappingMode}
           setMappingMode={setMappingMode}
@@ -460,6 +532,7 @@ export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: 
           perNameCap={perNameCap}
           setPerNameCap={setPerNameCap}
         />
+
         <RewardLoggingSection
           rewardBase={rewardBase}
           setRewardBase={setRewardBase}
