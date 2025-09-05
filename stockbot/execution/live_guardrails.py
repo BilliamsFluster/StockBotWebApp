@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Deque, Dict
+from pathlib import Path
+import json
 
 
 @dataclass
@@ -57,3 +59,34 @@ def heartbeat_ok(last_bar_ts: int, now_ts: int, max_delay_sec: int, broker_ok: b
     """Check data and broker heartbeats."""
 
     return (now_ts - last_bar_ts) <= max_delay_sec and broker_ok
+
+
+@dataclass
+class LiveGuardrails:
+    cfg: CanaryConfig = CanaryConfig()
+    state: CanaryState = field(default_factory=CanaryState)
+    audit_path: Path = Path("live_audit.jsonl")
+    max_delay_sec: int = 300
+
+    def record(self, metrics: Dict, last_bar_ts: int, now_ts: int, broker_ok: bool) -> float:
+        """Update guardrails and append an audit log line.
+
+        Returns the capital stage fraction to deploy.
+        """
+
+        if not heartbeat_ok(last_bar_ts, now_ts, self.max_delay_sec, broker_ok):
+            self.state.halted = True
+
+        self.state = update_canary(self.state, metrics, self.cfg)
+
+        stage = 0.0 if self.state.halted else self.cfg.stages[self.state.stage_idx]
+        rec = {
+            "ts": now_ts,
+            "stage": stage,
+            "halted": self.state.halted,
+        }
+        rec.update(metrics)
+        self.audit_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.audit_path.open("a") as f:
+            f.write(json.dumps(rec) + "\n")
+        return stage
