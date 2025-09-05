@@ -114,6 +114,7 @@ export function buildTrainPayload(state: any): TrainPayload {
       max_participation: Number(state.maxParticipation) || 0.1,
     },
     cv: { scheme: 'purged_walk_forward', n_folds: Number(state.cvFolds) || 6, embargo_bars: Number(state.cvEmbargo) || 5 },
+
     stress_windows: [
       { label: 'GFC 2008-09', start: '2008-07-01', end: '2009-06-30' },
       { label: 'COVID 2020', start: '2020-02-01', end: '2020-05-31' },
@@ -129,6 +130,7 @@ export function buildTrainPayload(state: any): TrainPayload {
     model: {
       policy: state.policy,
       total_timesteps: Number(state.totalTimesteps) || 1_000_000,
+
       n_steps: Number(state.nSteps) || 4096,
       batch_size: Number(state.batchSize) || 1024,
       learning_rate: Number(state.learningRate) || 3e-5,
@@ -152,6 +154,7 @@ export function buildTrainPayload(state: any): TrainPayload {
       guards: {
         daily_loss_limit_pct: Number(state.dailyLoss) || 1.0,
         per_name_weight_cap: Number(state.perNameCap) || 0.1,
+
       },
     },
     reward: {
@@ -166,5 +169,6 @@ export function buildTrainPayload(state: any): TrainPayload {
       save_action_hist: !!state.saveActions,
       save_regime_plots: !!state.saveRegime,
     },
+
   };
 }

@@ -223,6 +223,7 @@ export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: 
         interval,
         adjusted,
         lookback,
+
         trainSplit,
         featureSet,
         rsi,
@@ -246,6 +247,7 @@ export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: 
         appendBeliefs,
         policy,
         totalTimesteps,
+
         nSteps,
         batchSize,
         learningRate,
@@ -276,6 +278,7 @@ export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: 
         saveTb,
         saveActions,
         saveRegime,
+
       });
 
       const { data: resp } = await api.post<{ job_id: string }>("/stockbot/train", payload);
