@@ -342,4 +342,12 @@ __all__ = [
     "create_labels",
     "create_sliding_windows",
     "prepare_dataset",
+    "build_features",
 ]
+
+
+# ---------------------------------------------------------------------
+# P2 feature builder re-export
+# ---------------------------------------------------------------------
+from stockbot.features.builder import FeatureSpec, build_features  # noqa: E402,F401
+
