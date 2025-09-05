@@ -17,11 +17,10 @@ from stockbot.strategy import (
     GuardsConfig,
     RiskState,
     apply_caps_and_guards,
+    RegimeScalerConfig,
+    regime_exposure_multiplier,
 )
 import pandas as pd
-from pathlib import Path
-
-
 class PortfolioTradingEnv(gym.Env):
     """
     Multi-asset portfolio env with target-weights actions (continuous).
@@ -35,13 +34,22 @@ class PortfolioTradingEnv(gym.Env):
     """
     metadata = {"render_modes": []}
 
-    def __init__(self, panel: PanelSource, cfg: EnvConfig):
+    def __init__(
+        self,
+        panel: PanelSource,
+        cfg: EnvConfig,
+        *,
+        regime_gamma: np.ndarray | None = None,
+        regime_scaler: RegimeScalerConfig | None = None,
+    ):
         super().__init__()
         self.cfg = cfg
         self.src = panel
         self.syms = panel.symbols
         self.N = len(self.syms)
         self.lookback = cfg.episode.lookback
+        self._gamma_seq = regime_gamma
+        self._regime_scaler = regime_scaler
 
         required = self.src.cols_required()
         for s in self.syms:
@@ -56,15 +64,21 @@ class PortfolioTradingEnv(gym.Env):
                 f"Env has only {len(self.src.index)} rows after features; "
                 f"need ≥ {min_needed} for lookback={self.lookback}."
             )
+        if self._gamma_seq is not None and len(self._gamma_seq) != len(self.src.index):
+            raise RuntimeError("regime_gamma length must match panel length")
 
         self._cols = list(required)
         F = len(self._cols)
-        self.observation_space = spaces.Dict({
+        obs_spaces = {
             "window": spaces.Box(low=-np.inf, high=np.inf, shape=(self.lookback, self.N, F), dtype=np.float32),
             # portfolio: [cash_frac, margin_used, drawdown, unrealized, realized,
             #             rolling_vol, turnover] + weights (N)
-            "portfolio": spaces.Box(low=-np.inf, high=np.inf, shape=(7 + self.N,), dtype=np.float32)
-        })
+            "portfolio": spaces.Box(low=-np.inf, high=np.inf, shape=(7 + self.N,), dtype=np.float32),
+        }
+        if self._gamma_seq is not None:
+            K = int(self._gamma_seq.shape[1]) if self._gamma_seq.ndim > 1 else 1
+            obs_spaces["gamma"] = spaces.Box(low=0.0, high=1.0, shape=(K,), dtype=np.float32)
+        self.observation_space = spaces.Dict(obs_spaces)
 
         # --- Mapping/turnover knobs (driven via episode.* or env.*)
         self.mapping_mode = getattr(self.cfg.episode, "mapping_mode", getattr(self.cfg, "mapping_mode", "simplex_cash"))
@@ -159,7 +173,10 @@ class PortfolioTradingEnv(gym.Env):
 
     def _obs(self, i):
         prices = self._prices(i - 1)
-        return {"window": self._window_obs(i), "portfolio": self._portfolio_obs(prices)}
+        obs = {"window": self._window_obs(i), "portfolio": self._portfolio_obs(prices)}
+        if self._gamma_seq is not None:
+            obs["gamma"] = self._gamma_seq[i]
+        return obs
 
     # ---------- action mapping ----------
     def _map_action_to_weights(self, a: np.ndarray) -> np.ndarray:
@@ -279,7 +296,10 @@ class PortfolioTradingEnv(gym.Env):
                     target_w[k] = prev_w[k]
 
         now_ts = int(self.src.index[self._i].timestamp())
-        target_w, trace = apply_sizing_layers(target_w, 1.0, self._ret_hist, self.sizing_cfg)
+        gamma_t = 1.0
+        if self._gamma_seq is not None and self._regime_scaler is not None:
+            gamma_t = regime_exposure_multiplier(self._gamma_seq[self._i], self._regime_scaler)
+        target_w, trace = apply_sizing_layers(target_w, gamma_t, self._ret_hist, self.sizing_cfg)
         self.risk_state.realized_vol_ewma = trace["realized_vol"]
         target_w, events, self.risk_state = apply_caps_and_guards(
             target_w, None, self.guards_cfg, self.risk_state, now_ts
