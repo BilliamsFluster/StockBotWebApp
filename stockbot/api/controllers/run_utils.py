@@ -90,6 +90,7 @@ class RunManager:
             "config":   out_dir / "config.snapshot.yaml",
             "model":    out_dir / "ppo_policy.zip",
             "job_log":  out_dir / "job.log",
+            "payload":  out_dir / "payload.json",
         }
 
     def artifact_map_for_run(self, run_id: str) -> Dict[str, Path]:

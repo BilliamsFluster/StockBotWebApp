@@ -45,6 +45,11 @@ export function RegimeSection({ enabled, setEnabled, nStates, setNStates, featur
             <Switch checked={append} onCheckedChange={setAppend} />
             <TooltipLabel tooltip="Append regime beliefs to observation">Append beliefs to obs</TooltipLabel>
           </div>
+          {append && (
+            <div className="text-xs text-yellow-700 ml-8">
+              Appending beliefs changes observation shape; old checkpoints may not load.
+            </div>
+          )}
         </div>
       </AccordionContent>
     </AccordionItem>

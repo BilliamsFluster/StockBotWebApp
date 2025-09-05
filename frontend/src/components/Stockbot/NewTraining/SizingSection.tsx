@@ -20,10 +20,21 @@ interface Props {
   setKellyEnabled: (v: boolean) => void;
   kellyLambda: number;
   setKellyLambda: (v: number) => void;
+  kellyFMax: number;
+  setKellyFMax: (v: number) => void;
+  kellyEmaAlpha: number;
+  setKellyEmaAlpha: (v: number) => void;
   volEnabled: boolean;
   setVolEnabled: (v: boolean) => void;
   volTarget: number;
   setVolTarget: (v: number) => void;
+  volMin: number;
+  setVolMin: (v: number) => void;
+  clampMin: number;
+  setClampMin: (v: number) => void;
+  clampMax: number;
+  setClampMax: (v: number) => void;
+  interval: "1d" | "1h" | "15m";
   dailyLoss: number;
   setDailyLoss: (v: number) => void;
   perNameCap: number;
@@ -45,10 +56,21 @@ export function SizingSection({
   setKellyEnabled,
   kellyLambda,
   setKellyLambda,
+  kellyFMax,
+  setKellyFMax,
+  kellyEmaAlpha,
+  setKellyEmaAlpha,
   volEnabled,
   setVolEnabled,
   volTarget,
   setVolTarget,
+  volMin,
+  setVolMin,
+  clampMin,
+  setClampMin,
+  clampMax,
+  setClampMax,
+  interval,
   dailyLoss,
   setDailyLoss,
   perNameCap,
@@ -120,15 +142,35 @@ export function SizingSection({
             <Switch checked={kellyEnabled} onCheckedChange={setKellyEnabled} />
           </div>
           {kellyEnabled && (
-            <Field label="kelly.lambda" tooltip="Kelly fraction scaler">
-              <Input
-                type="number"
-                step="0.1"
-                value={kellyLambda}
-                onChange={(e) => setKellyLambda(safeNum(e.target.value, kellyLambda))}
-                className="flex-1"
-              />
-            </Field>
+            <>
+              <Field label="kelly.lambda" tooltip="Kelly fraction scaler">
+                <Input
+                  type="number"
+                  step="0.1"
+                  value={kellyLambda}
+                  onChange={(e) => setKellyLambda(safeNum(e.target.value, kellyLambda))}
+                  className="flex-1"
+                />
+              </Field>
+              <Field label="kelly.f_max" tooltip="Kelly cap">
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={kellyFMax}
+                  onChange={(e) => setKellyFMax(safeNum(e.target.value, kellyFMax))}
+                  className="flex-1"
+                />
+              </Field>
+              <Field label="kelly.ema_alpha" tooltip="Kelly EMA alpha">
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={kellyEmaAlpha}
+                  onChange={(e) => setKellyEmaAlpha(safeNum(e.target.value, kellyEmaAlpha))}
+                  className="flex-1"
+                />
+              </Field>
+            </>
           )}
           <div className="flex items-center gap-2">
             <TooltipLabel className="min-w-[130px]" tooltip="Enable volatility targeting">
@@ -137,15 +179,47 @@ export function SizingSection({
             <Switch checked={volEnabled} onCheckedChange={setVolEnabled} />
           </div>
           {volEnabled && (
-            <Field label="vol_target.annual_target" tooltip="Annualized vol target">
-              <Input
-                type="number"
-                step="0.01"
-                value={volTarget}
-                onChange={(e) => setVolTarget(safeNum(e.target.value, volTarget))}
-                className="flex-1"
-              />
-            </Field>
+            <>
+              <Field label="vol_target.annual_target" tooltip="Annualized vol target">
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={volTarget}
+                  onChange={(e) => setVolTarget(safeNum(e.target.value, volTarget))}
+                  className="flex-1"
+                />
+              </Field>
+              <div className="text-xs text-muted-foreground ml-[130px]">
+                1-bar target: {oneBar(volTarget, interval).toFixed(4)}
+              </div>
+              <Field label="vol_target.min_vol" tooltip="Minimum realized vol">
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={volMin}
+                  onChange={(e) => setVolMin(safeNum(e.target.value, volMin))}
+                  className="flex-1"
+                />
+              </Field>
+              <Field label="vol_target.clamp.min" tooltip="Lower vol clamp">
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={clampMin}
+                  onChange={(e) => setClampMin(safeNum(e.target.value, clampMin))}
+                  className="flex-1"
+                />
+              </Field>
+              <Field label="vol_target.clamp.max" tooltip="Upper vol clamp">
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={clampMax}
+                  onChange={(e) => setClampMax(safeNum(e.target.value, clampMax))}
+                  className="flex-1"
+                />
+              </Field>
+            </>
           )}
           <Field label="guards.daily_loss_limit_pct" tooltip="Daily loss limit %">
             <Input
@@ -180,4 +254,10 @@ function Field({ label, tooltip, children }: { label: string; tooltip: string; c
       {children}
     </div>
   );
+}
+
+function oneBar(annual: number, interval: "1d" | "1h" | "15m") {
+  const barsPerDay = interval === "1d" ? 1 : interval === "1h" ? 6.5 : 26;
+  const barsPerYear = barsPerDay * 252;
+  return annual / Math.sqrt(barsPerYear);
 }

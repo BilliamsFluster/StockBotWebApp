@@ -47,7 +47,7 @@ app.use(pinoHttp({ logger }));
 
 app.use(cors(corsOptions));
 app.use(cookieParser());
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
 app.use(helmet());
 // Global rate limit, skipping stockbot (mounted separately below)
 const globalLimiter = rateLimit({

@@ -12,6 +12,7 @@ from typing import Any, List, Optional, Dict, Literal
 import secrets
 import yaml
 import shutil
+import json
 
 from fastapi import BackgroundTasks, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse, FileResponse
@@ -395,6 +396,11 @@ async def start_train_job(req: TrainRequest, bg: BackgroundTasks):
 
     snapshot_path = Path(out_dir) / "config.snapshot.yaml"
     _dump_yaml(req.model_dump(), snapshot_path)
+    payload_path = Path(out_dir) / "payload.json"
+    try:
+        payload_path.write_text(json.dumps(req.model_dump(), indent=2))
+    except Exception:
+        pass
 
     rec = RunRecord(
         id=run_id,
@@ -405,6 +411,7 @@ async def start_train_job(req: TrainRequest, bg: BackgroundTasks):
         meta={
             "payload": req.model_dump(),
             "config_snapshot": str(snapshot_path),
+            "payload_path": str(payload_path),
         },
     )
     RUN_MANAGER.store(rec)
@@ -518,6 +525,12 @@ async def start_backtest_job(req: BacktestRequest, bg: BackgroundTasks):
         raise HTTPException(status_code=400, detail="At least one symbol is required.")
 
     # Persist & run
+    payload_path = Path(out_dir) / "payload.json"
+    try:
+        payload_path.write_text(json.dumps(req.model_dump(), indent=2))
+    except Exception:
+        pass
+
     rec = RunRecord(
         id=run_id, type="backtest", status="QUEUED",
         out_dir=str(out_dir),
@@ -529,6 +542,7 @@ async def start_backtest_job(req: BacktestRequest, bg: BackgroundTasks):
             "resolved_start": start,
             "resolved_end": end,
             "resolved_policy": policy,
+            "payload_path": str(payload_path),
         },
     )
     RUN_MANAGER.store(rec)
@@ -578,6 +592,7 @@ SAFE_NAME_MAP = {
     "config":  "config.snapshot.yaml",
     "model":   "ppo_policy.zip",
     "job_log": "job.log",
+    "payload": "payload.json",
 }
 
 def get_artifact_file(run_id: str, name: str):

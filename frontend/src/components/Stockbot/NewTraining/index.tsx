@@ -82,8 +82,13 @@ export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: 
   const [rebalanceEps, setRebalanceEps] = useState(0.02);
   const [kellyEnabled, setKellyEnabled] = useState(true);
   const [kellyLambda, setKellyLambda] = useState(0.5);
+  const [kellyFMax, setKellyFMax] = useState(1.0);
+  const [kellyEmaAlpha, setKellyEmaAlpha] = useState(0.9);
   const [volEnabled, setVolEnabled] = useState(true);
   const [volTarget, setVolTarget] = useState(0.1);
+  const [volMin, setVolMin] = useState(0.0);
+  const [clampMin, setClampMin] = useState(0.0);
+  const [clampMax, setClampMax] = useState(0.0);
   const [dailyLoss, setDailyLoss] = useState(1.0);
   const [perNameCap, setPerNameCap] = useState(0.1);
 
@@ -264,8 +269,13 @@ export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: 
         rebalanceEps,
         kellyEnabled,
         kellyLambda,
+        kellyFMax,
+        kellyEmaAlpha,
         volEnabled,
         volTarget,
+        volMin,
+        clampMin,
+        clampMax,
         dailyLoss,
         perNameCap,
         rewardBase,
@@ -430,10 +440,21 @@ export default function NewTraining({ onJobCreated, onCancel }: { onJobCreated: 
           setKellyEnabled={setKellyEnabled}
           kellyLambda={kellyLambda}
           setKellyLambda={setKellyLambda}
+          kellyFMax={kellyFMax}
+          setKellyFMax={setKellyFMax}
+          kellyEmaAlpha={kellyEmaAlpha}
+          setKellyEmaAlpha={setKellyEmaAlpha}
           volEnabled={volEnabled}
           setVolEnabled={setVolEnabled}
           volTarget={volTarget}
           setVolTarget={setVolTarget}
+          volMin={volMin}
+          setVolMin={setVolMin}
+          clampMin={clampMin}
+          setClampMin={setClampMin}
+          clampMax={clampMax}
+          setClampMax={setClampMax}
+          interval={interval}
           dailyLoss={dailyLoss}
           setDailyLoss={setDailyLoss}
           perNameCap={perNameCap}

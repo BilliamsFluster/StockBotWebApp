@@ -61,12 +61,12 @@ export interface TrainPayload {
     gross_leverage_cap?: number;
     max_step_change: number;
     rebalance_eps: number;
-    kelly: { enabled: boolean; lambda: number; state_scalars?: number[] };
-    vol_target: { enabled: boolean; annual_target: number };
+    kelly: { enabled: boolean; lambda: number; f_max?: number; ema_alpha?: number; state_scalars?: number[] };
+    vol_target: { enabled: boolean; annual_target: number; min_vol?: number; clamp?: { min: number; max: number } };
     guards: {
-      daily_loss_limit_pct: number;
-      per_name_weight_cap: number;
-      sector_cap_pct?: number;
+        daily_loss_limit_pct: number;
+        per_name_weight_cap: number;
+        sector_cap_pct?: number;
     };
   };
   reward: {
@@ -148,8 +148,18 @@ export function buildTrainPayload(state: any): TrainPayload {
       gross_leverage_cap: state.mappingMode === 'tanh_leverage' ? Number(state.grossLevCap) || 1.5 : undefined,
       max_step_change: Number(state.maxStepChange) || 0.08,
       rebalance_eps: Number(state.rebalanceEps) || 0.02,
-      kelly: { enabled: !!state.kellyEnabled, lambda: Number(state.kellyLambda) || 0.5 },
-      vol_target: { enabled: !!state.volEnabled, annual_target: Number(state.volTarget) || 0.1 },
+      kelly: {
+        enabled: !!state.kellyEnabled,
+        lambda: Number(state.kellyLambda) || 0.5,
+        f_max: Number(state.kellyFMax) || undefined,
+        ema_alpha: Number(state.kellyEmaAlpha) || undefined,
+      },
+      vol_target: {
+        enabled: !!state.volEnabled,
+        annual_target: Number(state.volTarget) || 0.1,
+        min_vol: Number(state.volMin) || undefined,
+        clamp: { min: Number(state.clampMin) || 0, max: Number(state.clampMax) || 0 },
+      },
       guards: {
         daily_loss_limit_pct: Number(state.dailyLoss) || 1.0,
         per_name_weight_cap: Number(state.perNameCap) || 0.1,
