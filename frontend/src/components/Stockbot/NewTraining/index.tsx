@@ -20,93 +20,7 @@ import { RewardSection } from "./RewardSection";
 import { TrainingSection } from "./TrainingSection";
 import { PPOHyperparamsSection } from "./PPOHyperparams";
 import { DownloadsSection } from "./DownloadsSection";
-
-type TrainPayload = {
-  config_path: string;
-
-  // Top-level simple overrides
-  symbols: string[];
-  start?: string;
-  end?: string;
-  interval?: string;
-  adjusted: boolean;
-
-  // Sub-configs mirrored to server EnvConfig when snapshotting
-  fees: {
-    commission_per_share: number;
-    commission_pct_notional: number;
-    slippage_bps: number;
-    borrow_fee_apr: number;
-  };
-
-  margin: {
-    max_gross_leverage: number;
-    
-    maintenance_margin?: number;
-    cash_borrow_apr?: number;
-    intraday_only?: boolean;
-  };
-
-  exec: {
-    order_type: "market" | "limit";
-    limit_offset_bps: number;
-    participation_cap: number;
-    impact_k: number;
-  };
-
-  episode: {
-    lookback: number;
-    max_steps?: number | null;
-    start_cash: number;
-    allow_short: boolean;
-    rebalance_eps: number;
-    randomize_start: boolean;
-    horizon?: number | null;
-    mapping_mode?: "simplex_cash" | "tanh_leverage";
-    invest_max?: number;
-    max_step_change?: number;
-  };
-
-  features: {
-    use_custom_pipeline: boolean;
-    window: number;
-    indicators: string[];
-  };
-
-  reward: {
-    mode: "delta_nav" | "log_nav";
-    w_drawdown: number;
-    w_turnover: number;
-    w_vol: number;
-    vol_window: number;
-    w_leverage: number;
-    stop_eq_frac: number;
-    sharpe_window?: number;
-    sharpe_scale?: number;
-  };
-
-  // Training params
-  normalize: boolean;
-  policy: "mlp" | "window_cnn" | "window_lstm";
-  timesteps: number;
-  seed: number;
-
-  // Output
-  out_tag: string;
-  out_dir?: string;
-
-  // PPO Hyperparameters
-  n_steps: number;
-  batch_size: number;
-  learning_rate: number;
-  gamma: number;
-  gae_lambda: number;
-  clip_range: number;
-  entropy_coef: number;
-  vf_coef: number;
-  max_grad_norm: number;
-  dropout: number;
-};
+import { buildTrainPayload, type TrainPayload } from "./payload";
 
 const TERMINAL: Array<JobStatusResponse["status"]> = ["SUCCEEDED", "FAILED", "CANCELLED"];
 
@@ -327,89 +241,36 @@ export default function NewTraining({
     setJobId(null);
 
     try {
-      const payload: TrainPayload = {
-        config_path: "stockbot/env/env.example.yaml",
-
-        symbols: symbols.split(",").map((s) => s.trim()).filter(Boolean),
+      const payload: TrainPayload = buildTrainPayload({
+        symbols,
         start,
         end,
         interval,
         adjusted,
-
-        fees: {
-          commission_per_share: safeNum(commissionPerShare, 0),
-          commission_pct_notional: safeNum(commissionPct, 0),
-          slippage_bps: safeNum(slippageBps, 0),
-          borrow_fee_apr: safeNum(borrowFeeApr, 0),
-        },
-
-        margin: {
-          max_gross_leverage: safeNum(maxGrossLev, 1),
-          
-          maintenance_margin: safeNum(maintenanceMargin, 0.25),
-          cash_borrow_apr: safeNum(cashBorrowApr, 0.05),
-          intraday_only: !!intradayOnly,
-        },
-
-        exec: {
-          order_type: orderType,
-          limit_offset_bps: safeNum(limitOffsetBps, 0),
-          participation_cap: safeNum(participationCap, 0.1),
-          impact_k: safeNum(impactK, 0),
-        },
-
-        episode: {
-          lookback: safeNum(lookback, 64),
-          max_steps: episodeMaxSteps ?? undefined,
-          start_cash: safeNum(startCash, 100000),
-          allow_short: !!allowShort,
-          rebalance_eps: safeNum(rebalanceEps, 0),
-          randomize_start: !!randomizeStart,
-          horizon: horizon ?? undefined,
-          mapping_mode: mappingMode,
-          invest_max: safeNum(investMax, 0.85),
-          max_step_change: safeNum(maxStepChange, 0.08),
-        },
-
-        features: {
-          use_custom_pipeline: !!useCustomPipeline,
-          window: safeNum(featureWindow, lookback),
-          indicators: indicators
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean),
-        },
-
-        reward: {
-          mode: rewardMode,
-          w_drawdown: safeNum(wDrawdown, 0),
-          w_turnover: safeNum(wTurnover, 0),
-          w_vol: safeNum(wVol, 0),
-          vol_window: safeNum(volWindow, 10),
-          w_leverage: safeNum(wLeverage, 0),
-          stop_eq_frac: safeNum(stopEqFrac, 0),
-          ...(sharpeWindow ? { sharpe_window: safeNum(sharpeWindow, 0) } : {}),
-          ...(sharpeScale ? { sharpe_scale: safeNum(sharpeScale, 0) } : {}),
-        },
-
-        normalize,
+        lookback,
+        commissionPerShare,
+        impactK,
         policy,
-        timesteps: safeNum(timesteps, 0),
-        seed: safeNum(seed, 0),
-        out_tag: outTag,
-
-        // PPO HPs
-        n_steps: safeNum(nSteps, 4096),
-        batch_size: safeNum(batchSize, 1024),
-        learning_rate: safeNum(learningRate, 3e-5),
-        gamma: safeNum(gamma, 0.997),
-        gae_lambda: safeNum(gaeLambda, 0.985),
-        clip_range: safeNum(clipRange, 0.15),
-        entropy_coef: safeNum(entropyCoef, 0.04),
-        vf_coef: safeNum(vfCoef, 1.0),
-        max_grad_norm: safeNum(maxGradNorm, 1.0),
-        dropout: safeNum(dropout, 0.1),
-      };
+        timesteps,
+        nSteps,
+        batchSize,
+        learningRate,
+        gamma,
+        gaeLambda,
+        clipRange,
+        entropyCoef,
+        vfCoef,
+        maxGradNorm,
+        dropout,
+        seed,
+        mappingMode,
+        investMax,
+        maxStepChange,
+        rebalanceEps,
+        rewardBase: rewardMode,
+        wDrawdown,
+        wTurnover,
+      });
 
       const { data: resp } = await api.post<{ job_id: string }>("/stockbot/train", payload);
       if (!resp?.job_id) throw new Error("No job_id returned");
