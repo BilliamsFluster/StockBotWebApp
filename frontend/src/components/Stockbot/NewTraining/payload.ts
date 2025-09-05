@@ -114,6 +114,7 @@ export function buildTrainPayload(state: any): TrainPayload {
       max_participation: Number(state.maxParticipation) || 0.1,
     },
     cv: { scheme: 'purged_walk_forward', n_folds: Number(state.cvFolds) || 6, embargo_bars: Number(state.cvEmbargo) || 5 },
+
     stress_windows: [
       { label: 'GFC 2008-09', start: '2008-07-01', end: '2009-06-30' },
       { label: 'COVID 2020', start: '2020-02-01', end: '2020-05-31' },
