@@ -402,6 +402,14 @@ async def start_train_job(req: TrainRequest, bg: BackgroundTasks):
     except Exception:
         pass
 
+    # Pre-build dataset manifest and observation schema using the P2 feature layer
+    try:
+        from stockbot.env.env_builder import prepare_env
+
+        prepare_env(req.model_dump(), out_dir)
+    except Exception as e:  # pragma: no cover - best effort only
+        print(f"[start_train_job] env prep failed: {e}")
+
     rec = RunRecord(
         id=run_id,
         type="train",
