@@ -105,47 +105,132 @@ class RewardModel(BaseModel):
     sharpe_window: Optional[int] = None
     sharpe_scale: Optional[float] = None
 
-class TrainRequest(BaseModel):
-    # training flags
-    config_path: str = "stockbot/env/env.example.yaml"
-    normalize: bool = True
+class DatasetModel(BaseModel):
+    symbols: List[str]
+    start_date: str
+    end_date: str
+    interval: Literal["1d", "1h", "15m"] = "1d"
+    adjusted_prices: bool = True
+    lookback: int = 64
+    train_eval_split: Literal["last_year", "80_20", "custom_ranges"] = "last_year"
+    custom_ranges: Optional[List[Dict[str, List[str]]]] = None
+
+
+class FeaturesModel(BaseModel):
+    feature_set: List[Literal["ohlcv", "ohlcv_ta_basic", "ohlcv_ta_rich"]] = Field(
+        default_factory=lambda: ["ohlcv_ta_basic"]
+    )
+    ta_basic_opts: Optional[Dict[str, bool]] = None
+    normalize_observation: bool = True
+    embargo_bars: int = 1
+
+
+class CostsModel(BaseModel):
+    commission_per_share: float = 0.0005
+    taker_fee_bps: float = 1.0
+    maker_rebate_bps: float = -0.2
+    half_spread_bps: float = 0.5
+    impact_k: float = 8.0
+
+
+class ExecutionModel(BaseModel):
+    fill_policy: Literal["next_open", "vwap_window"] = "next_open"
+    vwap_minutes: Optional[int] = 15
+    max_participation: float = 0.1
+
+
+class CVModel(BaseModel):
+    scheme: Literal["purged_walk_forward"] = "purged_walk_forward"
+    n_folds: int = 6
+    embargo_bars: int = 5
+
+
+class StressWindow(BaseModel):
+    label: str
+    start: str
+    end: str
+
+
+class RegimeModel(BaseModel):
+    enabled: bool = True
+    n_states: int = 3
+    emissions: str = "gaussian"
+    features: List[Literal["ret", "vol", "skew", "dispersion", "breadth"]] = Field(
+        default_factory=lambda: ["ret", "vol", "dispersion"]
+    )
+    append_beliefs_to_obs: bool = True
+
+
+class ModelModel(BaseModel):
     policy: Literal["mlp", "window_cnn", "window_lstm"] = "window_cnn"
-    timesteps: int = 150_000
-    seed: int = 42
-    out_tag: Optional[str] = None
-    out_dir: Optional[str] = None  # optional; if omitted -> RUNS_DIR/<tag>
+    total_timesteps: int = 1_000_000
+    n_steps: int = 4096
+    batch_size: int = 1024
+    learning_rate: float = 3e-5
+    gamma: float = 0.997
+    gae_lambda: float = 0.985
+    clip_range: float = 0.15
+    ent_coef: float = 0.04
+    vf_coef: float = 1.0
+    max_grad_norm: float = 1.0
+    dropout: float = 0.1
+    seed: Optional[int] = None
 
-    # Optional explicit split:
-    train_start: Optional[str] = None
-    train_end: Optional[str] = None
-    eval_start: Optional[str] = None
-    eval_end: Optional[str] = None
 
-    # UI-driven env overrides (all optional)
-    symbols: Optional[List[str]] = None
-    start: Optional[str] = None
-    end: Optional[str] = None
-    interval: Optional[str] = None
-    adjusted: Optional[bool] = None
+class KellyModel(BaseModel):
+    enabled: bool = True
+    lambda_: float = Field(0.5, alias="lambda")
+    state_scalars: Optional[List[float]] = None
 
-    fees: Optional[FeesModel] = None
-    margin: Optional[MarginModel] = None
-    exec: Optional[ExecModel] = None
-    episode: Optional[EpisodeModel] = None
-    features: Optional[FeatureModel] = None
-    reward: Optional[RewardModel] = None
 
-    # Optional PPO hyperparameters (forwarded if provided)
-    n_steps: Optional[int] = None
-    batch_size: Optional[int] = None
-    learning_rate: Optional[float] = None
-    gamma: Optional[float] = None
-    gae_lambda: Optional[float] = None
-    clip_range: Optional[float] = None
-    entropy_coef: Optional[float] = None
-    vf_coef: Optional[float] = None
-    max_grad_norm: Optional[float] = None
-    dropout: Optional[float] = None
+class VolTargetModel(BaseModel):
+    enabled: bool = True
+    annual_target: float = 0.10
+
+
+class GuardsModel(BaseModel):
+    daily_loss_limit_pct: float = 1.0
+    per_name_weight_cap: float = 0.1
+    sector_cap_pct: Optional[float] = None
+
+
+class SizingModel(BaseModel):
+    mapping_mode: Literal["simplex_cash", "tanh_leverage"] = "simplex_cash"
+    invest_max: Optional[float] = 0.7
+    gross_leverage_cap: Optional[float] = 1.5
+    max_step_change: float = 0.08
+    rebalance_eps: float = 0.02
+    kelly: KellyModel = KellyModel()
+    vol_target: VolTargetModel = VolTargetModel()
+    guards: GuardsModel = GuardsModel()
+
+
+class RewardModelNew(BaseModel):
+    base: Literal["delta_nav", "log_nav"] = "log_nav"
+    w_drawdown: float = 0.10
+    w_turnover: float = 0.001
+    w_vol: float = 0.0
+    w_leverage: float = 0.0
+
+
+class ArtifactsModel(BaseModel):
+    save_tb: bool = True
+    save_action_hist: bool = True
+    save_regime_plots: bool = True
+
+
+class TrainRequest(BaseModel):
+    dataset: DatasetModel
+    features: FeaturesModel
+    costs: CostsModel
+    execution_model: ExecutionModel
+    cv: CVModel
+    stress_windows: List[StressWindow] = Field(default_factory=list)
+    regime: RegimeModel
+    model: ModelModel
+    sizing: SizingModel
+    reward: RewardModelNew
+    artifacts: ArtifactsModel
 
 class BacktestRequest(BaseModel):
     config_path: str = "stockbot/env/env.example.yaml"
@@ -241,30 +326,6 @@ def _dump_yaml(d: Dict[str, Any], path: Path) -> None:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write YAML snapshot: {e}")
 
-def _build_env_overrides(req: TrainRequest) -> Dict[str, Any]:
-    """
-    Build a dict with only the keys the user provided (so we don't stomp defaults).
-    Matches EnvConfig’s schema.
-    """
-    env: Dict[str, Any] = {}
-
-    # top-level env fields
-    if req.symbols is not None:  env["symbols"] = list(req.symbols)
-    if req.start is not None:    env["start"] = req.start
-    if req.end is not None:      env["end"] = req.end
-    if req.interval is not None: env["interval"] = req.interval
-    if req.adjusted is not None: env["adjusted"] = bool(req.adjusted)
-
-    # sub-blocks
-    if req.fees is not None:     env["fees"] = req.fees.model_dump()
-    if req.margin is not None:   env["margin"] = req.margin.model_dump()
-    if req.exec is not None:     env["exec"] = req.exec.model_dump()
-    if req.episode is not None:  env["episode"] = req.episode.model_dump()
-    if req.features is not None: env["features"] = req.features.model_dump()
-    if req.reward is not None:   env["reward"] = req.reward.model_dump()
-
-    return env
-
 # -------- Subprocess runner ---------
 
 def _run_subprocess_sync(args: List[str], rec: RunRecord):
@@ -329,78 +390,62 @@ def _run_subprocess_sync(args: List[str], rec: RunRecord):
 async def start_train_job(req: TrainRequest, bg: BackgroundTasks):
     import uuid
 
-    # choose run folder
-    out_dir = _choose_outdir(req.out_dir, req.out_tag)
     run_id = uuid.uuid4().hex[:10]
+    out_dir = _choose_outdir(None, run_id)
 
-    # load base YAML
-    base_cfg = _load_yaml(req.config_path)
-
-    # apply UI overrides (only provided keys)
-    overrides = _build_env_overrides(req)
-    merged_cfg = _deep_merge(base_cfg, overrides)
-
-    # write config snapshot into run folder
     snapshot_path = Path(out_dir) / "config.snapshot.yaml"
-    _dump_yaml(merged_cfg, snapshot_path)
+    _dump_yaml(req.model_dump(), snapshot_path)
 
-    # record run
     rec = RunRecord(
-        id=run_id, type="train", status="QUEUED",
+        id=run_id,
+        type="train",
+        status="QUEUED",
         out_dir=str(out_dir),
         created_at=datetime.utcnow().isoformat(),
         meta={
-            **req.model_dump(),
+            "payload": req.model_dump(),
             "config_snapshot": str(snapshot_path),
         },
     )
     RUN_MANAGER.store(rec)
 
-    # build args targeting the SNAPSHOT (not the original)
     args = [
-        "-m", "stockbot.rl.train_ppo",
-        "--config", str(snapshot_path.resolve()),   # <— absolute path
-        "--out", str(Path(out_dir).resolve()),
-        "--timesteps", str(req.timesteps),
-        "--seed", str(req.seed),
+        "-m",
+        "stockbot.rl.train_ppo",
+        "--config",
+        str(snapshot_path.resolve()),
+        "--out",
+        str(Path(out_dir).resolve()),
+        "--timesteps",
+        str(req.model.total_timesteps),
     ]
-    if req.normalize:
-        args.append("--normalize")
-    if req.policy:
-        args.extend(["--policy", req.policy])
+    if req.model.seed is not None:
+        args.extend(["--seed", str(req.model.seed)])
+    if req.model.policy:
+        args.extend(["--policy", req.model.policy])
+    args.extend([
+        "--n-steps",
+        str(req.model.n_steps),
+        "--batch-size",
+        str(req.model.batch_size),
+        "--learning-rate",
+        str(req.model.learning_rate),
+        "--gamma",
+        str(req.model.gamma),
+        "--gae-lambda",
+        str(req.model.gae_lambda),
+        "--clip-range",
+        str(req.model.clip_range),
+        "--ent-coef",
+        str(req.model.ent_coef),
+        "--vf-coef",
+        str(req.model.vf_coef),
+        "--max-grad-norm",
+        str(req.model.max_grad_norm),
+        "--dropout",
+        str(req.model.dropout),
+    ])
 
-    # Optional PPO hyperparameters
-    if req.n_steps is not None:
-        args.extend(["--n-steps", str(req.n_steps)])
-    if req.batch_size is not None:
-        args.extend(["--batch-size", str(req.batch_size)])
-    if req.learning_rate is not None:
-        args.extend(["--learning-rate", str(req.learning_rate)])
-    if req.gamma is not None:
-        args.extend(["--gamma", str(req.gamma)])
-    if req.gae_lambda is not None:
-        args.extend(["--gae-lambda", str(req.gae_lambda)])
-    if req.clip_range is not None:
-        args.extend(["--clip-range", str(req.clip_range)])
-    if req.entropy_coef is not None:
-        args.extend(["--entropy-coef", str(req.entropy_coef)])
-    if req.vf_coef is not None:
-        args.extend(["--vf-coef", str(req.vf_coef)])
-    if req.max_grad_norm is not None:
-        args.extend(["--max-grad-norm", str(req.max_grad_norm)])
-    if req.dropout is not None:
-        args.extend(["--dropout", str(req.dropout)])
-
-    # explicit split (optional)
-    if req.train_start and req.train_end and req.eval_start and req.eval_end:
-        args.extend([
-            "--train-start", req.train_start,
-            "--train-end",   req.train_end,
-            "--eval-start",  req.eval_start,
-            "--eval-end",    req.eval_end,
-        ])
-
-    # enqueue
     bg.add_task(_run_subprocess_sync, args, rec)
     return JSONResponse({"job_id": run_id})
 
