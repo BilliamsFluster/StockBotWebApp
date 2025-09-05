@@ -41,7 +41,14 @@ def parse_args():
     ap.add_argument("--gamma", type=float, default=0.99)
     ap.add_argument("--gae-lambda", type=float, default=0.95)
     ap.add_argument("--clip-range", type=float, default=0.2)
-    ap.add_argument("--entropy-coef", type=float, default=0.0)
+     # accept both --entropy-coef and --ent-coef for convenience
+    ap.add_argument(
+        "--entropy-coef",
+        "--ent-coef",
+        type=float,
+        dest="entropy_coef",
+        default=0.0,
+    )    
     ap.add_argument("--vf-coef", type=float, default=0.5)
     ap.add_argument("--max-grad-norm", type=float, default=0.5)
     ap.add_argument("--dropout", type=float, default=0.10, help="Dropout for extractors where applicable")
