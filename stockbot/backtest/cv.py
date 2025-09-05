@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Dict, List
 
+import json
 import numpy as np
 import pandas as pd
 
@@ -16,7 +17,7 @@ class CVConfig:
     fast_timesteps: int | None = None
 
 
-def run_purged_wf_cv(payload: Dict, cv: CVConfig) -> Dict:
+def run_purged_wf_cv(payload: Dict, cv: CVConfig, report_path: str | None = None) -> Dict:
     """Run a simplified purged walk-forward cross validation.
 
     This version wires the P2/P3 components into a lightweight CV driver so
@@ -88,5 +89,20 @@ def run_purged_wf_cv(payload: Dict, cv: CVConfig) -> Dict:
             }
         )
 
-    macro = {"sharpe_net": 0.0, "maxdd": 0.0, "turnover": 0.0, "cost_bps": cost_bps}
-    return {"folds": folds, "macro_avg": macro}
+    if folds:
+        macro = {
+            "sharpe_net": float(np.mean([f["sharpe_net"] for f in folds])),
+            "maxdd": float(np.mean([f["maxdd"] for f in folds])),
+            "turnover": float(np.mean([f["turnover"] for f in folds])),
+            "cost_bps": float(np.mean([f["cost_bps"] for f in folds])),
+        }
+    else:
+        macro = {"sharpe_net": 0.0, "maxdd": 0.0, "turnover": 0.0, "cost_bps": cost_bps}
+
+    report = {"folds": folds, "macro_avg": macro}
+
+    if report_path is not None:
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2)
+
+    return report
