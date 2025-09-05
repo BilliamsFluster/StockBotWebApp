@@ -64,7 +64,6 @@ def _run_backtest(env, strategy) -> Tuple[pd.DataFrame, pd.DataFrame]:
     eq_list: List[float] = []
     cash_list: List[float] = []
     weights_list: List[Dict[str, float]] = []
-    orders_rows: List[Dict] = []
 
     # Inform strategy the episode is starting
     if hasattr(strategy, "reset"):
@@ -98,21 +97,6 @@ def _run_backtest(env, strategy) -> Tuple[pd.DataFrame, pd.DataFrame]:
         else:
             weights_list.append({})
 
-        # capture fills produced this step (if broker exposes them)
-        broker = getattr(env.unwrapped, "broker", None)
-        last_fills = getattr(broker, "last_fills", None)
-        if last_fills:
-            for f in last_fills:
-                orders_rows.append(
-                    {
-                        "ts": ts,
-                        "symbol": getattr(f, "symbol", None),
-                        "qty": float(getattr(f, "qty", 0.0)),
-                        "price": float(getattr(f, "price", np.nan)),
-                        "commission": float(getattr(f, "commission", 0.0)),
-                    }
-                )
-
     base = pd.DataFrame({"ts": ts_list, "equity": eq_list, "cash": cash_list})
     if weights_list and any(len(d) for d in weights_list):
         wdf = pd.DataFrame(weights_list)
@@ -121,9 +105,21 @@ def _run_backtest(env, strategy) -> Tuple[pd.DataFrame, pd.DataFrame]:
         eqdf = base
     eqdf = eqdf.sort_values("ts")
 
-    odf = pd.DataFrame(orders_rows) if orders_rows else pd.DataFrame(columns=["ts", "symbol", "qty", "price", "commission"])
-    if not odf.empty:
-        odf = odf.sort_values("ts")
+    trades = getattr(env.unwrapped, "trades", [])
+    if trades:
+        orders_rows = [
+            {
+                "ts": t["ts"],
+                "symbol": t["symbol"],
+                "qty": t["qty"],
+                "price": t["realized_px"],
+                "commission": t["commission"] + t["fees"],
+            }
+            for t in trades
+        ]
+        odf = pd.DataFrame(orders_rows).sort_values("ts")
+    else:
+        odf = pd.DataFrame(columns=["ts", "symbol", "qty", "price", "commission"])
 
     return eqdf, odf
 

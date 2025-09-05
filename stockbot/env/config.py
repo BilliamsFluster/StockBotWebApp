@@ -16,7 +16,13 @@ class FeeModel:
     commission_per_share: float = 0.0
     commission_pct_notional: float = 0.0005
     borrow_fee_apr: float = 0.0
+    # Legacy slippage parameter retained for backward-compatibility; in the
+    # unified cost model this maps to ``half_spread_bps`` when no explicit value
+    # is provided.
     slippage_bps: float = 1.0
+    taker_fee_bps: float = 0.0
+    maker_rebate_bps: float = 0.0
+    half_spread_bps: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -41,6 +47,7 @@ class ExecConfig:
     tick_size: float = 0.01               # round prices to this tick size
     spread_source: Literal["fee_model", "hl"] = "fee_model"
     vol_lookback: int = 20
+    fill_policy: Literal["next_open", "vwap_window"] = "next_open"
 
 
 @dataclass(frozen=True)
