@@ -4,6 +4,7 @@ import multer from "multer";
 import {
   startTrainProxy,
   startBacktestProxy,
+  startCvProxy,
   listRunsProxy,
   getRunProxy,
   deleteRunProxy,
@@ -34,6 +35,7 @@ const router = express.Router();
 // Kick off jobs
 router.post("/train", protectRoute, startTrainProxy);
 router.post("/backtest", protectRoute, startBacktestProxy);
+router.post("/cv", protectRoute, startCvProxy);
 
 // Live trading controls
 router.post("/trade/start", protectRoute, startLiveTradingProxy);
