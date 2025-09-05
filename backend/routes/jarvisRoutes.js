@@ -4,6 +4,7 @@ import { protectRoute } from "../middleware/protectRoute.js";
 import {
   planJarvisEdit,
   proxyJarvisVoiceWs,
+  fetchModels,
 } from "../controllers/jarvisController.js";
 
 export default function createJarvisRoutes(app) {
@@ -22,8 +23,8 @@ export default function createJarvisRoutes(app) {
   router.get("/voice/stream", voiceStream);
   router.post("/voice/event", relayVoiceData);
 
-  router.get("/portfolio", protectRoute, getPortfolioData);
-  router.get("/models", protectRoute, fetchModels);*/
+  router.get("/portfolio", protectRoute, getPortfolioData);*/
+  router.get("/models", protectRoute, fetchModels);
 
   // =====================
   // REAL-TIME VOICE WS

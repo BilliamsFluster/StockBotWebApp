@@ -69,19 +69,24 @@ export function DownloadsSection({
               config.snapshot.yaml
             </a>
           )}
-          {artifacts.model && (
-            <a className="underline" href={artifacts.model} target="_blank" rel="noreferrer">
-              ppo_policy.zip
-            </a>
-          )}
-          {artifacts.job_log && (
-            <a className="underline" href={artifacts.job_log} target="_blank" rel="noreferrer">
-              job.log
-            </a>
-          )}
-        </div>
-      )}
-    </section>
-  );
-}
+            {artifacts.model && (
+              <a className="underline" href={artifacts.model} target="_blank" rel="noreferrer">
+                ppo_policy.zip
+              </a>
+            )}
+            {artifacts.job_log && (
+              <a className="underline" href={artifacts.job_log} target="_blank" rel="noreferrer">
+                job.log
+              </a>
+            )}
+            {artifacts.payload && (
+              <a className="underline" href={artifacts.payload} target="_blank" rel="noreferrer">
+                payload.json
+              </a>
+            )}
+          </div>
+        )}
+      </section>
+    );
+  }
 

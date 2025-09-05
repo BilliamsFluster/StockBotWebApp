@@ -81,9 +81,14 @@ def make_strategy(name: str, env: gym.Env, **kwargs):
     # Lazy imports
     try:
         from stockbot.strategy.baselines import (
-            EqualWeightStrategy, BuyAndHoldStrategy, FlatStrategy, FirstLongStrategy, RandomStrategy
+            EqualWeightStrategy,
+            BuyAndHoldStrategy,
+            FlatStrategy,
+            FirstLongStrategy,
+            RandomStrategy,
         )
         from stockbot.strategy.sb3_adapter import SB3PolicyStrategy, load_sb3_model
+        from stockbot.strategy.prob_policy import ProbPolicy
     except Exception as e:
         raise ImportError(
             "Strategy modules not available. Ensure 'stockbot/strategy' package exists with __init__.py, "
@@ -100,6 +105,8 @@ def make_strategy(name: str, env: gym.Env, **kwargs):
         return FlatStrategy(env.action_space)
     if key in ("random", "rand"):
         return RandomStrategy(env.action_space)
+    if key in ("prob", "prob_policy"):
+        return ProbPolicy(env.action_space, **kwargs)
     if key in ("sb3", "ppo", "a2c", "ddpg"):
         model_path = kwargs.get("model_path")
         if not model_path:

@@ -38,6 +38,16 @@ export async function startBacktestProxy(req, res) {
   }
 }
 
+/** POST /api/stockbot/cv */
+export async function startCvProxy(req, res) {
+  try {
+    const { data } = await axios.post(`${STOCKBOT_URL}/api/stockbot/cv`, req.body);
+    return res.json(data);
+  } catch (e) {
+    return res.status(400).json({ error: errMsg(e) });
+  }
+}
+
 /** GET /api/stockbot/runs */
 export async function listRunsProxy(_req, res) {
   try {

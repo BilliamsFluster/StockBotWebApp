@@ -8,107 +8,19 @@ import { Accordion } from "@/components/ui/accordion";
 import api, { buildUrl } from "@/api/client";
 import { addRecentRun } from "../lib/runs";
 import type { JobStatusResponse, RunArtifacts } from "../lib/types";
-import { safeNum } from "./utils";
-import { QuickSetupSection } from "./QuickSetup";
-import { DataEnvironmentSection } from "./DataEnv";
-import { CostsSection } from "./CostsSection";
-import { ExecutionSection } from "./ExecutionSection";
-import { RiskMarginSection } from "./RiskMargin";
-import { EpisodeSection } from "./EpisodeSection";
+import { DatasetSection } from "./DatasetSection";
 import { FeaturesSection } from "./FeaturesSection";
-import { RewardSection } from "./RewardSection";
-import { TrainingSection } from "./TrainingSection";
-import { PPOHyperparamsSection } from "./PPOHyperparams";
+import { CostsExecutionSection } from "./CostsExecutionSection";
+import { CVStressSection } from "./CVStressSection";
+import { RegimeSection } from "./RegimeSection";
+import { ModelSection } from "./ModelSection";
+import { SizingSection, DEFAULT_SIZING } from "./SizingSection";
+import { RewardLoggingSection, DEFAULT_REWARD  } from "./RewardLoggingSection";
 import { DownloadsSection } from "./DownloadsSection";
-
-type TrainPayload = {
-  config_path: string;
-
-  // Top-level simple overrides
-  symbols: string[];
-  start?: string;
-  end?: string;
-  interval?: string;
-  adjusted: boolean;
-
-  // Sub-configs mirrored to server EnvConfig when snapshotting
-  fees: {
-    commission_per_share: number;
-    commission_pct_notional: number;
-    slippage_bps: number;
-    borrow_fee_apr: number;
-  };
-
-  margin: {
-    max_gross_leverage: number;
-    
-    maintenance_margin?: number;
-    cash_borrow_apr?: number;
-    intraday_only?: boolean;
-  };
-
-  exec: {
-    order_type: "market" | "limit";
-    limit_offset_bps: number;
-    participation_cap: number;
-    impact_k: number;
-  };
-
-  episode: {
-    lookback: number;
-    max_steps?: number | null;
-    start_cash: number;
-    allow_short: boolean;
-    rebalance_eps: number;
-    randomize_start: boolean;
-    horizon?: number | null;
-    mapping_mode?: "simplex_cash" | "tanh_leverage";
-    invest_max?: number;
-    max_step_change?: number;
-  };
-
-  features: {
-    use_custom_pipeline: boolean;
-    window: number;
-    indicators: string[];
-  };
-
-  reward: {
-    mode: "delta_nav" | "log_nav";
-    w_drawdown: number;
-    w_turnover: number;
-    w_vol: number;
-    vol_window: number;
-    w_leverage: number;
-    stop_eq_frac: number;
-    sharpe_window?: number;
-    sharpe_scale?: number;
-  };
-
-  // Training params
-  normalize: boolean;
-  policy: "mlp" | "window_cnn" | "window_lstm";
-  timesteps: number;
-  seed: number;
-
-  // Output
-  out_tag: string;
-  out_dir?: string;
-
-  // PPO Hyperparameters
-  n_steps: number;
-  batch_size: number;
-  learning_rate: number;
-  gamma: number;
-  gae_lambda: number;
-  clip_range: number;
-  entropy_coef: number;
-  vf_coef: number;
-  max_grad_norm: number;
-  dropout: number;
-};
+import { buildTrainPayload, type TrainPayload } from "./payload";
 
 const TERMINAL: Array<JobStatusResponse["status"]> = ["SUCCEEDED", "FAILED", "CANCELLED"];
+const ppoDivisible = (n: number, b: number) => n > 0 && b > 0 && n % b === 0;
 
 export default function NewTraining({
   onJobCreated,
@@ -117,77 +29,102 @@ export default function NewTraining({
   onJobCreated: (id: string) => void;
   onCancel: () => void;
 }) {
-  // ===== Data / Env =====
-  const [symbols, setSymbols] = useState("AAPL,MSFT");
-  const [start, setStart] = useState("2018-01-01");
-  const [end, setEnd] = useState("2022-12-31");
-  const [interval, setInterval] = useState("1d");
+  // ===== Dataset =====
+  const [symbols, setSymbols] = useState("AAPL,MSFT,SPY");
+  const [start, setStart] = useState("2015-01-01");
+  const [end, setEnd] = useState("2025-01-01");
+  const [interval, setInterval] = useState<"1d" | "1h" | "15m">("1d");
   const [adjusted, setAdjusted] = useState(true);
-
-  // ===== Costs =====
-  const [commissionPct, setCommissionPct] = useState(0.0005);
-  const [commissionPerShare, setCommissionPerShare] = useState(0);
-  const [slippageBps, setSlippageBps] = useState(1);
-  const [borrowFeeApr, setBorrowFeeApr] = useState(0);
-
-  // ===== Execution =====
-  const [orderType, setOrderType] = useState<"market" | "limit">("market");
-  const [limitOffsetBps, setLimitOffsetBps] = useState(0);
-  const [participationCap, setParticipationCap] = useState(0.1);
-  const [impactK, setImpactK] = useState(0);
-
-  // ===== Risk / Margin =====
-  const [maxGrossLev, setMaxGrossLev] = useState(1.5);
-  const [allowShort, setAllowShort] = useState(true);
-  const [maintenanceMargin, setMaintenanceMargin] = useState(0.25);
-  const [cashBorrowApr, setCashBorrowApr] = useState(0.05);
-  const [intradayOnly, setIntradayOnly] = useState(false);
-
-  // ===== Episode =====
   const [lookback, setLookback] = useState(64);
-  const [horizon, setHorizon] = useState<number | null>(256);
-  const [randomizeStart, setRandomizeStart] = useState(false);
-  const [rebalanceEps, setRebalanceEps] = useState(0.0);
-  const [startCash, setStartCash] = useState(100000);
-  const [episodeMaxSteps, setEpisodeMaxSteps] = useState<number | null>(256);
-  const [mappingMode, setMappingMode] = useState<"simplex_cash" | "tanh_leverage">("simplex_cash");
-  const [investMax, setInvestMax] = useState(0.85);
-  const [maxStepChange, setMaxStepChange] = useState(0.08);
+  const [trainSplit, setTrainSplit] = useState("last_year");
 
   // ===== Features =====
-  const [useCustomPipeline, setUseCustomPipeline] = useState(true);
-  const [featureWindow, setFeatureWindow] = useState(64);
-  const [indicators, setIndicators] = useState("logret,rsi14,vol20");
+  const [featureSet, setFeatureSet] = useState<string[]>(["ohlcv_ta_basic"]);
+  const [rsi, setRsi] = useState(true);
+  const [macd, setMacd] = useState(true);
+  const [bbands, setBbands] = useState(true);
+  const [normalizeObs, setNormalizeObs] = useState(true);
+  const [embargo, setEmbargo] = useState(1);
 
-  // ===== Reward & Shaping =====
-  const [rewardMode, setRewardMode] = useState<"delta_nav" | "log_nav">("delta_nav");
-  const [wDrawdown, setWDrawdown] = useState(0.005);
-  const [wTurnover, setWTurnover] = useState(0.0005);
-  const [wVol, setWVol] = useState(0.0);
-  const [volWindow, setVolWindow] = useState(10);
-  const [wLeverage, setWLeverage] = useState(0.0);
-  const [stopEqFrac, setStopEqFrac] = useState(0.0);
-  const [sharpeWindow, setSharpeWindow] = useState<number | undefined>(undefined);
-  const [sharpeScale, setSharpeScale] = useState<number | undefined>(undefined);
+  // ===== Costs & Execution =====
+  const [commissionPerShare, setCommissionPerShare] = useState(0.0005);
+  const [takerFeeBps, setTakerFeeBps] = useState(1.0);
+  const [makerRebateBps, setMakerRebateBps] = useState(-0.2);
+  const [halfSpreadBps, setHalfSpreadBps] = useState(0.5);
+  const [impactK, setImpactK] = useState(8.0);
+  const [fillPolicy, setFillPolicy] =
+    useState<"next_open" | "vwap_window">("next_open");
+  const [vwapMinutes, setVwapMinutes] = useState(15);
+  const [maxParticipation, setMaxParticipation] = useState(0.1);
 
-  // ===== Training =====
-  const [normalize, setNormalize] = useState(true);
-  const [policy, setPolicy] = useState<"mlp" | "window_cnn" | "window_lstm">("window_cnn");
-  const [timesteps, setTimesteps] = useState(300000);
-  const [seed, setSeed] = useState(42);
-  const [outTag, setOutTag] = useState("ppo_cnn_norm");
+  // ===== CV & Stress =====
+  const [cvFolds, setCvFolds] = useState(6);
+  const [cvEmbargo, setCvEmbargo] = useState(5);
 
-  // ===== PPO Hyperparameters =====
+  // ===== Regime =====
+  const [regimeEnabled, setRegimeEnabled] = useState(true);
+  const [regimeStates, setRegimeStates] = useState(3);
+  const [regimeFeatures, setRegimeFeatures] =
+    useState("ret,vol,dispersion");
+  const [appendBeliefs, setAppendBeliefs] = useState(true);
+
+  // ===== Model =====
+  const [policy, setPolicy] =
+    useState<"mlp" | "window_cnn" | "window_lstm">("window_cnn");
+  const [totalTimesteps, setTotalTimesteps] = useState(1_000_000);
   const [nSteps, setNSteps] = useState(4096);
   const [batchSize, setBatchSize] = useState(1024);
   const [learningRate, setLearningRate] = useState(3e-5);
   const [gamma, setGamma] = useState(0.997);
   const [gaeLambda, setGaeLambda] = useState(0.985);
   const [clipRange, setClipRange] = useState(0.15);
-  const [entropyCoef, setEntropyCoef] = useState(0.04);
+  const [entCoef, setEntCoef] = useState(0.04);
   const [vfCoef, setVfCoef] = useState(1.0);
   const [maxGradNorm, setMaxGradNorm] = useState(1.0);
-  const [dropout, setDropout] = useState(0.10);
+  const [dropout, setDropout] = useState(0.1);
+  const [seed, setSeed] = useState<number | undefined>(undefined);
+
+  // ===== Sizing (init from defaults) =====
+  const [mappingMode, setMappingMode] =
+    useState<"simplex_cash" | "tanh_leverage">(DEFAULT_SIZING.mappingMode);
+  const [investMax, setInvestMax] = useState(DEFAULT_SIZING.investMax);
+  const [grossLevCap, setGrossLevCap] = useState(DEFAULT_SIZING.grossLevCap);
+  const [maxStepChange, setMaxStepChange] =
+    useState(DEFAULT_SIZING.maxStepChange);
+  const [rebalanceEps, setRebalanceEps] =
+    useState(DEFAULT_SIZING.rebalanceEps);
+
+  const [kellyEnabled, setKellyEnabled] =
+    useState(DEFAULT_SIZING.kellyEnabled);
+  const [kellyLambda, setKellyLambda] = useState(DEFAULT_SIZING.kellyLambda);
+  const [kellyFMax, setKellyFMax] = useState(DEFAULT_SIZING.kellyFMax);
+  const [kellyEmaAlpha, setKellyEmaAlpha] =
+    useState(DEFAULT_SIZING.kellyEmaAlpha);
+
+  const [volEnabled, setVolEnabled] = useState(DEFAULT_SIZING.volEnabled);
+  const [volTarget, setVolTarget] = useState(DEFAULT_SIZING.volTarget);
+  const [volMin, setVolMin] = useState(DEFAULT_SIZING.volMin);
+  const [clampMin, setClampMin] = useState(DEFAULT_SIZING.clampMin);
+  const [clampMax, setClampMax] = useState(DEFAULT_SIZING.clampMax);
+
+  const [dailyLoss, setDailyLoss] = useState(DEFAULT_SIZING.dailyLoss);
+  const [perNameCap, setPerNameCap] = useState(DEFAULT_SIZING.perNameCap);
+
+  // ===== Reward & Logging =====
+  const [rewardBase, setRewardBase] =
+    useState<"delta_nav" | "log_nav">(
+      (DEFAULT_REWARD?.rewardMode as "delta_nav" | "log_nav") ?? "log_nav"
+    );
+  const [wDrawdown, setWDrawdown] =
+    useState(DEFAULT_REWARD?.wDrawdown ?? 0.10);
+  const [wTurnover, setWTurnover] =
+    useState(DEFAULT_REWARD?.wTurnover ?? 0.005);
+  const [wVol, setWVol] = useState(DEFAULT_REWARD?.wVol ?? 0.0);
+  const [wLeverage, setWLeverage] =
+    useState(DEFAULT_REWARD?.wLeverage ?? 0.0);
+  const [saveTb, setSaveTb] = useState(true);
+  const [saveActions, setSaveActions] = useState(true);
+  const [saveRegime, setSaveRegime] = useState(true);
 
   // ===== Run state =====
   const [jobId, setJobId] = useState<string | null>(null);
@@ -195,21 +132,18 @@ export default function NewTraining({
   const [artifacts, setArtifacts] = useState<RunArtifacts | null>(null);
   const [includeModel, setIncludeModel] = useState(true);
 
-  // ===== Submit State =====
+  // ===== Submit state =====
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [progress, setProgress] = useState<string | null>(null);
 
-  // ===== Poller =====
-  const isRunning = useMemo(
-    () => !!status && !TERMINAL.includes(status.status),
-    [status]
-  );
+  const isRunning = useMemo(() => !!status && !TERMINAL.includes(status.status), [status]);
 
+  // ===== Poller =====
   useEffect(() => {
     if (!jobId) return;
     let timer: any;
-    let delay = 5000; // base delay
+    let delay = 5000;
     let running = true;
     let busy = false;
     let es: EventSource | null = null;
@@ -223,9 +157,6 @@ export default function NewTraining({
 
     const tick = async () => {
       if (!running || busy) return schedule(delay);
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
-        return schedule(Math.max(delay, 15000));
-      }
       busy = true;
       try {
         const { data: st } = await api.get<JobStatusResponse>(`/stockbot/runs/${jobId}`);
@@ -239,25 +170,18 @@ export default function NewTraining({
           running = false;
           return;
         }
-        delay = 5000; // reset on success
+        delay = 5000;
         schedule(delay);
-      } catch (e: any) {
-        // 429 backoff with optional Retry-After
-        const retryAfter = (e as any)?.status === 429 ? parseInt((e as any)?.response?.headers?.["retry-after"]) * 1000 : NaN;
-        if (Number.isFinite(retryAfter) && retryAfter > 0) {
-          delay = Math.min(Math.max(retryAfter, delay * 1.25), 60000);
-        } else {
-          delay = Math.min(delay * 1.7, 60000);
-        }
+      } catch {
+        delay = Math.min(delay * 1.7, 60000);
         schedule(delay);
       } finally {
         busy = false;
       }
     };
 
-    // Try WebSocket first; fallback to SSE, then polling
     try {
-      const wsUrl = buildUrl(`/api/stockbot/runs/${jobId}/ws`).replace(/^http/, 'ws');
+      const wsUrl = buildUrl(`/api/stockbot/runs/${jobId}/ws`).replace(/^http/, "ws");
       ws = new WebSocket(wsUrl);
       ws.onmessage = (ev) => {
         try {
@@ -271,14 +195,17 @@ export default function NewTraining({
                 setArtifacts(a);
               } catch {}
             })();
-            try { ws && ws.close(); } catch {}
+            try {
+              ws && ws.close();
+            } catch {}
             running = false;
           }
         } catch {}
       };
       ws.onerror = () => {
-        try { ws && ws.close(); } catch {}
-        // SSE fallback
+        try {
+          ws && ws.close();
+        } catch {}
         const url = buildUrl(`/api/stockbot/runs/${jobId}/stream`);
         es = new EventSource(url);
         es.onmessage = (ev) => {
@@ -307,7 +234,16 @@ export default function NewTraining({
       schedule(0);
     }
 
-    return () => { running = false; clearTimeout(timer); try { es && es.close(); } catch {}; try { ws && ws.close(); } catch {} };
+    return () => {
+      running = false;
+      clearTimeout(timer);
+      try {
+        es && es.close();
+      } catch {}
+      try {
+        ws && ws.close();
+      } catch {}
+    };
   }, [jobId]);
 
   const cancelThisRun = async () => {
@@ -326,118 +262,110 @@ export default function NewTraining({
     setStatus(null);
     setJobId(null);
 
-    try {
-      const payload: TrainPayload = {
-        config_path: "stockbot/env/env.example.yaml",
+    // ---- Preflight guards ----
+    if (!ppoDivisible(nSteps, batchSize)) {
+      setError("PPO: batch_size should divide n_steps (or n_steps × n_envs).");
+      setSubmitting(false);
+      setProgress(null);
+      return;
+    }
+    if (volEnabled && clampMin === 0 && clampMax === 0) {
+      setError("Vol target clamps are 0/0 → exposure will pin near zero. Use e.g. min=0.25, max=2.0.");
+      setSubmitting(false);
+      setProgress(null);
+      return;
+    }
+    if (mappingMode === "tanh_leverage" && grossLevCap <= 1.0) {
+      setError("tanh_leverage requires gross_leverage_cap > 1.0 to be useful.");
+      setSubmitting(false);
+      setProgress(null);
+      return;
+    }
 
-        symbols: symbols.split(",").map((s) => s.trim()).filter(Boolean),
+    try {
+      const payload: TrainPayload = buildTrainPayload({
+        symbols: symbols.split(",").map(s => s.trim()).join(","), // normalize
         start,
         end,
         interval,
         adjusted,
-
-        fees: {
-          commission_per_share: safeNum(commissionPerShare, 0),
-          commission_pct_notional: safeNum(commissionPct, 0),
-          slippage_bps: safeNum(slippageBps, 0),
-          borrow_fee_apr: safeNum(borrowFeeApr, 0),
-        },
-
-        margin: {
-          max_gross_leverage: safeNum(maxGrossLev, 1),
-          
-          maintenance_margin: safeNum(maintenanceMargin, 0.25),
-          cash_borrow_apr: safeNum(cashBorrowApr, 0.05),
-          intraday_only: !!intradayOnly,
-        },
-
-        exec: {
-          order_type: orderType,
-          limit_offset_bps: safeNum(limitOffsetBps, 0),
-          participation_cap: safeNum(participationCap, 0.1),
-          impact_k: safeNum(impactK, 0),
-        },
-
-        episode: {
-          lookback: safeNum(lookback, 64),
-          max_steps: episodeMaxSteps ?? undefined,
-          start_cash: safeNum(startCash, 100000),
-          allow_short: !!allowShort,
-          rebalance_eps: safeNum(rebalanceEps, 0),
-          randomize_start: !!randomizeStart,
-          horizon: horizon ?? undefined,
-          mapping_mode: mappingMode,
-          invest_max: safeNum(investMax, 0.85),
-          max_step_change: safeNum(maxStepChange, 0.08),
-        },
-
-        features: {
-          use_custom_pipeline: !!useCustomPipeline,
-          window: safeNum(featureWindow, lookback),
-          indicators: indicators
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean),
-        },
-
-        reward: {
-          mode: rewardMode,
-          w_drawdown: safeNum(wDrawdown, 0),
-          w_turnover: safeNum(wTurnover, 0),
-          w_vol: safeNum(wVol, 0),
-          vol_window: safeNum(volWindow, 10),
-          w_leverage: safeNum(wLeverage, 0),
-          stop_eq_frac: safeNum(stopEqFrac, 0),
-          ...(sharpeWindow ? { sharpe_window: safeNum(sharpeWindow, 0) } : {}),
-          ...(sharpeScale ? { sharpe_scale: safeNum(sharpeScale, 0) } : {}),
-        },
-
-        normalize,
+        lookback,
+        trainSplit,
+        featureSet,
+        rsi,
+        macd,
+        bbands,
+        normalizeObs,
+        embargo,
+        commissionPerShare,
+        takerFeeBps,
+        makerRebateBps,
+        halfSpreadBps,
+        impactK,
+        fillPolicy,
+        vwapMinutes,
+        maxParticipation,
+        cvFolds,
+        cvEmbargo,
+        regimeEnabled,
+        regimeStates,
+        regimeFeatures,
+        appendBeliefs,
         policy,
-        timesteps: safeNum(timesteps, 0),
-        seed: safeNum(seed, 0),
-        out_tag: outTag,
-
-        // PPO HPs
-        n_steps: safeNum(nSteps, 4096),
-        batch_size: safeNum(batchSize, 1024),
-        learning_rate: safeNum(learningRate, 3e-5),
-        gamma: safeNum(gamma, 0.997),
-        gae_lambda: safeNum(gaeLambda, 0.985),
-        clip_range: safeNum(clipRange, 0.15),
-        entropy_coef: safeNum(entropyCoef, 0.04),
-        vf_coef: safeNum(vfCoef, 1.0),
-        max_grad_norm: safeNum(maxGradNorm, 1.0),
-        dropout: safeNum(dropout, 0.1),
-      };
+        totalTimesteps,
+        nSteps,
+        batchSize,
+        learningRate,
+        gamma,
+        gaeLambda,
+        clipRange,
+        entCoef,
+        vfCoef,
+        maxGradNorm,
+        dropout,
+        seed,
+        mappingMode,
+        investMax,
+        grossLevCap,
+        maxStepChange,
+        rebalanceEps,
+        kellyEnabled,
+        kellyLambda,
+        kellyFMax,
+        kellyEmaAlpha,
+        volEnabled,
+        volTarget,
+        volMin,
+        clampMin,
+        clampMax,
+        dailyLoss,
+        perNameCap,
+        rewardBase,
+        wDrawdown,
+        wTurnover,
+        wVol,
+        wLeverage,
+        saveTb,
+        saveActions,
+        saveRegime,
+      });
 
       const { data: resp } = await api.post<{ job_id: string }>("/stockbot/train", payload);
       if (!resp?.job_id) throw new Error("No job_id returned");
       setJobId(resp.job_id);
       setProgress("Job started. Polling status…");
-
-      addRecentRun({
-        id: resp.job_id,
-        type: "train",
-        status: "QUEUED",
-        created_at: new Date().toISOString(),
-      });
+      addRecentRun({ id: resp.job_id, type: "train", status: "QUEUED", created_at: new Date().toISOString() });
       onJobCreated(resp.job_id);
     } catch (e: any) {
       setError(e?.message ?? String(e));
       setSubmitting(false);
       setProgress(null);
       return;
-    } finally {
-      // keep submitting=true and disable Start button while polling
-    }
+    } finally {}
   };
 
-  const bundleHref = jobId
-    ? `/api/stockbot/runs/${jobId}/bundle?include_model=${includeModel ? 1 : 0}`
-    : undefined;
+  const bundleHref = jobId ? `/api/stockbot/runs/${jobId}/bundle?include_model=${includeModel ? 1 : 0}` : undefined;
 
-  // ===== UI =====
   return (
     <Card className="p-5 space-y-6">
       <div className="flex items-center justify-between">
@@ -450,7 +378,7 @@ export default function NewTraining({
           >
             Cancel
           </Button>
-          <Button onClick={onSubmit} disabled={submitting || isRunning === true}>
+          <Button onClick={onSubmit} disabled={submitting || isRunning}>
             {submitting && !status ? "Submitting…" : isRunning ? "Running…" : "Start Training"}
           </Button>
         </div>
@@ -475,157 +403,155 @@ export default function NewTraining({
       )}
       {error && <div className="text-sm text-red-600">{error}</div>}
 
-      <QuickSetupSection
-        normalize={normalize}
-        setNormalize={setNormalize}
-        policy={policy}
-        setPolicy={setPolicy}
-        timesteps={timesteps}
-        setTimesteps={setTimesteps}
-        seed={seed}
-        setSeed={setSeed}
-        outTag={outTag}
-        setOutTag={setOutTag}
-        setSymbols={setSymbols}
-      />
+      <Accordion type="multiple" className="w-full">
+        <DatasetSection
+          symbols={symbols}
+          setSymbols={setSymbols}
+          start={start}
+          setStart={setStart}
+          end={end}
+          setEnd={setEnd}
+          interval={interval}
+          setInterval={setInterval}
+          adjusted={adjusted}
+          setAdjusted={setAdjusted}
+          lookback={lookback}
+          setLookback={setLookback}
+          trainEvalSplit={trainSplit}
+          setTrainEvalSplit={setTrainSplit}
+        />
 
-      <DataEnvironmentSection
-        symbols={symbols}
-        setSymbols={setSymbols}
-        start={start}
-        setStart={setStart}
-        end={end}
-        setEnd={setEnd}
-        interval={interval}
-        setInterval={setInterval}
-        adjusted={adjusted}
-        setAdjusted={setAdjusted}
-      />
+        <FeaturesSection
+          featureSet={featureSet}
+          setFeatureSet={setFeatureSet}
+          rsi={rsi}
+          setRsi={setRsi}
+          macd={macd}
+          setMacd={setMacd}
+          bbands={bbands}
+          setBbands={setBbands}
+          normalize={normalizeObs}
+          setNormalize={setNormalizeObs}
+          embargo={embargo}
+          setEmbargo={setEmbargo}
+        />
 
-      <Card className="p-4 space-y-3">
-        <div className="font-medium">Advanced Settings</div>
-        <Accordion type="multiple" className="w-full">
-          <CostsSection
-            commissionPct={commissionPct}
-            setCommissionPct={setCommissionPct}
-            commissionPerShare={commissionPerShare}
-            setCommissionPerShare={setCommissionPerShare}
-            slippageBps={slippageBps}
-            setSlippageBps={setSlippageBps}
-            borrowFeeApr={borrowFeeApr}
-            setBorrowFeeApr={setBorrowFeeApr}
-          />
-          <ExecutionSection
-            orderType={orderType}
-            setOrderType={setOrderType}
-            limitOffsetBps={limitOffsetBps}
-            setLimitOffsetBps={setLimitOffsetBps}
-            participationCap={participationCap}
-            setParticipationCap={setParticipationCap}
-            impactK={impactK}
-            setImpactK={setImpactK}
-          />
-          <PPOHyperparamsSection
-            nSteps={nSteps}
-            setNSteps={setNSteps}
-            batchSize={batchSize}
-            setBatchSize={setBatchSize}
-            learningRate={learningRate}
-            setLearningRate={setLearningRate}
-            gamma={gamma}
-            setGamma={setGamma}
-            gaeLambda={gaeLambda}
-            setGaeLambda={setGaeLambda}
-            clipRange={clipRange}
-            setClipRange={setClipRange}
-            entropyCoef={entropyCoef}
-            setEntropyCoef={setEntropyCoef}
-            vfCoef={vfCoef}
-            setVfCoef={setVfCoef}
-            maxGradNorm={maxGradNorm}
-            setMaxGradNorm={setMaxGradNorm}
-            dropout={dropout}
-            setDropout={setDropout}
-          />
-        </Accordion>
-      </Card>
+        <CostsExecutionSection
+          commissionPerShare={commissionPerShare}
+          setCommissionPerShare={setCommissionPerShare}
+          takerFeeBps={takerFeeBps}
+          setTakerFeeBps={setTakerFeeBps}
+          makerRebateBps={makerRebateBps}
+          setMakerRebateBps={setMakerRebateBps}
+          halfSpreadBps={halfSpreadBps}
+          setHalfSpreadBps={setHalfSpreadBps}
+          impactK={impactK}
+          setImpactK={setImpactK}
+          fillPolicy={fillPolicy}
+          setFillPolicy={setFillPolicy}
+          vwapMinutes={vwapMinutes}
+          setVwapMinutes={setVwapMinutes}
+          maxParticipation={maxParticipation}
+          setMaxParticipation={setMaxParticipation}
+        />
 
-      <RiskMarginSection
-        maxGrossLev={maxGrossLev}
-        setMaxGrossLev={setMaxGrossLev}
-        maintenanceMargin={maintenanceMargin}
-        setMaintenanceMargin={setMaintenanceMargin}
-        cashBorrowApr={cashBorrowApr}
-        setCashBorrowApr={setCashBorrowApr}
-        allowShort={allowShort}
-        setAllowShort={setAllowShort}
-        intradayOnly={intradayOnly}
-        setIntradayOnly={setIntradayOnly}
-      />
+        <CVStressSection nFolds={cvFolds} setNFolds={setCvFolds} embargo={cvEmbargo} setEmbargo={setCvEmbargo} />
 
-      <EpisodeSection
-        lookback={lookback}
-        setLookback={setLookback}
-        horizon={horizon}
-        setHorizon={setHorizon}
-        episodeMaxSteps={episodeMaxSteps}
-        setEpisodeMaxSteps={setEpisodeMaxSteps}
-        startCash={startCash}
-        setStartCash={setStartCash}
-        rebalanceEps={rebalanceEps}
-        setRebalanceEps={setRebalanceEps}
-        mappingMode={mappingMode}
-        setMappingMode={setMappingMode}
-        investMax={investMax}
-        setInvestMax={setInvestMax}
-        maxStepChange={maxStepChange}
-        setMaxStepChange={setMaxStepChange}
-        randomizeStart={randomizeStart}
-        setRandomizeStart={setRandomizeStart}
-      />
+        <RegimeSection
+          enabled={regimeEnabled}
+          setEnabled={setRegimeEnabled}
+          nStates={regimeStates}
+          setNStates={setRegimeStates}
+          features={regimeFeatures}
+          setFeatures={setRegimeFeatures}
+          append={appendBeliefs}
+          setAppend={setAppendBeliefs}
+        />
 
-      <FeaturesSection
-        useCustomPipeline={useCustomPipeline}
-        setUseCustomPipeline={setUseCustomPipeline}
-        featureWindow={featureWindow}
-        setFeatureWindow={setFeatureWindow}
-        indicators={indicators}
-        setIndicators={setIndicators}
-      />
+        <ModelSection
+          policy={policy}
+          setPolicy={setPolicy}
+          totalTimesteps={totalTimesteps}
+          setTotalTimesteps={setTotalTimesteps}
+          nSteps={nSteps}
+          setNSteps={setNSteps}
+          batchSize={batchSize}
+          setBatchSize={setBatchSize}
+          learningRate={learningRate}
+          setLearningRate={setLearningRate}
+          gamma={gamma}
+          setGamma={setGamma}
+          gaeLambda={gaeLambda}
+          setGaeLambda={setGaeLambda}
+          clipRange={clipRange}
+          setClipRange={setClipRange}
+          entCoef={entCoef}
+          setEntCoef={setEntCoef}
+          vfCoef={vfCoef}
+          setVfCoef={setVfCoef}
+          maxGradNorm={maxGradNorm}
+          setMaxGradNorm={setMaxGradNorm}
+          dropout={dropout}
+          setDropout={setDropout}
+          seed={seed}
+          setSeed={setSeed}
+        />
 
-      <RewardSection
-        rewardMode={rewardMode}
-        setRewardMode={setRewardMode}
-        wDrawdown={wDrawdown}
-        setWDrawdown={setWDrawdown}
-        wTurnover={wTurnover}
-        setWTurnover={setWTurnover}
-        wVol={wVol}
-        setWVol={setWVol}
-        volWindow={volWindow}
-        setVolWindow={setVolWindow}
-        wLeverage={wLeverage}
-        setWLeverage={setWLeverage}
-        stopEqFrac={stopEqFrac}
-        setStopEqFrac={setStopEqFrac}
-        sharpeWindow={sharpeWindow}
-        setSharpeWindow={setSharpeWindow}
-        sharpeScale={sharpeScale}
-        setSharpeScale={setSharpeScale}
-      />
+        <SizingSection
+          mappingMode={mappingMode}
+          setMappingMode={setMappingMode}
+          investMax={investMax}
+          setInvestMax={setInvestMax}
+          grossLevCap={grossLevCap}
+          setGrossLevCap={setGrossLevCap}
+          maxStepChange={maxStepChange}
+          setMaxStepChange={setMaxStepChange}
+          rebalanceEps={rebalanceEps}
+          setRebalanceEps={setRebalanceEps}
+          kellyEnabled={kellyEnabled}
+          setKellyEnabled={setKellyEnabled}
+          kellyLambda={kellyLambda}
+          setKellyLambda={setKellyLambda}
+          kellyFMax={kellyFMax}
+          setKellyFMax={setKellyFMax}
+          kellyEmaAlpha={kellyEmaAlpha}
+          setKellyEmaAlpha={setKellyEmaAlpha}
+          volEnabled={volEnabled}
+          setVolEnabled={setVolEnabled}
+          volTarget={volTarget}
+          setVolTarget={setVolTarget}
+          volMin={volMin}
+          setVolMin={setVolMin}
+          clampMin={clampMin}
+          setClampMin={setClampMin}
+          clampMax={clampMax}
+          setClampMax={setClampMax}
+          interval={interval}
+          dailyLoss={dailyLoss}
+          setDailyLoss={setDailyLoss}
+          perNameCap={perNameCap}
+          setPerNameCap={setPerNameCap}
+        />
 
-      <TrainingSection
-        normalize={normalize}
-        setNormalize={setNormalize}
-        policy={policy}
-        setPolicy={setPolicy}
-        timesteps={timesteps}
-        setTimesteps={setTimesteps}
-        seed={seed}
-        setSeed={setSeed}
-        outTag={outTag}
-        setOutTag={setOutTag}
-      />
+        <RewardLoggingSection
+          rewardBase={rewardBase}
+          setRewardBase={setRewardBase}
+          wDrawdown={wDrawdown}
+          setWDrawdown={setWDrawdown}
+          wTurnover={wTurnover}
+          setWTurnover={setWTurnover}
+          wVol={wVol}
+          setWVol={setWVol}
+          wLeverage={wLeverage}
+          setWLeverage={setWLeverage}
+          saveTb={saveTb}
+          setSaveTb={setSaveTb}
+          saveActions={saveActions}
+          setSaveActions={setSaveActions}
+          saveRegime={saveRegime}
+          setSaveRegime={setSaveRegime}
+        />
+      </Accordion>
 
       {jobId && TERMINAL.includes(status?.status as any) && (
         <DownloadsSection

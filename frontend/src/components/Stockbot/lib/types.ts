@@ -24,11 +24,12 @@ export type RunArtifacts = {
   equity: string | null;
   orders: string | null;
   trades: string | null;
-  summary: string | null;
-  config: string | null;
-  model?: string | null;
-  job_log?: string | null;
-};
+    summary: string | null;
+    config: string | null;
+    model?: string | null;
+    job_log?: string | null;
+    payload?: string | null;
+  };
 export interface Metrics {
   total_return: number;
   cagr: number;
