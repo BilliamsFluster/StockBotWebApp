@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Portfolio sizing helpers."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import numpy as np
 
 
@@ -48,6 +48,24 @@ class VolTargetConfig:
     clamp: tuple[float, float] = (0.25, 2.0)
 
 
+@dataclass
+class SizingState:
+    """Mutable state for sizing layers."""
+
+    f_prev: float = 1.0
+    realized_var_ewma: float = 0.0
+
+
+@dataclass
+class SizingConfig:
+    """Configuration for :func:`apply_sizing_layers`."""
+
+    kelly: KellyConfig = field(default_factory=KellyConfig)
+    vol_target: VolTargetConfig = field(default_factory=VolTargetConfig)
+    vol_ema_alpha: float = 0.2
+    state: SizingState = field(default_factory=SizingState)
+
+
 def vol_target_scale(realized_ann_vol: float, cfg: VolTargetConfig) -> float:
     """Scale weights to hit a volatility target."""
 
@@ -57,3 +75,36 @@ def vol_target_scale(realized_ann_vol: float, cfg: VolTargetConfig) -> float:
     scale = cfg.annual_target / denom
     scale = float(np.clip(scale, cfg.clamp[0], cfg.clamp[1]))
     return scale
+
+
+def apply_sizing_layers(
+    w_raw: np.ndarray,
+    gamma_t: float,
+    returns_history: list[float],
+    cfg: SizingConfig,
+) -> tuple[np.ndarray, dict]:
+    """Apply Kelly and volatility targeting layers."""
+
+    if returns_history:
+        mu_hat = float(np.mean(returns_history))
+        var_hat = float(np.var(returns_history))
+        f = fractional_kelly_scalar(mu_hat, var_hat, cfg.kelly, cfg.state.f_prev)
+        cfg.state.f_prev = f
+        r = returns_history[-1]
+        prev = cfg.state.realized_var_ewma
+        cfg.state.realized_var_ewma = (
+            (1 - cfg.vol_ema_alpha) * prev + cfg.vol_ema_alpha * (r ** 2)
+        )
+    else:
+        f = 1.0
+    realized_vol = float(np.sqrt(cfg.state.realized_var_ewma) * np.sqrt(252))
+    vol_scale = vol_target_scale(realized_vol, cfg.vol_target)
+
+    w = w_raw * f * vol_scale * float(gamma_t)
+    trace = {
+        "f_kelly": float(f),
+        "vol_scale": float(vol_scale),
+        "gross_lev": float(np.sum(np.abs(w))),
+        "realized_vol": realized_vol,
+    }
+    return w.astype(np.float32), trace

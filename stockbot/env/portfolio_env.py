@@ -11,6 +11,13 @@ from .orders import Fill
 from .portfolio import Portfolio
 from stockbot.backtest.fills import plan_fills
 from stockbot.backtest.execution_costs import CostParams, apply_costs
+from stockbot.strategy import (
+    SizingConfig,
+    apply_sizing_layers,
+    GuardsConfig,
+    RiskState,
+    apply_caps_and_guards,
+)
 import pandas as pd
 from pathlib import Path
 
@@ -106,6 +113,16 @@ class PortfolioTradingEnv(gym.Env):
         self._eq_gross: List[float] = []
         self._eq_net: List[float] = []
         self._eq_ts: List[pd.Timestamp] = []
+
+        self.sizing_cfg = SizingConfig()
+        self.guards_cfg = GuardsConfig()
+        self.risk_state = RiskState(
+            nav_day_open=self._equity0,
+            nav_current=self._equity0,
+            realized_vol_ewma=0.0,
+        )
+        self.sizing_trace: List[Dict] = []
+        self.risk_events: List[Dict] = []
 
     # ---------- helpers ----------
     def _ohlc(self, sym: str, i: int):
@@ -223,6 +240,14 @@ class PortfolioTradingEnv(gym.Env):
         self._eq_gross.clear()
         self._eq_net.clear()
         self._eq_ts.clear()
+        self.sizing_cfg.state = SizingConfig().state
+        self.risk_state = RiskState(
+            nav_day_open=self._equity0,
+            nav_current=self._equity0,
+            realized_vol_ewma=0.0,
+        )
+        self.sizing_trace.clear()
+        self.risk_events.clear()
 
         return self._obs(self._i), {"i": self._i, "config": asdict(self.cfg)}
 
@@ -252,6 +277,16 @@ class PortfolioTradingEnv(gym.Env):
             for k in range(self.N):
                 if abs(target_w[k] - prev_w[k]) < w_eps:
                     target_w[k] = prev_w[k]
+
+        now_ts = int(self.src.index[self._i].timestamp())
+        target_w, trace = apply_sizing_layers(target_w, 1.0, self._ret_hist, self.sizing_cfg)
+        self.risk_state.realized_vol_ewma = trace["realized_vol"]
+        target_w, events, self.risk_state = apply_caps_and_guards(
+            target_w, None, self.guards_cfg, self.risk_state, now_ts
+        )
+        self.sizing_trace.append({"ts": self.src.index[self._i], **trace})
+        self.risk_events.extend(events)
+        self.risk_state.nav_day_open = self.risk_state.nav_current
 
         # ---- plan fills using next bar open and ADV
         prices_next = np.array([self._ohlc(sym, self._i)[0] for sym in self.syms], dtype=np.float64)
@@ -357,6 +392,8 @@ class PortfolioTradingEnv(gym.Env):
         self._eq_ts.append(self.src.index[self._i - 1])
         self._eq_net.append(eq_close_t)
         self._eq_gross.append(eq_close_t + total_cost)
+        self.risk_state.nav_current = eq_close_t
+        self.risk_state.nav_day_open = eq_close_t
         for k in range(self.N):
             if abs(target_w[k] - prev_w[k]) > w_eps:
                 self._hold_since[k] = 0
@@ -426,3 +463,7 @@ class PortfolioTradingEnv(gym.Env):
         if self._eq_ts:
             pd.DataFrame({"ts": self._eq_ts, "equity": self._eq_gross}).to_csv(p / "equity_gross.csv", index=False)
             pd.DataFrame({"ts": self._eq_ts, "equity": self._eq_net}).to_csv(p / "equity_net.csv", index=False)
+        if self.sizing_trace:
+            pd.DataFrame(self.sizing_trace).to_csv(p / "sizing_trace.csv", index=False)
+        if self.risk_events:
+            pd.DataFrame(self.risk_events).to_json(p / "risk_events.json", orient="records")
