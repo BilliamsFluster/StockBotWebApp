@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 import numpy as np
+import pandas as pd
 
 
 @dataclass
@@ -38,6 +39,11 @@ def apply_caps_and_guards(
     events: List[Dict] = []
     w = w_proposed.copy()
 
+    if risk_state.halted_until_ts is not None and now_ts < risk_state.halted_until_ts:
+        w[:] = 0.0
+        events.append({"ts": now_ts, "type": "halt_active"})
+        return w, events, risk_state
+
     # Per-name cap
     per_cap = cfg.per_name_cap
     if per_cap > 0:
@@ -54,10 +60,18 @@ def apply_caps_and_guards(
         events.append({"ts": now_ts, "type": "gross_leverage_cap", "detail": {"scale": scale}})
 
     # Daily loss limit
-    dd_pct = 100 * (risk_state.nav_current - risk_state.nav_day_open) / risk_state.nav_day_open
+    dd_pct = 100 * (risk_state.nav_current - risk_state.nav_day_open) / max(risk_state.nav_day_open, 1e-9)
     if dd_pct <= -cfg.daily_loss_limit_pct:
         w[:] = 0.0
-        risk_state.halted_until_ts = now_ts
-        events.append({"ts": now_ts, "type": "daily_dd_halt", "detail": {"dd_pct": float(dd_pct)}})
+        now = pd.Timestamp(now_ts, unit="s", tz="America/New_York")
+        next_sess = (now + pd.Timedelta(days=1)).normalize()
+        risk_state.halted_until_ts = int(next_sess.timestamp())
+        events.append(
+            {
+                "ts": now_ts,
+                "type": "daily_dd_halt",
+                "detail": {"dd_pct": float(dd_pct)},
+            }
+        )
 
     return w, events, risk_state
