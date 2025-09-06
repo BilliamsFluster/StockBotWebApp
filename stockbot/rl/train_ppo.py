@@ -33,6 +33,8 @@ def parse_args():
     # Model/Env knobs
     ap.add_argument("--normalize", action="store_true", help="Enable observation normalization")
     ap.add_argument("--policy", type=str, default="mlp", choices=["mlp", "window_cnn", "window_lstm"])
+    ap.add_argument("--overlay", type=str, default="none", choices=["none", "hmm"],
+                    help="Use a risk overlay with baseline engine (hmm) or none")
 
     # PPO HPs
     ap.add_argument("--n-steps", type=int, default=1024)
