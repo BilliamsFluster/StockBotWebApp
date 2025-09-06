@@ -63,7 +63,7 @@ def heartbeat_ok(last_bar_ts: int, now_ts: int, max_delay_sec: int, broker_ok: b
 
 @dataclass
 class LiveGuardrails:
-    cfg: CanaryConfig = CanaryConfig()
+    cfg: CanaryConfig = field(default_factory=CanaryConfig)
     state: CanaryState = field(default_factory=CanaryState)
     audit_path: Path = Path("live_audit.jsonl")
     max_delay_sec: int = 300
