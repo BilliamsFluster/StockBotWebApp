@@ -77,6 +77,15 @@ Run lifecycle
   - PPO knobs: `n_steps`, `batch_size`, `learning_rate`, `gamma`, `gae_lambda`, `clip_range`, `ent_coef`, `vf_coef`, `max_grad_norm`, `dropout`.
   - Callbacks: `EvalCallback`, `StopTrainingOnRewardThreshold`, and diagnostics with gradient logging.
   - Outputs: `ppo_policy.zip`, TensorBoard event files, CSV logs, `evaluations.npz`.
+
+- HMM/PPO overlay (new):
+  - The trainer accepts `--overlay hmm` which wraps the env with `RiskOverlayWrapper` using an `HMMEngine` baseline.
+  - The baseline produces per-asset target weights from recent window returns (Kelly-style sizing) and can apply regime-aware scaling.
+  - PPO controls a compact 3D action in `[-1,1]`: exposure gate, Kelly scale, and volatility multiplier; these map back to the inner env action.
+  - Portfolio env mapping:
+    - `tanh_leverage`: weights are mapped via inverse `tanh` (atanh) to logits.
+    - `simplex_cash`: long-only approximation using softmax logits for assets plus a gate logit for invest fraction.
+  - Single-asset env: action maps directly to the target position in `[-1,+1]`.
 - Backtest entrypoint: `python -m stockbot.backtest.run` to evaluate a saved `.zip` or a built‑in baseline strategy.
 
 ---
@@ -354,13 +363,17 @@ This favours steady policy updates and strong risk control. For bear markets, co
 
 ## 15. Regime/HMM Module
 
-- Library: `stockbot/signals/hmm_regime.py` implements a Gaussian HMM with diagonal covariances; saves and loads parameters (`.npz`).
+ - Libraries:
+   - `stockbot/prob/*`: probability/HMM helpers used by the API (train/infer/walk-forward).
+   - `stockbot/signals/hmm_regime.py`: a focused Gaussian HMM wrapper used in data prep/experiments.
 - API: FastAPI routes under `/api/stockbot/prob`:
-  - POST `/train`: trains a small HMM on a float series, writes artifacts to a directory.
-  - POST `/infer`: returns posteriors, p_up, expected return and variance.
+  - POST `/train`: trains an HMM on a numeric series and writes artifacts to an output directory.
+  - POST `/infer`: loads a saved model and returns posteriors, p_up, expected return and variance.
 - Training‑time prep: `stockbot/pipeline.py:prepare_from_payload()` optionally fits an HMM on rolled windows and appends `regime_posteriors` into the returned metadata when `payload.regime` is provided.
 - Env integration: `PortfolioTradingEnv` accepts an optional `regime_gamma` (posteriors) and `RegimeScalerConfig`; when present, an exposure multiplier is applied in sizing (`regime_exposure_multiplier`).
-- Frontend knobs: `regime.enabled|n_states|features|append_beliefs_to_obs` are accepted by the backend models; wiring of beliefs into PPO observations is planned (payload captured; beliefs are produced at prep time; training env wiring is in progress).
+- PPO integration:
+  - Overlay path: `--overlay hmm` wraps the env so PPO acts as a risk/size controller around an HMM/ProbPolicy baseline (`RiskOverlayWrapper` + `HMMEngine`).
+  - Direct beliefs path: appending `gamma` to PPO observations from the training payload is planned; the env supports `gamma`, and data prep can produce it; API wiring will follow.
 
 Artifacts (planned/partial):
 - `regime_posteriors.npz`/timeline CSV and state KPIs are planned; current HMM APIs return arrays via `/infer` and training saves model weights via the prob module.
@@ -414,6 +427,7 @@ UI “Training Results” (planned)
 
 CLI usage
 - Train: `python -m stockbot.rl.train_ppo --config stockbot/env/env.example.yaml --policy window_cnn --normalize --timesteps 1_000_000 --out ppo_cnn_run`
+- Train with HMM overlay: `python -m stockbot.rl.train_ppo --config stockbot/env/env.example.yaml --policy window_cnn --overlay hmm --normalize --timesteps 300_000 --out ppo_cnn_overlay`
 - Backtest (baseline): `python -m stockbot.backtest.run --config stockbot/env/env.example.yaml --policy equal --start 2022-01-01 --end 2022-12-31 --out equal_eval`
 - Backtest (SB3 zip): `python -m stockbot.backtest.run --config stockbot/env/env.example.yaml --policy stockbot/runs/ppo_cnn_run/ppo_policy.zip --start ... --end ... --out ppo_eval`
 
