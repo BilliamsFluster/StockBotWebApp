@@ -4,8 +4,10 @@ import multer from "multer";
 import {
   startTrainProxy,
   startBacktestProxy,
+  startCvProxy,
   listRunsProxy,
   getRunProxy,
+  deleteRunProxy,
   uploadPolicyProxy,
   getRunArtifactsProxy,
   getRunArtifactFileProxy,
@@ -33,6 +35,7 @@ const router = express.Router();
 // Kick off jobs
 router.post("/train", protectRoute, startTrainProxy);
 router.post("/backtest", protectRoute, startBacktestProxy);
+router.post("/cv", protectRoute, startCvProxy);
 
 // Live trading controls
 router.post("/trade/start", protectRoute, startLiveTradingProxy);
@@ -42,6 +45,7 @@ router.get("/trade/status", protectRoute, getLiveTradingStatusProxy);
 // Query jobs
 router.get("/runs", protectRoute, listRunsProxy);
 router.get("/runs/:id", protectRoute, getRunProxy);
+router.delete("/runs/:id", protectRoute, deleteRunProxy);
 router.get("/runs/:id/artifacts", protectRoute, getRunArtifactsProxy);
 
 // Stream a specific artifact (metrics, equity, trades, orders, summary, config, model, job_log)

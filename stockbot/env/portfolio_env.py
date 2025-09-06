@@ -7,12 +7,20 @@ from typing import Dict, List
 
 from .config import EnvConfig
 from .data_adapter import PanelSource
-from .orders import Order
-from .execution import ExecutionModel
+from .orders import Fill
 from .portfolio import Portfolio
-from .broker_adapters import SimBroker  # NOTE: corrected import
-
-
+from stockbot.backtest.fills import plan_fills
+from stockbot.backtest.execution_costs import CostParams, apply_costs
+from stockbot.strategy import (
+    SizingConfig,
+    apply_sizing_layers,
+    GuardsConfig,
+    RiskState,
+    apply_caps_and_guards,
+    RegimeScalerConfig,
+    regime_exposure_multiplier,
+)
+import pandas as pd
 class PortfolioTradingEnv(gym.Env):
     """
     Multi-asset portfolio env with target-weights actions (continuous).
@@ -26,13 +34,22 @@ class PortfolioTradingEnv(gym.Env):
     """
     metadata = {"render_modes": []}
 
-    def __init__(self, panel: PanelSource, cfg: EnvConfig):
+    def __init__(
+        self,
+        panel: PanelSource,
+        cfg: EnvConfig,
+        *,
+        regime_gamma: np.ndarray | None = None,
+        regime_scaler: RegimeScalerConfig | None = None,
+    ):
         super().__init__()
         self.cfg = cfg
         self.src = panel
         self.syms = panel.symbols
         self.N = len(self.syms)
         self.lookback = cfg.episode.lookback
+        self._gamma_seq = regime_gamma
+        self._regime_scaler = regime_scaler
 
         required = self.src.cols_required()
         for s in self.syms:
@@ -47,13 +64,21 @@ class PortfolioTradingEnv(gym.Env):
                 f"Env has only {len(self.src.index)} rows after features; "
                 f"need ≥ {min_needed} for lookback={self.lookback}."
             )
+        if self._gamma_seq is not None and len(self._gamma_seq) != len(self.src.index):
+            raise RuntimeError("regime_gamma length must match panel length")
 
         self._cols = list(required)
         F = len(self._cols)
-        self.observation_space = spaces.Dict({
+        obs_spaces = {
             "window": spaces.Box(low=-np.inf, high=np.inf, shape=(self.lookback, self.N, F), dtype=np.float32),
-            "portfolio": spaces.Box(low=-np.inf, high=np.inf, shape=(3 + self.N,), dtype=np.float32)
-        })
+            # portfolio: [cash_frac, margin_used, drawdown, unrealized, realized,
+            #             rolling_vol, turnover] + weights (N)
+            "portfolio": spaces.Box(low=-np.inf, high=np.inf, shape=(7 + self.N,), dtype=np.float32),
+        }
+        if self._gamma_seq is not None:
+            K = int(self._gamma_seq.shape[1]) if self._gamma_seq.ndim > 1 else 1
+            obs_spaces["gamma"] = spaces.Box(low=0.0, high=1.0, shape=(K,), dtype=np.float32)
+        self.observation_space = spaces.Dict(obs_spaces)
 
         # --- Mapping/turnover knobs (driven via episode.* or env.*)
         self.mapping_mode = getattr(self.cfg.episode, "mapping_mode", getattr(self.cfg, "mapping_mode", "simplex_cash"))
@@ -66,19 +91,25 @@ class PortfolioTradingEnv(gym.Env):
         else:
             self.action_space = spaces.Box(low=-3.0, high=3.0, shape=(self.N,), dtype=np.float32)
 
-        self.exec = ExecutionModel(cfg.exec, cfg.fees)
         self.port = Portfolio(cash=cfg.episode.start_cash, margin=self.cfg.margin, fees=self.cfg.fees)
+
+        # unified cost/impact parameters shared with backtest
+        self.cost = CostParams(
+            commission_per_share=float(self.cfg.fees.commission_per_share),
+            taker_fee_bps=float(getattr(self.cfg.fees, "taker_fee_bps", 0.0)),
+            maker_rebate_bps=float(getattr(self.cfg.fees, "maker_rebate_bps", 0.0)),
+            half_spread_bps=float(
+                getattr(self.cfg.fees, "half_spread_bps", getattr(self.cfg.fees, "slippage_bps", 0.0))
+            ),
+            impact_k=float(getattr(self.cfg.exec, "impact_k", 0.0)),
+        )
+        self.fill_policy = getattr(self.cfg.exec, "fill_policy", "next_open")
+        self.max_participation = float(
+            getattr(self.cfg.exec, "participation_cap", getattr(self.cfg.exec, "max_participation", 1.0))
+        )
 
         self._i0 = self.lookback
         self._i = self._i0
-
-        def _get_next():
-            i = self._i
-            prices = {s: tuple(self._ohlc(s, i)) for s in self.syms}
-            vols = {s: float(self.src.panel[s]["volume"].iloc[i]) for s in self.syms}
-            return prices, vols
-
-        self.broker = SimBroker(self.exec, _get_next)
 
         self._equity0 = cfg.episode.start_cash
         self._equity = self._equity0
@@ -86,6 +117,26 @@ class PortfolioTradingEnv(gym.Env):
         self._ret_hist: List[float] = []
         self._last_weights = np.zeros(self.N, dtype=np.float32)
         self._w_prev_map = None  # for turnover capping in mapping
+        self.min_hold_bars = int(getattr(self.cfg.episode, "min_hold_bars", 0))
+        self._hold_since = np.zeros(self.N, dtype=np.int32)
+        self._turnover_ep = 0.0
+        self._turnover_last = 0.0
+
+        # episode artifacts
+        self.trades: List[Dict] = []
+        self._eq_gross: List[float] = []
+        self._eq_net: List[float] = []
+        self._eq_ts: List[pd.Timestamp] = []
+
+        self.sizing_cfg = SizingConfig()
+        self.guards_cfg = GuardsConfig()
+        self.risk_state = RiskState(
+            nav_day_open=self._equity0,
+            nav_current=self._equity0,
+            realized_vol_ewma=0.0,
+        )
+        self.sizing_trace: List[Dict] = []
+        self.risk_events: List[Dict] = []
 
     # ---------- helpers ----------
     def _ohlc(self, sym: str, i: int):
@@ -107,15 +158,25 @@ class PortfolioTradingEnv(gym.Env):
     def _portfolio_obs(self, prices: Dict[str, float]) -> np.ndarray:
         eq = self.port.value(prices)
         cash_frac = float(np.clip(self.port.cash / max(eq, 1e-9), -10, 10))
-        gross = self.port.gross_exposure(prices, eq)
+        margin_used = self.port.gross_exposure(prices, eq)
         dd = self.port.drawdown(eq)
+        unreal = self.port.unrealized_pnl(prices) / max(self._equity0, 1e-9)
+        realized = (eq - self._equity0 - self.port.unrealized_pnl(prices)) / max(self._equity0, 1e-9)
+        vol = 0.0
+        if len(self._ret_hist) > 1:
+            window = getattr(self.cfg.reward, "vol_window", 20)
+            vol = float(np.std(self._ret_hist[-window:]))
+        turnover = float(self._turnover_last)
         w = self.port.weights(prices)
         weights = np.array([w.get(s, 0.0) for s in self.syms], dtype=np.float32)
-        return np.concatenate([[cash_frac, gross, dd], weights]).astype(np.float32)
+        return np.concatenate([[cash_frac, margin_used, dd, unreal, realized, vol, turnover], weights]).astype(np.float32)
 
     def _obs(self, i):
         prices = self._prices(i - 1)
-        return {"window": self._window_obs(i), "portfolio": self._portfolio_obs(prices)}
+        obs = {"window": self._window_obs(i), "portfolio": self._portfolio_obs(prices)}
+        if self._gamma_seq is not None:
+            obs["gamma"] = self._gamma_seq[i]
+        return obs
 
     # ---------- action mapping ----------
     def _map_action_to_weights(self, a: np.ndarray) -> np.ndarray:
@@ -142,6 +203,8 @@ class PortfolioTradingEnv(gym.Env):
                 delta = np.clip(w - w_prev, -self.max_step_change, self.max_step_change)
                 w = w_prev + delta
             self._w_prev_map = w
+            cap = float(getattr(self.cfg.margin, "max_position_weight", 1.0))
+            w = np.clip(w, -cap, cap)
             return w.astype(np.float32)
 
         # fallback: original long/short mapping with leverage cap
@@ -150,6 +213,8 @@ class PortfolioTradingEnv(gym.Env):
         cap = float(self.cfg.margin.max_gross_leverage)
         if gross > cap:
             x *= (cap / gross)
+        cap_w = float(getattr(self.cfg.margin, "max_position_weight", 1.0))
+        x = np.clip(x, -cap_w, cap_w)
         return x.astype(np.float32)
 
     # ---------- Gym API ----------
@@ -186,60 +251,131 @@ class PortfolioTradingEnv(gym.Env):
         self._ret_hist.clear()
         self._last_weights[:] = 0.0
         self._w_prev_map = None
+        self._hold_since[:] = 0
+        self._turnover_ep = 0.0
+        self.trades.clear()
+        self._eq_gross.clear()
+        self._eq_net.clear()
+        self._eq_ts.clear()
+        self.sizing_cfg.state = SizingConfig().state
+        self.risk_state = RiskState(
+            nav_day_open=self._equity0,
+            nav_current=self._equity0,
+            realized_vol_ewma=0.0,
+        )
+        self.sizing_trace.clear()
+        self.risk_events.clear()
 
         return self._obs(self._i), {"i": self._i, "config": asdict(self.cfg)}
 
     def step(self, action):
         a = np.asarray(action, dtype=np.float32)
-        target_w = self._map_action_to_weights(a)
-
-        # ---- value at previous close (t-1)
         prices_prev_close = self._prices(self._i - 1)  # CLOSE[t-1]
         eq_prev_close = self.port.value(prices_prev_close)
+        prev_w = np.array(
+            [
+                (self.port.positions[sym].qty if sym in self.port.positions else 0.0)
+                * prices_prev_close[sym]
+                for sym in self.syms
+            ],
+            dtype=np.float64,
+        )
+        prev_w = (prev_w / max(eq_prev_close, 1e-9)).astype(np.float32)
 
-        # ---- convert target weights -> target shares using prev close
-        tgt_shares = {}
-        for k, sym in enumerate(self.syms):
-            px = prices_prev_close[sym]
-            tgt_shares[sym] = float((target_w[k] * eq_prev_close) / max(px, 1e-9))
+        target_w = self._map_action_to_weights(a)
+        if self.min_hold_bars > 0:
+            for k in range(self.N):
+                if self._hold_since[k] < self.min_hold_bars and np.sign(target_w[k]) != np.sign(prev_w[k]):
+                    target_w[k] = prev_w[k]
 
-        cur_shares = {sym: (self.port.positions.get(sym).qty if sym in self.port.positions else 0.0)
-                      for sym in self.syms}
-
-        # ---- deltas -> orders (skip micro-rebalances via rebalance_eps)
+        # ---- enforce micro-rebalance gate
         w_eps = float(getattr(self.cfg.episode, "rebalance_eps", 0.0))
-        orders = []
-        oid = 0
-        for k, sym in enumerate(self.syms):
-            delta = tgt_shares[sym] - cur_shares[sym]
-            if w_eps > 0.0:
-                min_shares = (w_eps * eq_prev_close) / max(prices_prev_close[sym], 1e-9)
-                if abs(delta) < min_shares:
-                    continue
-            if abs(delta) < 1e-6:
-                continue
-            side = "buy" if delta > 0 else "sell"
-            if self.cfg.exec.order_type == "market":
-                orders.append(Order(id=oid, ts_submitted=None, symbol=sym, side=side, qty=float(delta)))
-            else:
-                off = self.cfg.exec.limit_offset_bps * 1e-4
-                limit = prices_prev_close[sym] * (1.0 - abs(off) if side == "buy" else 1.0 + abs(off))
-                orders.append(Order(id=oid, ts_submitted=None, symbol=sym, side=side,
-                                    qty=float(delta), type="limit", limit_price=float(limit)))
-            oid += 1
+        if w_eps > 0.0:
+            for k in range(self.N):
+                if abs(target_w[k] - prev_w[k]) < w_eps:
+                    target_w[k] = prev_w[k]
 
-        # ---- execute at OPEN[t] (SimBroker already uses self._i bar)
-        fills = self.broker.place_orders(orders)
-        self.port.apply_fills(fills)
+        now_ts = int(self.src.index[self._i].timestamp())
+        gamma_t = 1.0
+        if self._gamma_seq is not None and self._regime_scaler is not None:
+            gamma_t = regime_exposure_multiplier(self._gamma_seq[self._i], self._regime_scaler)
+        target_w, trace = apply_sizing_layers(target_w, gamma_t, self._ret_hist, self.sizing_cfg)
+        self.risk_state.realized_vol_ewma = trace["realized_vol"]
+        target_w, events, self.risk_state = apply_caps_and_guards(
+            target_w, None, self.guards_cfg, self.risk_state, now_ts
+        )
+        self.sizing_trace.append({"ts": self.src.index[self._i], **trace})
+        self.risk_events.extend(events)
+        self.risk_state.nav_day_open = self.risk_state.nav_current
+
+        # ---- plan fills using next bar open and ADV
+        prices_next = np.array([self._ohlc(sym, self._i)[0] for sym in self.syms], dtype=np.float64)
+        adv_next = np.array([
+            float(self.src.panel[sym]["close"].iloc[self._i] * self.src.panel[sym]["volume"].iloc[self._i])
+            for sym in self.syms
+        ], dtype=np.float64)
+        orders = plan_fills(
+            prev_w,
+            target_w,
+            nav=eq_prev_close,
+            prices_next=prices_next,
+            adv_next=adv_next,
+            policy=self.fill_policy,
+            max_participation=self.max_participation,
+        )
+
+        fills: List[Fill] = []
+        total_cost = 0.0
+        ts_trade = self.src.index[self._i]
+        for j, o in enumerate(orders):
+            sym = self.syms[o["symbol_idx"]]
+            rc = apply_costs(
+                planned_price=o["planned_price"],
+                side=o["side"],
+                is_taker=True,
+                qty=o["qty"],
+                cost=self.cost,
+                participation=o["participation"],
+            )
+            br = rc["breakdown"]
+            fills.append(
+                Fill(
+                    order_id=j,
+                    symbol=sym,
+                    qty=o["qty"],
+                    price=rc["realized_price"],
+                    commission=float(br["commission"] + br["fees"]),
+                )
+            )
+            self.trades.append(
+                {
+                    "ts": ts_trade,
+                    "symbol": sym,
+                    "side": o["side"],
+                    "qty": float(o["qty"]),
+                    "planned_px": float(o["planned_price"]),
+                    "realized_px": float(rc["realized_price"]),
+                    "commission": float(br["commission"]),
+                    "fees": float(br["fees"]),
+                    "spread": float(br["spread"]),
+                    "impact": float(br["impact"]),
+                    "cost_bps": float(rc["cost_bps"]),
+                    "participation": float(o["participation"]),
+                }
+            )
+            total_cost += float(br["commission"] + br["fees"] + br["spread"] + br["impact"])
+
+        if fills:
+            self.port.apply_fills(fills)
 
         # ---- advance to next bar
         self._i += 1
 
-        # ---- apply financing for this bar BEFORE valuing equity
-        self.port.step_interest(dt_years=self._dt_years())
-
         # ---- value portfolio at CLOSE[t]
         prices_close_t = self._prices(self._i - 1)  # CLOSE[t]
+
+        # ---- apply financing for this bar BEFORE valuing equity
+        self.port.step_interest(prices_close_t, dt_years=self._dt_years())
         eq_close_t = self.port.value(prices_close_t)
 
         # drawdown and metrics
@@ -253,7 +389,9 @@ class PortfolioTradingEnv(gym.Env):
             r_base = np.log(max(eq_close_t, 1e-9)) - np.log(max(eq_prev_close, 1e-9))
 
         # penalties
-        turnover = float(np.sum(np.abs(target_w - self._last_weights)))
+        turnover = float(np.sum(np.abs(target_w - prev_w)))
+        self._turnover_last = turnover
+        self._turnover_ep += turnover
         pen_dd = self.cfg.reward.w_drawdown * dd_after
         pen_to = self.cfg.reward.w_turnover * turnover
 
@@ -264,12 +402,26 @@ class PortfolioTradingEnv(gym.Env):
             vol = float(np.std(self._ret_hist[-self.cfg.reward.vol_window:]))
             pen_vol = self.cfg.reward.w_vol * vol
         gross = self.port.gross_exposure(prices_close_t, eq_close_t)
+        net = self.port.net_exposure(prices_close_t, eq_close_t)
         lev_cap = self.cfg.margin.max_gross_leverage
         pen_lev = self.cfg.reward.w_leverage * max(0.0, gross - lev_cap)
 
         r = r_base - pen_dd - pen_to - pen_vol - pen_lev
 
         self._last_weights = target_w
+        self._eq_ts.append(self.src.index[self._i - 1])
+        self._eq_net.append(eq_close_t)
+        self._eq_gross.append(eq_close_t + total_cost)
+        self.risk_state.nav_current = eq_close_t
+        self.risk_state.nav_day_open = eq_close_t
+        for k in range(self.N):
+            if abs(target_w[k] - prev_w[k]) > w_eps:
+                self._hold_since[k] = 0
+            elif target_w[k] != 0:
+                self._hold_since[k] += 1
+            else:
+                self._hold_since[k] = 0
+
         terminated = self._i >= len(self.src.index) - 1
         truncated = False
         cap = self.cfg.episode.horizon or self.cfg.episode.max_steps
@@ -281,6 +433,25 @@ class PortfolioTradingEnv(gym.Env):
             terminated = True
             r -= 1.0
 
+        m = self.cfg.margin
+        if m.max_gross_leverage > 0 and gross > m.max_gross_leverage:
+            terminated = True
+            r -= 1.0
+        if m.max_net_leverage > 0 and abs(net) > m.max_net_leverage:
+            terminated = True
+            r -= 1.0
+        if m.daily_loss_limit > 0:
+            daily_loss = (eq_close_t - eq_prev_close) / max(eq_prev_close, 1e-9)
+            if daily_loss < -m.daily_loss_limit:
+                terminated = True
+                r -= 1.0
+        if m.max_drawdown > 0 and dd_after > m.max_drawdown:
+            terminated = True
+            r -= 1.0
+
+        if terminated or truncated:
+            self._dump_episode_artifacts()
+
         info = {
             "equity": eq_close_t,
             "drawdown": dd_after,
@@ -290,8 +461,29 @@ class PortfolioTradingEnv(gym.Env):
             "pen_drawdown": float(pen_dd),
             "pen_vol": float(pen_vol),
             "pen_leverage": float(pen_lev),
+            "turnover": float(turnover),
+            "turnover_ep": float(self._turnover_ep),
+            "edge_net": float(eq_close_t - eq_prev_close),
+            "gross_leverage": float(gross),
+            "net_leverage": float(net),
         }
         return self._obs(self._i), float(r), bool(terminated), bool(truncated), info
 
     def _dt_years(self):
         return 1.0 / 252.0 if self.cfg.interval == "1d" else 1.0 / 365.0
+
+    def _dump_episode_artifacts(self):
+        out_dir = getattr(self.cfg.episode, "artifacts_dir", None)
+        if not out_dir:
+            return
+        p = Path(out_dir)
+        p.mkdir(parents=True, exist_ok=True)
+        if self.trades:
+            pd.DataFrame(self.trades).to_csv(p / "trades.csv", index=False)
+        if self._eq_ts:
+            pd.DataFrame({"ts": self._eq_ts, "equity": self._eq_gross}).to_csv(p / "equity_gross.csv", index=False)
+            pd.DataFrame({"ts": self._eq_ts, "equity": self._eq_net}).to_csv(p / "equity_net.csv", index=False)
+        if self.sizing_trace:
+            pd.DataFrame(self.sizing_trace).to_csv(p / "sizing_trace.csv", index=False)
+        if self.risk_events:
+            pd.DataFrame(self.risk_events).to_json(p / "risk_events.json", orient="records")

@@ -10,6 +10,8 @@ The project consists of three interconnected services:
 - **Backend** – Node.js/Express API layer with MongoDB
 - **StockBot** – Python FastAPI service for trading logic and AI
 
+For a detailed walkthrough of how these components interact during training, backtesting, and live trading, see the [StockBot Trading Pipeline](docs/stockbot-trading-pipeline.md) guide.
+
 ## ✨ Key Features
 
 ### 🤖 AI Assistant "Jarvis"
@@ -344,6 +346,19 @@ setup_venv.bat        # Windows
 - **Backend API**: Available at runtime via route inspection
 - **StockBot API**: Auto-generated docs at http://localhost:5002/docs
 - **Frontend**: Component documentation in source files
+
+## 📈 Walk-forward Probability Evaluation
+
+The `stockbot.prob.walkforward` module provides a small CLI for assessing
+the regime-switching model on rolling windows of historical returns. Run
+the evaluation with:
+
+```bash
+python -m stockbot.prob.walkforward data.json --train 200 --test 50 --states 2
+```
+
+The command prints per-fold log-likelihoods and the average log-loss across
+all folds. Input data can be supplied as JSON, CSV or plain text files.
 
 ## 🔐 Security Considerations
 

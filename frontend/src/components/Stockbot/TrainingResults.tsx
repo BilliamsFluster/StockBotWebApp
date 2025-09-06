@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +10,10 @@ import { Switch } from "@/components/ui/switch";
 import { TooltipLabel } from "./shared/TooltipLabel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import api from "@/api/client";
-import type { RunSummary } from "./lib/types";
+import { deleteRun } from "@/api/stockbot";
+import type { RunSummary, Metrics, RunArtifacts } from "./lib/types";
+import { parseCSV, drawdownFromEquity } from "./lib/csv";
+import { formatPct, formatSigned } from "./lib/formats";
 import {
   ResponsiveContainer,
   LineChart,
@@ -20,6 +24,9 @@ import {
   Tooltip,
   BarChart,
   Bar,
+  AreaChart,
+  Area,
+  ErrorBar,
 } from "recharts";
 
 type TBTags = { scalars: string[]; histograms: string[] };
@@ -31,6 +38,19 @@ const pickFirst = (candidates: string[], available: string[]): string | null => 
   return null;
 };
 
+const statTriple = (arr: number[]) => {
+  if (!arr.length) return { median: 0, q1: 0, q3: 0 };
+  const s = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  const median = s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+  const q1 = s[Math.floor((s.length - 1) / 4)];
+  const q3 = s[Math.floor((s.length - 1) * 3 / 4)];
+  return { median, q1, q3 };
+};
+
+// Lazily load heavy Plotly component on the client only
+const PlotlySurface = dynamic(() => import("./PlotlySurface"), { ssr: false });
+
 export default function TrainingResults({ initialRunId }: { initialRunId?: string }) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [runId, setRunId] = useState<string>(initialRunId || "");
@@ -39,6 +59,9 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   const [tags, setTags] = useState<TBTags | null>(null);
   const [series, setSeries] = useState<Record<string, TBPoint[]>>({});
   const [gradMatrix, setGradMatrix] = useState<GradMatrix | null>(null);
+  const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const [equity, setEquity] = useState<Array<{ step: number; equity: number }>>([]);
+  const [drawdown, setDrawdown] = useState<Array<{ step: number; dd: number }>>([]);
   const tickRef = useRef(0);
   const busyRef = useRef(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -48,6 +71,12 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   const [showTiming, setShowTiming] = useState(false);
   const [showGrads, setShowGrads] = useState(true);
   const [showDists, setShowDists] = useState(false);
+  const [showSeed, setShowSeed] = useState(false);
+  const [seedAgg, setSeedAgg] = useState<{
+    metrics?: Record<string, { median: number; q1: number; q3: number }>;
+    entropy?: Array<{ step: number; median: number; q1: number; q3: number }>;
+    actionHist?: Array<{ mid: number; median: number; err: [number, number] }>;
+  }>({});
   const [tab, setTab] = useState("overview");
 
   // Load persisted UI state per run
@@ -149,10 +178,166 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
     }
   };
 
-  const onLoad = () => reload();
+  const onLoad = async () => { await reload(); await loadArtifacts(); await loadSeedAggregates(); };
+
+  const onDeleteRun = async () => {
+    if (!runId) return;
+    if (!window.confirm("Delete this run?")) return;
+    try {
+
+      await deleteRun(runId);
+
+      const next = runs.filter((r) => r.id !== runId);
+      setRuns(next);
+      setRunId(next[0]?.id || "");
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const loadArtifacts = async () => {
+    try {
+      const { data: art } = await api.get<RunArtifacts>(`/stockbot/runs/${runId}/artifacts`);
+      if (art?.metrics) {
+        try {
+          const { data: m } = await api.get<Metrics>(art.metrics, { baseURL: "" });
+          setMetrics(m);
+        } catch {
+          setMetrics(null);
+        }
+      } else {
+        setMetrics(null);
+      }
+      if (art?.equity) {
+        try {
+          const rows = await parseCSV(art.equity);
+          const eq = rows
+            .map((r: any, i: number) => ({ step: i, equity: Number(r.equity) }))
+            .filter((r: any) => Number.isFinite(r.step) && Number.isFinite(r.equity));
+          setEquity(eq);
+          const ddRows = drawdownFromEquity(rows).map((r: any, i: number) => ({ step: i, dd: -Number(r.dd) }));
+          setDrawdown(ddRows);
+        } catch {
+          setEquity([]); setDrawdown([]);
+        }
+      } else {
+        setEquity([]); setDrawdown([]);
+      }
+    } catch {
+      setMetrics(null); setEquity([]); setDrawdown([]);
+    }
+  };
+
+  const loadSeedAggregates = async () => {
+    try {
+      const base = runId.replace(/-seed\d+$/i, "");
+      const { data: allRuns } = await api.get<RunSummary[]>("/stockbot/runs");
+      const seeds = (allRuns || []).filter((r) => r.type === "train" && r.id.startsWith(base));
+      if (seeds.length <= 1) { setSeedAgg({}); return; }
+
+      const entropyTag = pickFirst(["train/entropy_loss", "train/entropy"], tags?.scalars || []);
+      const histTag = tags?.histograms?.find((t) => t.includes("actions")) || "actions/hist";
+
+      const metricsArr: Metrics[] = [];
+      const entropyArr: TBPoint[][] = [];
+      const histBuckets: Array<Array<[number, number, number]>> = [];
+
+      await Promise.all(
+        seeds.map(async (r) => {
+          try {
+            const { data: art } = await api.get<RunArtifacts>(`/stockbot/runs/${r.id}/artifacts`);
+            if (art?.metrics) {
+              const { data: m } = await api.get<Metrics>(art.metrics, { baseURL: "" });
+              metricsArr.push(m);
+            }
+            if (entropyTag) {
+              try {
+                const { data: sc } = await api.get<{ series: Record<string, TBPoint[]> }>(
+                  `/stockbot/runs/${r.id}/tb/scalars-batch`,
+                  { params: { tags: entropyTag } }
+                );
+                const s = sc.series?.[entropyTag];
+                if (s) entropyArr.push(s);
+              } catch {}
+            }
+            if (histTag) {
+              try {
+                const { data: h } = await api.get<{ tag: string; points: any[] }>(
+                  `/stockbot/runs/${r.id}/tb/histograms`,
+                  { params: { tag: histTag } }
+                );
+                const pts = h.points || [];
+                const last = pts[pts.length - 1];
+                if (last?.buckets) histBuckets.push(last.buckets);
+              } catch {}
+            }
+          } catch {}
+        })
+      );
+
+      const metricsAgg: Record<string, { median: number; q1: number; q3: number }> = {};
+      if (metricsArr.length) {
+        const keys: Array<keyof Metrics> = [
+          "total_return",
+          "max_drawdown",
+          "sharpe",
+          "sortino",
+          "calmar",
+          "turnover",
+        ];
+        keys.forEach((k) => {
+          const vals = metricsArr.map((m) => Number((m as any)[k])).filter((v) => Number.isFinite(v));
+          if (vals.length) metricsAgg[k as string] = statTriple(vals);
+        });
+      }
+
+      let entropyAgg: Array<{ step: number; median: number; q1: number; q3: number }> | undefined;
+      if (entropyArr.length) {
+        const map = new Map<number, number[]>();
+        entropyArr.forEach((arr) => {
+          arr.forEach((p) => {
+            const list = map.get(p.step) || [];
+            list.push(p.value);
+            map.set(p.step, list);
+          });
+        });
+        entropyAgg = Array.from(map.entries())
+          .sort((a, b) => a[0] - b[0])
+          .map(([step, vals]) => ({ step, ...statTriple(vals) }));
+      }
+
+      let histAgg: Array<{ mid: number; median: number; err: [number, number] }> | undefined;
+      if (histBuckets.length) {
+        const bucketMap = new Map<number, number[]>();
+        histBuckets.forEach((bks) => {
+          bks.forEach((b) => {
+            const mid = (Number(b[0]) + Number(b[1])) / 2;
+            const list = bucketMap.get(mid) || [];
+            list.push(Number(b[2]));
+            bucketMap.set(mid, list);
+          });
+        });
+        histAgg = Array.from(bucketMap.entries())
+          .sort((a, b) => a[0] - b[0])
+          .map(([mid, vals]) => {
+            const { median, q1, q3 } = statTriple(vals);
+            return { mid, median, err: [median - q1, q3 - median] };
+          });
+      }
+
+      setSeedAgg({ metrics: metricsAgg, entropy: entropyAgg, actionHist: histAgg });
+    } catch {
+      setSeedAgg({});
+    }
+  };
+
+  useEffect(() => { if (runId) loadArtifacts(); }, [runId]);
+  useEffect(() => { if (runId && tags) loadSeedAggregates(); }, [runId, tags]);
 
   const fmtStep = (s: number) => `${s}`;
   const fmtVal = (v: number) => Number.isFinite(v) ? v.toFixed(5) : "";
+  const fmtMetric = (k: string, v: number) =>
+    k === "total_return" || k === "max_drawdown" ? formatPct(v) : formatSigned(v);
 
   // cards builder
   const ChartCard = ({ title, tag, color }: { title: string; tag: string | null; color?: string }) => {
@@ -256,8 +441,6 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   const epLenTag = useMemo(() => pickFirst(["rollout/ep_len_mean"], (tags?.scalars || available)), [tags, available]);
 
   // 3D Gradient Surface (Plotly)
-  // Render via factory wrapper to keep bundle light
-  const PlotlySurface = useMemo(() => require("./PlotlySurface").default, []);
   const gradientSurface = useMemo(() => {
     const gm = gradMatrix;
     if (!gm || !gm.layers?.length || !gm.steps?.length) return null;
@@ -309,6 +492,9 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
               className="w-48"
             />
             <Button size="sm" onClick={onLoad} disabled={!runId || loading}>{loading ? "Loading…" : "Load"}</Button>
+            <Button size="sm" variant="destructive" onClick={onDeleteRun} disabled={!runId || loading}>
+              Delete
+            </Button>
           </div>
           <div className="flex items-center gap-2 rounded border px-2 py-1">
             <TooltipLabel className="text-sm" tooltip="Automatically reload metrics">
@@ -323,6 +509,47 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
           </div>
         )}
       </Card>
+      {metrics && equity.length > 0 && (
+        <Card className="p-4 space-y-3">
+          <TooltipLabel className="font-semibold" tooltip="Net-of-cost equity curve, drawdown and summary metrics.">
+            Net Performance
+          </TooltipLabel>
+          <div className="grid lg:grid-cols-2 gap-6">
+            <div className="h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={equity}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="step" tickFormatter={fmtStep} />
+                  <YAxis tickFormatter={(v: any) => String(v)} />
+                  <Tooltip labelFormatter={(l) => `step ${l}`} formatter={(v: any) => fmtVal(Number(v))} />
+                  <Line type="monotone" dataKey="equity" stroke="#10b981" dot={false} isAnimationActive={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={drawdown}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="step" tickFormatter={fmtStep} />
+                  <YAxis tickFormatter={(v: any) => formatPct(v)} />
+                  <Tooltip labelFormatter={(l) => `step ${l}`} formatter={(v: any) => formatPct(Number(v))} />
+                  <Area type="monotone" dataKey="dd" stroke="#ef4444" fill="#fecaca" isAnimationActive={false} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          {metrics && (
+            <div className="grid md:grid-cols-3 gap-2 text-sm">
+              <div>Total Return: {formatPct(metrics.total_return)}</div>
+              <div>Sharpe: {formatSigned(metrics.sharpe)}</div>
+              <div>Max DD: {formatPct(metrics.max_drawdown)}</div>
+              <div>Sortino: {formatSigned(metrics.sortino)}</div>
+              <div>Calmar: {formatSigned(metrics.calmar)}</div>
+              <div>Turnover: {formatSigned(metrics.turnover)}</div>
+            </div>
+          )}
+        </Card>
+      )}
 
       {/* Distributions (Histograms) */}
       <Card className="p-4 space-y-3">
@@ -334,6 +561,65 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
         </div>
         {showDists && (
           <ActionsHistogramSection runId={runId} tags={tags} />
+      )}
+      </Card>
+
+      <Card className="p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <TooltipLabel className="font-semibold" tooltip="Aggregate metrics across run seeds (median ± IQR).">
+            Seed Aggregate
+          </TooltipLabel>
+          <div className="text-sm"><label><input type="checkbox" checked={showSeed} onChange={(e)=>setShowSeed(e.target.checked)} /> Show</label></div>
+        </div>
+        {showSeed && (
+          <div className="space-y-4">
+            {seedAgg.metrics && (
+              <table className="text-sm w-full">
+                <thead>
+                  <tr><th className="text-left">Metric</th><th className="text-left">Median</th><th className="text-left">Q1–Q3</th></tr>
+                </thead>
+                <tbody>
+                  {Object.entries(seedAgg.metrics).map(([k,v]) => (
+                    <tr key={k}>
+                      <td className="pr-4 capitalize">{k.replace(/_/g, ' ')}</td>
+                      <td className="pr-4">{fmtMetric(k, v.median)}</td>
+                      <td>{fmtMetric(k, v.q1)} – {fmtMetric(k, v.q3)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {seedAgg.entropy && (
+              <div className="h-56">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={seedAgg.entropy}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="step" tickFormatter={fmtStep} />
+                    <YAxis />
+                    <Tooltip labelFormatter={(l)=>`step ${l}`} formatter={(v:any)=>fmtVal(Number(v))} />
+                    <Line dataKey="median" stroke="#3b82f6" dot={false} />
+                    <Line dataKey="q1" stroke="#94a3b8" dot={false} strokeDasharray="4 4" />
+                    <Line dataKey="q3" stroke="#94a3b8" dot={false} strokeDasharray="4 4" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+            {seedAgg.actionHist && (
+              <div className="h-56">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={seedAgg.actionHist}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="mid" tickFormatter={(v)=>Number(v).toFixed(2)} />
+                    <YAxis />
+                    <Tooltip formatter={(v:any)=>Number(v).toFixed(2)} />
+                    <Bar dataKey="median" isAnimationActive={false}>
+                      <ErrorBar dataKey="err" width={4} stroke="#1f2937" />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
         )}
       </Card>
 
@@ -420,7 +706,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
           <>
             <div className="grid lg:grid-cols-2 gap-6">
               <ChartCard title="Gradient Norm" tag={gradTag} color="#ef4444" />
-              {gradMatrix && gradMatrix.layers.length > 0 && gradMatrix.steps.length > 0 && (
+              {gradMatrix?.layers && gradMatrix?.steps && gradMatrix.layers.length > 0 && gradMatrix.steps.length > 0 && (
                 <Card className="p-4 space-y-2">
                   <div className="font-semibold">Gradient Norms Heatmap (layers × updates)</div>
                   <Heatmap gm={gradMatrix} />

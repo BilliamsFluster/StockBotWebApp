@@ -38,6 +38,16 @@ export async function startBacktestProxy(req, res) {
   }
 }
 
+/** POST /api/stockbot/cv */
+export async function startCvProxy(req, res) {
+  try {
+    const { data } = await axios.post(`${STOCKBOT_URL}/api/stockbot/cv`, req.body);
+    return res.json(data);
+  } catch (e) {
+    return res.status(400).json({ error: errMsg(e) });
+  }
+}
+
 /** GET /api/stockbot/runs */
 export async function listRunsProxy(_req, res) {
   try {
@@ -57,6 +67,23 @@ export async function getRunProxy(req, res) {
     return res.json(data);
   } catch (e) {
     return res.status(400).json({ error: errMsg(e) });
+  }
+}
+
+/** DELETE /api/stockbot/runs/:id */
+export async function deleteRunProxy(req, res) {
+  try {
+    const url = `${STOCKBOT_URL}/api/stockbot/runs/${encodeURIComponent(req.params.id)}`;
+    const { data } = await axios.delete(url);
+    // Some services may return an empty body; default to 204 in that case
+    if (data === undefined || data === null) {
+      return res.status(204).send();
+    }
+    return res.json(data);
+  } catch (e) {
+    const status = e.response?.status || 500;
+    const body = e.response?.data || { error: errMsg(e) };
+    return res.status(status).json(body);
   }
 }
 

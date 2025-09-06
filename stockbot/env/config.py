@@ -16,7 +16,13 @@ class FeeModel:
     commission_per_share: float = 0.0
     commission_pct_notional: float = 0.0005
     borrow_fee_apr: float = 0.0
+    # Legacy slippage parameter retained for backward-compatibility; in the
+    # unified cost model this maps to ``half_spread_bps`` when no explicit value
+    # is provided.
     slippage_bps: float = 1.0
+    taker_fee_bps: float = 0.0
+    maker_rebate_bps: float = 0.0
+    half_spread_bps: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -25,6 +31,10 @@ class MarginConfig:
     maintenance_margin: float = 0.25
     cash_borrow_apr: float = 0.05
     intraday_only: bool = False
+    max_net_leverage: float = 1.0          # cap on net exposure (long-short)
+    max_position_weight: float = 1.0       # per-asset weight limit
+    daily_loss_limit: float = 0.0          # fraction of equity; kill if exceeded
+    max_drawdown: float = 0.0              # fraction of equity; kill if exceeded
 
 
 @dataclass(frozen=True)
@@ -33,6 +43,11 @@ class ExecConfig:
     limit_offset_bps: float = 0.0
     participation_cap: float = 0.1
     impact_k: float = 0.0
+    lot_size: float = 1.0                 # round quantities to this lot size
+    tick_size: float = 0.01               # round prices to this tick size
+    spread_source: Literal["fee_model", "hl"] = "fee_model"
+    vol_lookback: int = 20
+    fill_policy: Literal["next_open", "vwap_window"] = "next_open"
 
 
 @dataclass(frozen=True)
@@ -64,6 +79,7 @@ class EpisodeConfig:
     mapping_mode: Literal["simplex_cash", "tanh_leverage"] = "simplex_cash"
     invest_max: float = 1.00              # max fraction of equity to deploy (remainder stays cash)
     max_step_change: float = 0.10         # cap per-step change in target weights/position
+    min_hold_bars: int = 0                # minimum bars to hold before flipping position
 
 
 @dataclass(frozen=True)

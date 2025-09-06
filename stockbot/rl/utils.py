@@ -5,13 +5,26 @@ import numpy as np
 import gymnasium as gym
 from stable_baselines3.common.monitor import Monitor
 
-from stockbot.env.config import EnvConfig
-from stockbot.env.data_adapter import BarWindowSource, PanelSource
-from stockbot.env.trading_env import StockTradingEnv
-from stockbot.env.portfolio_env import PortfolioTradingEnv
-from stockbot.env.wrappers import as_float32
-from stockbot.env.obs_norm import ObsNorm
-from stockbot.ingestion.yfinance_ingestion import YFinanceProvider
+try:  # pragma: no cover - allow running with or without package prefix
+    from stockbot.env.config import EnvConfig
+    from stockbot.env.data_adapter import BarWindowSource, PanelSource
+    from stockbot.env.trading_env import StockTradingEnv
+    from stockbot.env.portfolio_env import PortfolioTradingEnv
+    from stockbot.env.wrappers import as_float32
+    from stockbot.env.obs_norm import ObsNorm
+    from stockbot.ingestion.yfinance_ingestion import YFinanceProvider
+except ModuleNotFoundError:  # when repository root not on sys.path
+    import sys
+    from pathlib import Path
+
+    sys.path.append(str(Path(__file__).resolve().parents[2]))
+    from env.config import EnvConfig
+    from env.data_adapter import BarWindowSource, PanelSource
+    from env.trading_env import StockTradingEnv
+    from env.portfolio_env import PortfolioTradingEnv
+    from env.wrappers import as_float32
+    from env.obs_norm import ObsNorm
+    from ingestion.yfinance_ingestion import YFinanceProvider
 
 @dataclass
 class Split:
@@ -68,9 +81,14 @@ def make_strategy(name: str, env: gym.Env, **kwargs):
     # Lazy imports
     try:
         from stockbot.strategy.baselines import (
-            EqualWeightStrategy, BuyAndHoldStrategy, FlatStrategy, FirstLongStrategy, RandomStrategy
+            EqualWeightStrategy,
+            BuyAndHoldStrategy,
+            FlatStrategy,
+            FirstLongStrategy,
+            RandomStrategy,
         )
         from stockbot.strategy.sb3_adapter import SB3PolicyStrategy, load_sb3_model
+        from stockbot.strategy.prob_policy import ProbPolicy
     except Exception as e:
         raise ImportError(
             "Strategy modules not available. Ensure 'stockbot/strategy' package exists with __init__.py, "
@@ -87,6 +105,8 @@ def make_strategy(name: str, env: gym.Env, **kwargs):
         return FlatStrategy(env.action_space)
     if key in ("random", "rand"):
         return RandomStrategy(env.action_space)
+    if key in ("prob", "prob_policy"):
+        return ProbPolicy(env.action_space, **kwargs)
     if key in ("sb3", "ppo", "a2c", "ddpg"):
         model_path = kwargs.get("model_path")
         if not model_path:
@@ -98,12 +118,10 @@ def make_strategy(name: str, env: gym.Env, **kwargs):
 
 def episode_rollout(env: gym.Env, agent: Any, deterministic: bool = True, seed: int = 0):
     """
-    Run one episode and return equity curve (np.ndarray).
+    Run one episode and return (equity curve, turnover per step).
     'agent' may be a Strategy or an SB3 model with .predict().
     """
-    # Lazy wrap SB3 models as Strategy if package present; else call predict directly.
     if not hasattr(agent, "predict"):
-        # Strategy-like (must have predict)
         raise TypeError("agent must have a .predict(obs, deterministic=...) method")
 
     obs, info = env.reset(seed=seed)
@@ -113,10 +131,12 @@ def episode_rollout(env: gym.Env, agent: Any, deterministic: bool = True, seed: 
     done = False
     trunc = False
     equities = []
+    turnovers = []
     while not (done or trunc):
         action, *_ = (agent.predict(obs, deterministic=deterministic),)
         if isinstance(action, tuple):
             action = action[0]
         obs, r, done, trunc, info = env.step(action)
         equities.append(float(info.get("equity", np.nan)))
-    return np.array(equities, dtype=np.float64)
+        turnovers.append(float(info.get("turnover", 0.0)))
+    return np.array(equities, dtype=np.float64), np.array(turnovers, dtype=np.float64)
