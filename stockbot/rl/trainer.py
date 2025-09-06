@@ -39,11 +39,28 @@ class PPOTrainer:
     # Setup helpers
     # ------------------------------------------------------------------
     def _build_envs(self):
+        def maybe_wrap_overlay(env):
+            mode = str(getattr(self.args, "overlay", "none"))
+            if mode == "none":
+                return env
+            if mode == "hmm":
+                try:
+                    from .overlay import RiskOverlayWrapper, HMMEngine
+                    engine = HMMEngine()
+                    return RiskOverlayWrapper(env, engine)
+                except Exception as e:
+                    print(f"[PPOTrainer] Failed to enable overlay '{mode}': {e}")
+                    return env
+            print(f"[PPOTrainer] Unknown overlay mode '{mode}', proceeding without overlay.")
+            return env
+
         def train_env_fn():
-            return make_env(self.cfg, self.split, mode="train", normalize=self.args.normalize)
+            env = make_env(self.cfg, self.split, mode="train", normalize=self.args.normalize)
+            return maybe_wrap_overlay(env)
 
         def eval_env_fn():
-            return make_env(self.cfg, self.split, mode="eval", normalize=self.args.normalize)
+            env = make_env(self.cfg, self.split, mode="eval", normalize=self.args.normalize)
+            return maybe_wrap_overlay(env)
 
         self.train_env = make_vec_env(train_env_fn)
         self.eval_env = make_vec_env(eval_env_fn)
