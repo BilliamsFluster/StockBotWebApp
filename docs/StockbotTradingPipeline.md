@@ -49,8 +49,8 @@ Service processes and key environment variables
   - Artifacts: `/runs/:id/files/:name`, `/runs/:id/bundle`
   - TensorBoard: `/runs/:id/tb/tags|scalars|scalars-batch|histograms|grad-matrix`
   - Policies: POST `/policies/upload` (for `.zip` SB3 models)
-  - Insights: GET `/insights`, `/highlights` (broker‑aware)
-- Live trading proxies exist: `/trade/start`, `/trade/stop`, `/trade/status` (FastAPI endpoints for these are reserved; wiring is in progress).
+- Insights: GET `/insights`, `/highlights` (broker‑aware)
+- Live trading: `/trade/start`, `/trade/stop`, `/trade/status` are proxied to FastAPI and guarded (see 2.3 Live Trading).
 
 ### 2.3 FastAPI Service (Python)
 - StockBot routes (`stockbot/api/routes/stockbot_routes.py`):
@@ -60,6 +60,10 @@ Service processes and key environment variables
   - TensorBoard: `/runs/{id}/tb/tags|scalars|scalars-batch|histograms|grad-matrix`
   - Policies upload: POST `/policies`
   - Insights & Highlights: POST `/insights`, `/highlights`
+  - Live Trading (implemented):
+    - POST `/trade/start`: initialise live session and guardrails
+    - POST `/trade/status`: submit rolling metrics/heartbeats; returns stage fraction and deployable capital
+    - POST `/trade/stop`: stop live session
 - Probability tools (`/api/stockbot/prob`): train/infer light HMM‑based regime models.
 - Static: mounts `stockbot/runs` under `/runs` for direct file access.
 
@@ -103,6 +107,7 @@ The data layer has two paths that work together.
   - `stockbot/ingestion/dataset_manifest.build_manifest` records the dataset slice and sources.
   - `stockbot/features/builder.build_features` rolls `(T, lookback, N, F)` windows with embargo and optional normalisation.
   - `stockbot/env/env_builder.prepare_env` wires this flow and writes `dataset_manifest.json` and `obs_schema.json` into the run directory.
+    - When regime features are enabled, `obs_schema.json` also includes an optional `gamma` entry describing the posterior vector shape.
 - Normalisation & casting: `ObsNorm` (training: updates stats; eval: freezes) and `as_float32` ensure stable dtype/shape.
 
 Dataset manifest (stockbot/ingestion/dataset_manifest.py)
@@ -262,7 +267,10 @@ Execution & costs details
 
 `stockbot/backtest/run.py` runs a deterministic episode using a baseline or an SB3 policy. It writes `equity.csv`, `orders.csv`, `trades.csv`, a `summary.json`, and computes metrics (total return, vol, Sharpe/Sortino, Calmar, max drawdown, turnover, hit rate, average trade P&L).
 
-Cross‑validation scaffolding (`backtest/cv.py`) integrates the modern data pipeline and execution cost model for purged walk‑forward analysis.
+Purged walk‑forward CV (`backtest/cv.py`)
+- Spawns a fresh PPO model per fold using the inferred train/eval split (with embargo) and a fast timesteps budget for quick iteration.
+- Computes Sharpe, Sortino, max drawdown, turnover, and average cost (bps) per fold; aggregates macro averages.
+- Gracefully falls back with zeroed metrics when insufficient data exists for a fold.
 
 ---
 
@@ -375,8 +383,8 @@ This favours steady policy updates and strong risk control. For bear markets, co
   - Overlay path: `--overlay hmm` wraps the env so PPO acts as a risk/size controller around an HMM/ProbPolicy baseline (`RiskOverlayWrapper` + `HMMEngine`).
   - Direct beliefs path: appending `gamma` to PPO observations from the training payload is planned; the env supports `gamma`, and data prep can produce it; API wiring will follow.
 
-Artifacts (planned/partial):
-- `regime_posteriors.npz`/timeline CSV and state KPIs are planned; current HMM APIs return arrays via `/infer` and training saves model weights via the prob module.
+Artifacts:
+- Posterior timeline CSV (π_t per state and Viterbi map), transition matrix CSV, and simple per‑state return stats JSON. Probability APIs return arrays via `/infer`; when enabled in prep, artifacts are written alongside run data.
 
 ---
 
@@ -403,12 +411,11 @@ P4 – Purged Walk‑Forward CV + Stress Harness
 - Implemented: `backtest/cv.py` runs purged WF splits with embargo and integrates the cost model; reports per‑fold scaffolding. `reports/stress.py` runs P2 prep per stress window (placeholder KPIs saved).
 
 P5 – HMM Regime + Regime‑Aware Obs & Sizing
-- Implemented: HMM model (`signals/hmm_regime.py`) and API (`/api/stockbot/prob`); optional prep‑time posteriors and regime‑aware multiplier in sizing. Env supports `gamma` obs when provided.
-- TODO: fully wire beliefs into PPO observations from payload when `append_beliefs_to_obs=true`, add regime artifacts (timeline, heatmap) and per‑state KPIs in reports.
+- Implemented: HMM model (`signals/hmm_regime.py`) and API (`/api/stockbot/prob`); prep can fit HMM and export posteriors + transition stats; env appends `gamma` and applies regime‑aware sizing when configured.
+- In progress: UI→API wiring for `append_beliefs_to_obs` to feed beliefs directly into PPO observations by payload; reporting will surface regime timeline/heatmap and per‑state KPIs.
 
 P6 – Risk Layers, Guardrails, Live Canary
-- Implemented: fractional‑Kelly, volatility targeting, and guardrails (daily loss limit, per‑name cap, gross leverage cap) in `strategy/sizing.py` and `strategy/risk_layers.py`, used by the portfolio env.
-- Live: Node proxies for `/trade/start|stop|status` exist; Python endpoints are reserved and will be implemented alongside canary ramp logic.
+- Implemented: fractional‑Kelly, volatility targeting, and guardrails (daily loss limit, per‑name cap, gross leverage cap) in `strategy/sizing.py` and `strategy/risk_layers.py`, used by the portfolio env. Live trading controller with canary guardrails (staged capital deployment + heartbeat enforcement) wired at `/api/stockbot/trade/*` via Node proxies.
 
 Run Registry Fields (current vs planned)
 - Current record: `id`, `type`, `status`, `out_dir`, `pid`, timestamps, and `meta` including paths to `config.snapshot.yaml` and `payload.json`.
