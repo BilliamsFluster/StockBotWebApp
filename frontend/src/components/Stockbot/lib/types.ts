@@ -29,6 +29,12 @@ export type RunArtifacts = {
     model?: string | null;
     job_log?: string | null;
     payload?: string | null;
+    rolling_metrics?: string | null;
+    cv_report?: string | null;
+    stress_report?: string | null;
+    gamma_train_yf?: string | null;
+    gamma_eval_yf?: string | null;
+    gamma_prebuilt?: string | null;
   };
 export interface Metrics {
   total_return: number;

@@ -100,11 +100,13 @@ def avg_trade_pnl(trades: pd.DataFrame) -> float:
         return float("nan")
     return float(trades["net_pnl"].mean())
 
-def compute_all(equity_df: pd.DataFrame,
-                orders_df: Optional[pd.DataFrame] = None,
-                trades_df: Optional[pd.DataFrame] = None,
-                rf_daily: float = 0.0,
-                days_per_year: int = TRADING_DAYS) -> Dict[str, float]:
+def compute_all(
+    equity_df: pd.DataFrame,
+    orders_df: Optional[pd.DataFrame] = None,
+    trades_df: Optional[pd.DataFrame] = None,
+    rf_daily: float = 0.0,
+    days_per_year: int = TRADING_DAYS,
+) -> Dict[str, float]:
     """
     equity_df must have columns: ['equity'] and a DateTimeIndex (or 'ts' col).
     orders_df and trades_df are optional, but improve turnover/hit-rate metrics.
@@ -114,6 +116,45 @@ def compute_all(equity_df: pd.DataFrame,
         raise ValueError("equity_df must contain an 'equity' column.")
     eq = eqdf["equity"].astype(float)
     rets = equity_to_returns(eq)
+
+    # Trade-quality metrics
+    profit_factor = float("nan")
+    expectancy = float("nan")
+    avg_win = float("nan")
+    avg_loss = float("nan")
+    med_hold = float("nan")
+    hold_p25 = float("nan")
+    hold_p75 = float("nan")
+    if trades_df is not None and not trades_df.empty:
+        pnl = trades_df["net_pnl"].astype(float)
+        wins = pnl[pnl > 0]
+        losses = pnl[pnl < 0]
+        sw = float(wins.sum()) if len(wins) else 0.0
+        sl = float(losses.sum()) if len(losses) else 0.0
+        profit_factor = float(sw / max(abs(sl), 1e-12)) if sl != 0 else float("inf")
+        expectancy = float(pnl.mean())
+        avg_win = float(wins.mean()) if len(wins) else float("nan")
+        avg_loss = float(abs(losses).mean()) if len(losses) else float("nan")
+        hd = trades_df["holding_days"].astype(float)
+        med_hold = float(hd.median()) if len(hd) else float("nan")
+        hold_p25 = float(hd.quantile(0.25)) if len(hd) else float("nan")
+        hold_p75 = float(hd.quantile(0.75)) if len(hd) else float("nan")
+
+    # Costs
+    avg_cost_bps = float("nan")
+    if orders_df is not None and not orders_df.empty and "cost_bps" in orders_df.columns:
+        try:
+            avg_cost_bps = float(orders_df["cost_bps"].abs().mean())
+        except Exception:
+            avg_cost_bps = float("nan")
+
+    # Distributional moments on returns
+    try:
+        skew = float(rets.skew())
+        kurt = float(rets.kurtosis())
+    except Exception:
+        skew = 0.0
+        kurt = 0.0
 
     metrics = {
         "total_return": total_return(eq),
@@ -128,6 +169,17 @@ def compute_all(equity_df: pd.DataFrame,
         "hit_rate":     hit_rate_from_trades(trades_df),
         "num_trades":   num_trades(trades_df),
         "avg_trade_pnl": avg_trade_pnl(trades_df),
+        # Added trade-quality and risk diagnostics
+        "profit_factor": profit_factor,
+        "expectancy": expectancy,
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
+        "median_hold_days": med_hold,
+        "hold_p25": hold_p25,
+        "hold_p75": hold_p75,
+        "avg_cost_bps": avg_cost_bps,
+        "rets_skew": skew,
+        "rets_kurtosis": kurt,
     }
     return {
         k: (None if (isinstance(v, float) and (np.isnan(v) or np.isinf(v))) else float(v))

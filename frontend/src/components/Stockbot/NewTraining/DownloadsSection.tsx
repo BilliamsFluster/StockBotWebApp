@@ -2,6 +2,9 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import type { RunArtifacts } from "../lib/types";
 import { TooltipLabel } from "../shared/TooltipLabel";
+import { useState } from "react";
+import { WeightsHeatmap } from "./WeightsHeatmap";
+import { RunChartsModal } from "./RunChartsModal";
 
 interface DownloadsProps {
   includeModel: boolean;
@@ -16,7 +19,10 @@ export function DownloadsSection({
   bundleHref,
   artifacts,
 }: DownloadsProps) {
+  const [showHeatmap, setShowHeatmap] = useState(false);
+  const [showCharts, setShowCharts] = useState(false);
   return (
+    <>
     <section className="rounded-xl border p-4 space-y-3">
       <div className="font-medium">Downloads</div>
       <div className="flex items-center gap-3">
@@ -35,6 +41,9 @@ export function DownloadsSection({
             <Button>Download Bundle (.zip)</Button>
           </a>
         )}
+        {artifacts?.equity && (
+          <Button variant="outline" onClick={() => setShowCharts(true)}>View Charts</Button>
+        )}
       </div>
 
       {artifacts && (
@@ -44,10 +53,20 @@ export function DownloadsSection({
               metrics.json
             </a>
           )}
+          {artifacts.summary && (
+            <a className="underline" href={artifacts.summary} target="_blank" rel="noreferrer">
+              summary.json
+            </a>
+          )}
           {artifacts.equity && (
             <a className="underline" href={artifacts.equity} target="_blank" rel="noreferrer">
               equity.csv
             </a>
+          )}
+          {artifacts.equity && (
+            <button className="underline" onClick={() => setShowHeatmap(true)}>
+              weights heatmap
+            </button>
           )}
           {artifacts.orders && (
             <a className="underline" href={artifacts.orders} target="_blank" rel="noreferrer">
@@ -59,9 +78,34 @@ export function DownloadsSection({
               trades.csv
             </a>
           )}
-          {artifacts.summary && (
-            <a className="underline" href={artifacts.summary} target="_blank" rel="noreferrer">
-              summary.json
+          {artifacts.rolling_metrics && (
+            <a className="underline" href={artifacts.rolling_metrics} target="_blank" rel="noreferrer">
+              rolling_metrics.csv
+            </a>
+          )}
+          {artifacts.cv_report && (
+            <a className="underline" href={artifacts.cv_report} target="_blank" rel="noreferrer">
+              cv_report.json
+            </a>
+          )}
+          {artifacts.stress_report && (
+            <a className="underline" href={artifacts.stress_report} target="_blank" rel="noreferrer">
+              stress_report.json
+            </a>
+          )}
+          {artifacts.gamma_train_yf && (
+            <a className="underline" href={artifacts.gamma_train_yf} target="_blank" rel="noreferrer">
+              regime_posteriors.yf.csv
+            </a>
+          )}
+          {artifacts.gamma_eval_yf && (
+            <a className="underline" href={artifacts.gamma_eval_yf} target="_blank" rel="noreferrer">
+              regime_posteriors.eval.yf.csv
+            </a>
+          )}
+          {artifacts.gamma_prebuilt && (
+            <a className="underline" href={artifacts.gamma_prebuilt} target="_blank" rel="noreferrer">
+              regime_posteriors.csv
             </a>
           )}
           {artifacts.config && (
@@ -87,6 +131,13 @@ export function DownloadsSection({
           </div>
         )}
       </section>
-    );
-  }
+      {showHeatmap && artifacts?.equity && (
+        <WeightsHeatmap equityUrl={artifacts.equity} onClose={() => setShowHeatmap(false)} />
+      )}
+      {showCharts && artifacts?.equity && (
+        <RunChartsModal equityUrl={artifacts.equity} rollingUrl={artifacts.rolling_metrics || undefined} onClose={() => setShowCharts(false)} />
+      )}
+    </>
+  );
+}
 

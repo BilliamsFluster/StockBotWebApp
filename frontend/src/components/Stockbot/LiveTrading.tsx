@@ -12,6 +12,7 @@ import { getUserPreferences } from "@/api/client";
 import api from "@/api/client";
 import { startLiveTrading, stopLiveTrading, getLiveTradingStatus } from "@/api/stockbot";
 import type { RunSummary } from "./lib/types";
+import { formatLocalTime } from "./lib/time";
 import { brokersList } from "@/config/brokersConfig";
 
 type LiveStatus = { status: string; details?: any; message?: string } | null;
@@ -137,7 +138,7 @@ export default function LiveTrading() {
               <SelectContent>
                 {runs.map((r) => (
                   <SelectItem key={r.id} value={r.id}>
-                    {r.id} • {new Date(r.created_at ?? Date.now()).toLocaleString()}
+                    {r.id} • {formatLocalTime(r.created_at)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -190,4 +191,3 @@ export default function LiveTrading() {
     </div>
   );
 }
-

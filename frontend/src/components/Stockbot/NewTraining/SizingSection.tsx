@@ -15,6 +15,7 @@ export const DEFAULT_SIZING = {
   grossLevCap: 1.5,           // used when tanh_leverage is selected
   maxStepChange: 0.05,        // reduce churn vs 0.08
   rebalanceEps: 0.03,         // don't rebalance tiny diffs
+  minHoldBars: 3,
   kellyEnabled: true,
   kellyLambda: 0.5,
   kellyFMax: 1.5,
@@ -39,6 +40,9 @@ interface Props {
   setMaxStepChange: (v: number) => void;
   rebalanceEps: number;
   setRebalanceEps: (v: number) => void;
+  // NEW
+  minHoldBars?: number;
+  setMinHoldBars?: (v: number) => void;
   kellyEnabled: boolean;
   setKellyEnabled: (v: boolean) => void;
   kellyLambda: number;
@@ -98,6 +102,8 @@ export function SizingSection({
   setDailyLoss,
   perNameCap,
   setPerNameCap,
+  minHoldBars,
+  setMinHoldBars,
 }: Props) {
   const oneBarTarget = useMemo(() => oneBar(volTarget, interval), [volTarget, interval]);
   const cashFloor = useMemo(() => (mappingMode === "simplex_cash" ? Math.max(0, 1 - (investMax || 0)) : 0), [mappingMode, investMax]);
@@ -175,6 +181,19 @@ export function SizingSection({
               placeholder={String(DEFAULT_SIZING.rebalanceEps)}
               value={rebalanceEps}
               onChange={(e) => setRebalanceEps(safeNum(e.target.value, rebalanceEps))}
+              className="flex-1"
+            />
+          </Field>
+
+          <Field label="min_hold_bars" tooltip="Minimum bars to hold before flipping position">
+            <Input
+              type="number"
+              step="1"
+              min={0}
+              max={200}
+              placeholder={String(DEFAULT_SIZING.minHoldBars)}
+              value={minHoldBars ?? DEFAULT_SIZING.minHoldBars}
+              onChange={(e) => setMinHoldBars?.(safeNum(e.target.value, minHoldBars ?? DEFAULT_SIZING.minHoldBars))}
               className="flex-1"
             />
           </Field>

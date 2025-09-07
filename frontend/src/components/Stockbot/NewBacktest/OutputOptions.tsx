@@ -3,28 +3,15 @@ import { Switch } from "@/components/ui/switch";
 import { TooltipLabel } from "../shared/TooltipLabel";
 
 interface OutputOptionsProps {
-  outTag: string;
-  setOutTag: (v: string) => void;
   normalize: boolean;
   setNormalize: (v: boolean) => void;
 }
 
-export function OutputOptionsSection({
-  outTag,
-  setOutTag,
-  normalize,
-  setNormalize,
-}: OutputOptionsProps) {
+export function OutputOptionsSection({ normalize, setNormalize }: OutputOptionsProps) {
   return (
     <section className="rounded-xl border p-4">
       <div className="font-medium mb-4">Output & Options</div>
       <div className="grid md:grid-cols-3 gap-4">
-        <InputGroup
-          label="Run Tag"
-          tooltip="Optional label for this backtest run"
-          value={outTag}
-          onChange={setOutTag}
-        />
         <SwitchGroup
           label="Normalize (eval)"
           tooltip="Apply normalization when evaluating results"
@@ -36,26 +23,7 @@ export function OutputOptionsSection({
   );
 }
 
-interface InputGroupProps {
-  label: string;
-  tooltip: string;
-  value: string;
-  onChange: (v: string) => void;
-}
-
-function InputGroup({ label, tooltip, value, onChange }: InputGroupProps) {
-  return (
-    <div className="flex flex-col gap-1">
-      <TooltipLabel tooltip={tooltip}>{label}</TooltipLabel>
-      <Input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full"
-      />
-    </div>
-  );
-}
+// Removed Run Tag input to avoid requiring explicit output directories
 
 interface SwitchGroupProps {
   label: string;

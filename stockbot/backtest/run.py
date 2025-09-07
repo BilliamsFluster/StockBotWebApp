@@ -21,6 +21,8 @@ import numpy as np
 import pandas as pd
 
 from stockbot.env.config import EnvConfig
+from gymnasium import spaces
+from stable_baselines3.common.save_util import load_from_zip_file
 from stockbot.rl.utils import make_env, Split, make_strategy, episode_rollout  # strategy-aware
 from stockbot.backtest.metrics import compute_all, save_metrics
 from stockbot.backtest.trades import build_trades_fifo
@@ -63,6 +65,15 @@ def _run_backtest(env, strategy) -> Tuple[pd.DataFrame, pd.DataFrame]:
     ts_list: List[datetime] = []
     eq_list: List[float] = []
     cash_list: List[float] = []
+    dd_list: List[float] = []
+    gl_list: List[float] = []
+    nl_list: List[float] = []
+    to_list: List[float] = []
+    rbase_list: List[float] = []
+    pto_list: List[float] = []
+    pdd_list: List[float] = []
+    pvol_list: List[float] = []
+    plev_list: List[float] = []
     weights_list: List[Dict[str, float]] = []
 
     # Inform strategy the episode is starting
@@ -86,6 +97,15 @@ def _run_backtest(env, strategy) -> Tuple[pd.DataFrame, pd.DataFrame]:
         # ledger snapshots
         eq_list.append(float(info.get("equity", np.nan)))
         cash_list.append(float(getattr(getattr(env.unwrapped, "port", None), "cash", np.nan)))
+        dd_list.append(float(info.get("drawdown", np.nan)))
+        gl_list.append(float(info.get("gross_leverage", np.nan)))
+        nl_list.append(float(info.get("net_leverage", np.nan)))
+        to_list.append(float(info.get("turnover", np.nan)))
+        rbase_list.append(float(info.get("r_base", np.nan)))
+        pto_list.append(float(info.get("pen_turnover", np.nan)))
+        pdd_list.append(float(info.get("pen_drawdown", np.nan)))
+        pvol_list.append(float(info.get("pen_vol", np.nan)))
+        plev_list.append(float(info.get("pen_leverage", np.nan)))
 
         # weights, if provided in info
         if "weights" in info:
@@ -97,7 +117,20 @@ def _run_backtest(env, strategy) -> Tuple[pd.DataFrame, pd.DataFrame]:
         else:
             weights_list.append({})
 
-    base = pd.DataFrame({"ts": ts_list, "equity": eq_list, "cash": cash_list})
+    base = pd.DataFrame({
+        "ts": ts_list,
+        "equity": eq_list,
+        "cash": cash_list,
+        "drawdown": dd_list,
+        "gross_leverage": gl_list,
+        "net_leverage": nl_list,
+        "turnover": to_list,
+        "r_base": rbase_list,
+        "pen_turnover": pto_list,
+        "pen_drawdown": pdd_list,
+        "pen_vol": pvol_list,
+        "pen_leverage": plev_list,
+    })
     if weights_list and any(len(d) for d in weights_list):
         wdf = pd.DataFrame(weights_list)
         eqdf = pd.concat([base, wdf], axis=1)
@@ -107,16 +140,24 @@ def _run_backtest(env, strategy) -> Tuple[pd.DataFrame, pd.DataFrame]:
 
     trades = getattr(env.unwrapped, "trades", [])
     if trades:
-        orders_rows = [
-            {
-                "ts": t["ts"],
-                "symbol": t["symbol"],
-                "qty": t["qty"],
-                "price": t["realized_px"],
-                "commission": t["commission"] + t["fees"],
+        # include richer cost/impact fields if present
+        orders_rows = []
+        for t in trades:
+            row = {
+                "ts": t.get("ts"),
+                "symbol": t.get("symbol"),
+                "side": t.get("side"),
+                "qty": t.get("qty"),
+                "planned_px": t.get("planned_px"),
+                "price": t.get("realized_px"),
+                "commission": float(t.get("commission", 0.0) + t.get("fees", 0.0)),
+                "fees": t.get("fees"),
+                "spread": t.get("spread"),
+                "impact": t.get("impact"),
+                "cost_bps": t.get("cost_bps"),
+                "participation": t.get("participation"),
             }
-            for t in trades
-        ]
+            orders_rows.append(row)
         odf = pd.DataFrame(orders_rows).sort_values("ts")
     else:
         odf = pd.DataFrame(columns=["ts", "symbol", "qty", "price", "commission"])
@@ -153,8 +194,44 @@ def main():
 
     split = Split(train=(args.start, args.end), eval=(args.start, args.end))
 
-    # Build eval env (no normalization stats changing in eval)
-    env = make_env(cfg, split, mode="eval", normalize=args.normalize)
+    # Build eval env with observation layout matching the model ZIP when provided.
+    append_gamma = False
+    recompute_gamma = False
+    if _policy_kind(args.policy) == "rl":
+        try:
+            data, _params, _vars = load_from_zip_file(args.policy)
+            obs_space = data.get("observation_space")
+            if isinstance(obs_space, spaces.Dict) and "window" in obs_space.spaces and "portfolio" in obs_space.spaces:
+                win_shape = obs_space.spaces["window"].shape  # (L, N, F)
+                port_size = int(obs_space.spaces["portfolio"].shape[0])
+                has_gamma_key = "gamma" in obs_space.spaces
+                # Compute baseline portfolio size 7+N from model meta
+                try:
+                    N = int(win_shape[1])
+                except Exception:
+                    N = len(list(cfg.symbols)) if hasattr(cfg, "symbols") else 1
+                base_port = 7 + N
+                if has_gamma_key:
+                    append_gamma = False
+                    recompute_gamma = True
+                else:
+                    # If portfolio bigger than baseline, it's appended beliefs
+                    append_gamma = port_size > base_port
+                    recompute_gamma = append_gamma
+        except Exception:
+            # fallback: no layout inference
+            append_gamma = False
+            recompute_gamma = False
+
+    env = make_env(
+        cfg,
+        split,
+        mode="eval",
+        normalize=args.normalize,
+        append_gamma_to_obs=append_gamma,
+        recompute_gamma=recompute_gamma,
+        run_dir=BASE_RUNS / args.out,
+    )
 
     # Strategy (baseline or SB3)
     strategy = _as_strategy(args.policy, env)
@@ -174,6 +251,29 @@ def main():
     odf.to_csv(out_dir / "orders.csv", index=False)
     trades_df.to_csv(out_dir / "trades.csv", index=False)
 
+    # Rolling metrics (63-day sharpe/vol, 252-day max drawdown)
+    try:
+        df = eqdf.copy()
+        df = df.sort_values("ts")
+        rets = df["equity"].pct_change().fillna(0.0)
+        win = 63
+        roll_vol = rets.rolling(win).std() * np.sqrt(252)
+        roll_mean = rets.rolling(win).mean()
+        roll_sharpe = (roll_mean / (rets.rolling(win).std() + 1e-12)) * np.sqrt(252)
+        # Rolling max drawdown over ~1y window (252 bars)
+        w2 = 252
+        roll_max = df["equity"].rolling(w2, min_periods=1).max()
+        roll_dd = 1.0 - (df["equity"] / (roll_max + 1e-9))
+        rmdf = pd.DataFrame({
+            "ts": df["ts"],
+            "roll_sharpe_63": roll_sharpe,
+            "roll_vol_63": roll_vol,
+            "roll_maxdd_252": roll_dd,
+        })
+        rmdf.to_csv(out_dir / "rolling_metrics.csv", index=False)
+    except Exception:
+        pass
+
     # Save summary (repro metadata)
     summary = {
         "policy": args.policy,
@@ -189,7 +289,7 @@ def main():
     metrics = compute_all(eqdf, odf if not odf.empty else None, trades_df if not trades_df.empty else None)
     save_metrics(out_dir, metrics)
 
-    print(f">> Wrote equity.csv, orders.csv, trades.csv, metrics.json to {out_dir}")
+    print(f">> Wrote equity.csv, orders.csv, trades.csv, rolling_metrics.csv, metrics.json to {out_dir}")
 
 
 if __name__ == "__main__":

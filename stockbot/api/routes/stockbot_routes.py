@@ -28,6 +28,13 @@ from api.controllers.stockbot_controller import (
 )
 from api.controllers.insights_controller import InsightsRequest, generate_insights
 from api.controllers.highlights_controller import HighlightsRequest, generate_highlights
+from api.controllers.trade_controller import (
+    TradeStartRequest,
+    TradeStatusRequest,
+    start_live,
+    status_live,
+    stop_live,
+)
 
 
 '''def verify_api_key(request: Request): -- security will be implemented soon
@@ -119,6 +126,24 @@ def post_cancel_run(run_id: str):
 @router.delete("/runs/{run_id}")
 def delete_run_route(run_id: str):
     return delete_run(run_id)
+
+
+# ---- Live trading endpoints ----
+
+
+@router.post("/trade/start")
+def trade_start(req: TradeStartRequest):
+    return start_live(req)
+
+
+@router.post("/trade/status")
+def trade_status(req: TradeStatusRequest):
+    return status_live(req)
+
+
+@router.post("/trade/stop")
+def trade_stop():
+    return stop_live()
 
 
 # Optional: WebSocket live status (parallel to SSE stream)

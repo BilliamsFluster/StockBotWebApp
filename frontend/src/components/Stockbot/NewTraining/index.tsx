@@ -1,7 +1,8 @@
 // src/components/Stockbot/NewTraining/index.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "react-hot-toast";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Accordion } from "@/components/ui/accordion";
@@ -45,6 +46,7 @@ export default function NewTraining({
   const [bbands, setBbands] = useState(true);
   const [normalizeObs, setNormalizeObs] = useState(true);
   const [embargo, setEmbargo] = useState(1);
+  const [dataSource, setDataSource] = useState<"yfinance" | "cached" | "auto">("yfinance");
 
   // ===== Costs & Execution =====
   const [commissionPerShare, setCommissionPerShare] = useState(0.0005);
@@ -74,14 +76,14 @@ export default function NewTraining({
   const [totalTimesteps, setTotalTimesteps] = useState(1_000_000);
   const [nSteps, setNSteps] = useState(4096);
   const [batchSize, setBatchSize] = useState(1024);
-  const [learningRate, setLearningRate] = useState(3e-5);
+  const [learningRate, setLearningRate] = useState(1e-4);
   const [gamma, setGamma] = useState(0.997);
   const [gaeLambda, setGaeLambda] = useState(0.985);
   const [clipRange, setClipRange] = useState(0.15);
-  const [entCoef, setEntCoef] = useState(0.04);
+  const [entCoef, setEntCoef] = useState(0.015);
   const [vfCoef, setVfCoef] = useState(1.0);
   const [maxGradNorm, setMaxGradNorm] = useState(1.0);
-  const [dropout, setDropout] = useState(0.1);
+  const [dropout, setDropout] = useState(0.15);
   const [seed, setSeed] = useState<number | undefined>(undefined);
 
   // ===== Sizing (init from defaults) =====
@@ -93,6 +95,7 @@ export default function NewTraining({
     useState(DEFAULT_SIZING.maxStepChange);
   const [rebalanceEps, setRebalanceEps] =
     useState(DEFAULT_SIZING.rebalanceEps);
+  const [minHoldBars, setMinHoldBars] = useState(DEFAULT_SIZING.minHoldBars);
 
   const [kellyEnabled, setKellyEnabled] =
     useState(DEFAULT_SIZING.kellyEnabled);
@@ -118,7 +121,7 @@ export default function NewTraining({
   const [wDrawdown, setWDrawdown] =
     useState(DEFAULT_REWARD?.wDrawdown ?? 0.10);
   const [wTurnover, setWTurnover] =
-    useState(DEFAULT_REWARD?.wTurnover ?? 0.005);
+    useState(DEFAULT_REWARD?.wTurnover ?? 0.003);
   const [wVol, setWVol] = useState(DEFAULT_REWARD?.wVol ?? 0.0);
   const [wLeverage, setWLeverage] =
     useState(DEFAULT_REWARD?.wLeverage ?? 0.0);
@@ -136,8 +139,58 @@ export default function NewTraining({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [progress, setProgress] = useState<string | null>(null);
+  const toastRef = useRef<string | null>(null);
+  useEffect(() => {
+    return () => {
+      if (toastRef.current) {
+        toast.dismiss(toastRef.current);
+        toastRef.current = null;
+      }
+    };
+  }, []);
+
+  // Global toast: kick off when submitting and when job id is assigned
+  useEffect(() => {
+    if (progress && progress.toLowerCase().startsWith("submitting") && !toastRef.current) {
+      toastRef.current = toast.loading("Submitting training…", { duration: Infinity });
+    }
+  }, [progress]);
+
+  useEffect(() => {
+    if (jobId && !toastRef.current) {
+      toastRef.current = toast.loading(`Queued ${jobId}`, { duration: Infinity });
+    }
+  }, [jobId]);
+
+  // Global toast updates on status transitions
+  useEffect(() => {
+    if (!jobId || !status) return;
+    const st = status.status;
+    if (st === "RUNNING" && toastRef.current) {
+      toast.loading(`Training ${jobId} running…`, { id: toastRef.current, duration: Infinity });
+    }
+    if (["SUCCEEDED", "FAILED", "CANCELLED"].includes(st) && toastRef.current) {
+      if (st === "SUCCEEDED") {
+        toast.success(`Training ${jobId} completed`, { id: toastRef.current, duration: 4000 });
+      } else if (st === "FAILED") {
+        toast.error(`Training ${jobId} failed`, { id: toastRef.current, duration: 6000 });
+      } else {
+        toast(`Training ${jobId} cancelled`, { id: toastRef.current, duration: 4000 });
+      }
+      toastRef.current = null;
+    }
+  }, [status, jobId]);
 
   const isRunning = useMemo(() => !!status && !TERMINAL.includes(status.status), [status]);
+
+  // Dismiss queue toast when job starts running
+  useEffect(() => {
+    if (!jobId || !status) return;
+    if (status.status === "RUNNING" && toastRef.current) {
+      toast.dismiss(toastRef.current);
+      toastRef.current = null;
+    }
+  }, [status, jobId]);
 
   // ===== Poller =====
   useEffect(() => {
@@ -250,6 +303,7 @@ export default function NewTraining({
     if (!jobId) return;
     try {
       await api.post(`/stockbot/runs/${jobId}/cancel`);
+      if (toastRef.current) toast(`Training ${jobId} cancelled`, { id: toastRef.current, duration: 4000 });
     } catch {}
   };
 
@@ -292,6 +346,7 @@ export default function NewTraining({
         lookback,
         trainSplit,
         featureSet,
+        dataSource,
         rsi,
         macd,
         bbands,
@@ -329,6 +384,7 @@ export default function NewTraining({
         grossLevCap,
         maxStepChange,
         rebalanceEps,
+        minHoldBars,
         kellyEnabled,
         kellyLambda,
         kellyFMax,
@@ -355,6 +411,7 @@ export default function NewTraining({
       setJobId(resp.job_id);
       setProgress("Job started. Polling status…");
       addRecentRun({ id: resp.job_id, type: "train", status: "QUEUED", created_at: new Date().toISOString() });
+      if (toastRef.current) { toast.dismiss(toastRef.current); toastRef.current = null; }
       onJobCreated(resp.job_id);
     } catch (e: any) {
       setError(e?.message ?? String(e));
@@ -421,20 +478,22 @@ export default function NewTraining({
           setTrainEvalSplit={setTrainSplit}
         />
 
-        <FeaturesSection
-          featureSet={featureSet}
-          setFeatureSet={setFeatureSet}
-          rsi={rsi}
-          setRsi={setRsi}
-          macd={macd}
-          setMacd={setMacd}
-          bbands={bbands}
-          setBbands={setBbands}
-          normalize={normalizeObs}
-          setNormalize={setNormalizeObs}
-          embargo={embargo}
-          setEmbargo={setEmbargo}
-        />
+          <FeaturesSection
+            featureSet={featureSet}
+            setFeatureSet={setFeatureSet}
+            rsi={rsi}
+            setRsi={setRsi}
+            macd={macd}
+            setMacd={setMacd}
+            bbands={bbands}
+            setBbands={setBbands}
+            normalize={normalizeObs}
+            setNormalize={setNormalizeObs}
+            embargo={embargo}
+            setEmbargo={setEmbargo}
+            dataSource={dataSource}
+            setDataSource={setDataSource}
+          />
 
         <CostsExecutionSection
           commissionPerShare={commissionPerShare}
@@ -504,11 +563,13 @@ export default function NewTraining({
           setInvestMax={setInvestMax}
           grossLevCap={grossLevCap}
           setGrossLevCap={setGrossLevCap}
-          maxStepChange={maxStepChange}
-          setMaxStepChange={setMaxStepChange}
-          rebalanceEps={rebalanceEps}
-          setRebalanceEps={setRebalanceEps}
-          kellyEnabled={kellyEnabled}
+        maxStepChange={maxStepChange}
+        setMaxStepChange={setMaxStepChange}
+        rebalanceEps={rebalanceEps}
+        setRebalanceEps={setRebalanceEps}
+        minHoldBars={minHoldBars}
+        setMinHoldBars={setMinHoldBars}
+        kellyEnabled={kellyEnabled}
           setKellyEnabled={setKellyEnabled}
           kellyLambda={kellyLambda}
           setKellyLambda={setKellyLambda}

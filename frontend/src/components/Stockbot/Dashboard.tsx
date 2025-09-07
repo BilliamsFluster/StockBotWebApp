@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import api from "@/api/client";
 import { deleteRun } from "@/api/stockbot";
 import { RunSummary } from "./lib/types";
 import StatusChip from "./shared/StatusChip";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import {
   loadRecentRuns,
   saveRecentRuns,
@@ -30,13 +31,15 @@ export default function Dashboard({
   const [runs, setRuns] = useState<RunSummary[]>(loadRecentRuns());
   const [saved, setSaved] = useState<RunSummary[]>(loadSavedRuns());
   const [loading, setLoading] = useState(false);
+  const trainRuns = runs.filter((r) => r.type === "train");
+  const backtestRuns = runs.filter((r) => r.type === "backtest");
+  const savedIds = useMemo(() => new Set(saved.map((s) => s.id)), [saved]);
 
   const loadRuns = async () => {
     setLoading(true);
     try {
-      // You can pass ?type=train or ?type=backtest if your API supports filters
       const { data } = await api.get<RunSummary[]>("/stockbot/runs");
-      const next = saveRecentRuns((data ?? []).slice(0, 5));
+      const next = saveRecentRuns((data ?? []).slice(0, 50));
       setRuns(next);
     } catch (e) {
       console.error(e);
@@ -47,6 +50,14 @@ export default function Dashboard({
 
   useEffect(() => {
     loadRuns();
+    let alive = true;
+    const tick = async () => {
+      if (!alive) return;
+      try { await loadRuns(); } catch {}
+      if (alive) setTimeout(tick, 5000);
+    };
+    const t = setTimeout(tick, 5000);
+    return () => { alive = false; clearTimeout(t); };
   }, []);
 
   const onToggleSave = (r: RunSummary) => {
@@ -57,9 +68,7 @@ export default function Dashboard({
   const onDelete = async (id: string) => {
     if (!window.confirm("Delete this run?")) return;
     try {
-
       await deleteRun(id);
-
       const nextRuns = runs.filter((r) => r.id !== id);
       setRuns(nextRuns);
       saveRecentRuns(nextRuns);
@@ -83,68 +92,115 @@ export default function Dashboard({
         </Button>
       </div>
 
-      <Card className="p-4">
-        <h3 className="text-lg font-semibold mb-3">Recent Runs</h3>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Run ID</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Out Dir</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead>Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {runs.map((r) => (
-              <TableRow key={r.id}>
-                <TableCell className="font-mono">{r.id}</TableCell>
-                <TableCell>{r.type}</TableCell>
-                <TableCell>
-                  <StatusChip status={r.status} />
-                </TableCell>
-                <TableCell className="font-mono">{r.out_dir ?? "—"}</TableCell>
-                <TableCell>{new Date(r.created_at ?? Date.now()).toLocaleString()}</TableCell>
-                <TableCell className="flex gap-2">
-                  <Button size="sm" onClick={() => onOpenRun(r.id)}>
-                    Open
-                  </Button>
-                  <Button size="sm" variant="secondary" onClick={() => onBacktestRun(r.id)}>
-                    Backtest
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => onToggleSave(r)}>
-                    Save
-                  </Button>
-                  <Button size="sm" variant="destructive" onClick={() => onDelete(r.id)}>
-                    Delete
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-            {runs.length === 0 && !loading && (
-              <TableRow>
-                <TableCell colSpan={6} className="text-muted-foreground italic">
-                  No runs yet.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </Card>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <Card className="p-4">
+          <h3 className="text-lg font-semibold mb-3">Training Runs</h3>
+          <div className="max-h-96 overflow-auto">
+            <Table containerClassName="max-h-96">
+              <TableHeader className="sticky top-0 bg-background z-10">
+                <TableRow>
+                  <TableHead>Run ID</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {trainRuns.map((r) => {
+                  const isSaved = savedIds.has(r.id);
+                  return (
+                    <TableRow key={r.id}>
+                      <TableCell className="font-mono">{r.id}</TableCell>
+                      <TableCell>
+                        <StatusChip status={r.status} />
+                      </TableCell>
+                      <TableCell className="flex gap-2">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button size="sm" variant="outline">Actions</Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => onOpenRun(r.id)}>Open</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => onBacktestRun(r.id)}>Backtest</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => onToggleSave(r)}>{isSaved ? "Unsave" : "Save"}</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => onDelete(r.id)} className="text-red-600">Delete</DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+                {trainRuns.length === 0 && !loading && (
+                  <TableRow>
+                    <TableCell colSpan={3} className="text-muted-foreground italic">
+                      No runs yet.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </Card>
+
+        <Card className="p-4">
+          <h3 className="text-lg font-semibold mb-3">Backtests</h3>
+          <div className="max-h-96 overflow-auto">
+            <Table containerClassName="max-h-96">
+              <TableHeader className="sticky top-0 bg-background z-10">
+                <TableRow>
+                  <TableHead>Run ID</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {backtestRuns.map((r) => {
+                  const isSaved = savedIds.has(r.id);
+                  return (
+                    <TableRow key={r.id}>
+                      <TableCell className="font-mono">{r.id}</TableCell>
+                      <TableCell>
+                        <StatusChip status={r.status} />
+                      </TableCell>
+                      <TableCell className="flex gap-2">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button size="sm" variant="outline">Actions</Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => onOpenRun(r.id)}>Open</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => onToggleSave(r)}>{isSaved ? "Unsave" : "Save"}</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => onDelete(r.id)} className="text-red-600">Delete</DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+                {backtestRuns.length === 0 && !loading && (
+                  <TableRow>
+                    <TableCell colSpan={3} className="text-muted-foreground italic">
+                      No backtests yet.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </Card>
+      </div>
 
       <Card className="p-4">
         <h3 className="text-lg font-semibold mb-3">Saved Runs</h3>
-        <Table>
-          <TableHeader>
+        <div className="max-h-96 overflow-auto">
+          <Table containerClassName="max-h-96">
+            <TableHeader className="sticky top-0 bg-background z-10">
             <TableRow>
               <TableHead>Run ID</TableHead>
               <TableHead>Type</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead>Created</TableHead>
               <TableHead>Actions</TableHead>
             </TableRow>
-          </TableHeader>
+            </TableHeader>
           <TableBody>
             {saved.map((r) => (
               <TableRow key={r.id}>
@@ -153,29 +209,33 @@ export default function Dashboard({
                 <TableCell>
                   <StatusChip status={r.status} />
                 </TableCell>
-                <TableCell>{new Date(r.created_at ?? Date.now()).toLocaleString()}</TableCell>
                 <TableCell className="flex gap-2">
-                  <Button size="sm" variant="secondary" onClick={() => onBacktestRun(r.id)}>
-                    Backtest
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => onToggleSave(r)}>
-                    Remove
-                  </Button>
-                  <Button size="sm" variant="destructive" onClick={() => onDelete(r.id)}>
-                    Delete
-                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button size="sm" variant="outline">Actions</Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => onOpenRun(r.id)}>Open</DropdownMenuItem>
+                      {r.type === 'train' && (
+                        <DropdownMenuItem onClick={() => onBacktestRun(r.id)}>Backtest</DropdownMenuItem>
+                      )}
+                      <DropdownMenuItem onClick={() => onToggleSave(r)}>Remove</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => onDelete(r.id)} className="text-red-600">Delete</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </TableCell>
               </TableRow>
             ))}
             {saved.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="text-muted-foreground italic">
+                <TableCell colSpan={4} className="text-muted-foreground italic">
                   No saved runs.
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
-        </Table>
+          </Table>
+        </div>
       </Card>
     </div>
   );

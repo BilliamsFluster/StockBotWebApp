@@ -11,6 +11,8 @@ export interface TrainPayload {
   };
   features: {
     feature_set: ("ohlcv" | "ohlcv_ta_basic" | "ohlcv_ta_rich")[];
+    indicators?: string[];
+    data_source?: "yfinance" | "cached" | "auto";
     ta_basic_opts?: { rsi: boolean; macd: boolean; bbands: boolean };
     normalize_observation: boolean;
     embargo_bars: number;
@@ -61,6 +63,7 @@ export interface TrainPayload {
     gross_leverage_cap?: number;
     max_step_change: number;
     rebalance_eps: number;
+    min_hold_bars?: number;
     kelly: { enabled: boolean; lambda: number; f_max?: number; ema_alpha?: number; state_scalars?: number[] };
     vol_target: { enabled: boolean; annual_target: number; min_vol?: number; clamp?: { min: number; max: number } };
     guards: {
@@ -97,6 +100,8 @@ export function buildTrainPayload(state: any): TrainPayload {
     },
     features: {
       feature_set: state.featureSet,
+      indicators: (state.featureSet || []).includes('minimal') ? ["minimal"] : undefined,
+      data_source: state.dataSource || 'yfinance',
       ta_basic_opts: { rsi: !!state.rsi, macd: !!state.macd, bbands: !!state.bbands },
       normalize_observation: !!state.normalizeObs,
       embargo_bars: Number(state.embargo) || 1,
@@ -148,11 +153,14 @@ export function buildTrainPayload(state: any): TrainPayload {
       gross_leverage_cap: state.mappingMode === 'tanh_leverage' ? Number(state.grossLevCap) || 1.5 : undefined,
       max_step_change: Number(state.maxStepChange) || 0.08,
       rebalance_eps: Number(state.rebalanceEps) || 0.02,
+      min_hold_bars: Number(state.minHoldBars) || undefined,
       kelly: {
         enabled: !!state.kellyEnabled,
         lambda: Number(state.kellyLambda) || 0.5,
         f_max: Number(state.kellyFMax) || undefined,
         ema_alpha: Number(state.kellyEmaAlpha) || undefined,
+        // provide a mild default for regime state scalars if not set
+        state_scalars: state.kellyStateScalars?.length ? state.kellyStateScalars : [0.7, 1.0, 1.3],
       },
       vol_target: {
         enabled: !!state.volEnabled,

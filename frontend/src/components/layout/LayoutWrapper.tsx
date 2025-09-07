@@ -112,7 +112,25 @@ export default function LayoutWrapper({
           <OnboardingProvider>
             <AppLayout>{children}</AppLayout>
           </OnboardingProvider>
-          <Toaster position="top-center" toastOptions={{ duration: 3000 }} />
+          <Toaster
+            position="top-center"
+            toastOptions={{
+              duration: 3000,
+              // Theme-friendly styling using CSS variables from shadcn/tailwind
+              style: {
+                background: 'hsl(var(--background))',
+                color: 'hsl(var(--foreground))',
+                border: '1px solid hsl(var(--border))',
+              },
+              className: 'rounded-md shadow-sm',
+              success: {
+                duration: 2500,
+              },
+              error: {
+                duration: 5000,
+              },
+            }}
+          />
         </AuthProvider>
       </JarvisProvider>
     </Providers>

@@ -39,6 +39,25 @@ class PPOTrainer:
     # Setup helpers
     # ------------------------------------------------------------------
     def _build_envs(self):
+        gamma_seq = None
+        regime_scalars = None
+        append_gamma = False
+
+        try:
+            import numpy as np, json
+            gamma_path = self.out_dir / "regime_posteriors.csv"
+            if gamma_path.exists():
+                gamma_seq = np.loadtxt(gamma_path, delimiter=",")
+            schema_path = self.out_dir / "obs_schema.json"
+            if gamma_seq is not None and schema_path.exists():
+                schema = json.loads(schema_path.read_text())
+                append_gamma = "gamma" not in schema
+            scalars_path = self.out_dir / "state_scalars.json"
+            if scalars_path.exists():
+                regime_scalars = json.loads(scalars_path.read_text())
+        except Exception as e:  # pragma: no cover - best effort
+            print(f"[PPOTrainer] failed to load regime metadata: {e}")
+
         def maybe_wrap_overlay(env):
             mode = str(getattr(self.args, "overlay", "none"))
             if mode == "none":
@@ -55,11 +74,31 @@ class PPOTrainer:
             return env
 
         def train_env_fn():
-            env = make_env(self.cfg, self.split, mode="train", normalize=self.args.normalize)
+            env = make_env(
+                self.cfg,
+                self.split,
+                mode="train",
+                normalize=self.args.normalize,
+                regime_gamma=gamma_seq,
+                regime_scalars=regime_scalars,
+                append_gamma_to_obs=append_gamma,
+                run_dir=self.out_dir,
+                data_source=getattr(self.args, "data_source", "yfinance"),
+            )
             return maybe_wrap_overlay(env)
 
         def eval_env_fn():
-            env = make_env(self.cfg, self.split, mode="eval", normalize=self.args.normalize)
+            env = make_env(
+                self.cfg,
+                self.split,
+                mode="eval",
+                normalize=self.args.normalize,
+                regime_gamma=gamma_seq,
+                regime_scalars=regime_scalars,
+                append_gamma_to_obs=append_gamma,
+                run_dir=self.out_dir,
+                data_source=getattr(self.args, "data_source", "yfinance"),
+            )
             return maybe_wrap_overlay(env)
 
         self.train_env = make_vec_env(train_env_fn)
@@ -120,6 +159,30 @@ class PPOTrainer:
         )
         logger = configure(str(self.out_dir), ["stdout", "csv", "tensorboard"])
         self.model.set_logger(logger)
+        # Optional: schema compatibility check vs saved obs_schema.json
+        try:
+            import json
+            schema_path = self.out_dir / "obs_schema.json"
+            if schema_path.exists():
+                schema = json.loads(schema_path.read_text())
+                probe_env = self._eval_env_fn()
+                obs_space = probe_env.unwrapped.observation_space
+                win_shape = list(obs_space["window"].shape)
+                port_shape = list(obs_space["portfolio"].shape)
+                sch_win = list(schema.get("window", {}).get("shape", []))
+                sch_port = list(schema.get("portfolio", {}).get("shape", []))
+                if sch_win and sch_port and (sch_win != win_shape or sch_port != port_shape):
+                    model_path = self.out_dir / "ppo_policy.zip"
+                    msg = (
+                        f"Observation shape mismatch: env window={win_shape}, portfolio={port_shape}; "
+                        f"schema window={sch_win}, portfolio={sch_port}"
+                    )
+                    if model_path.exists():
+                        raise RuntimeError(msg)
+                    print(f"[PPOTrainer] Warning: {msg}")
+                del probe_env
+        except Exception as e:
+            print(f"[PPOTrainer] Schema compat check skipped: {e}")
 
     def _build_callbacks(self):
         diag_cb = RLDiagCallback(log_dir=str(self.out_dir / "tb"), every_n_updates=1)
@@ -161,8 +224,108 @@ class PPOTrainer:
         start_cash = (
             self.cfg.episode.start_cash if isinstance(self.cfg.episode, EpisodeConfig) else 100_000.0
         )
+        # Run a deterministic eval episode and capture rich per-step info
         ev = self._eval_env_fn()
-        curve, to = episode_rollout(ev, self.model, deterministic=True, seed=self.args.seed)
+        try:
+            import pandas as pd
+            from datetime import datetime
+            obs, info = ev.reset(seed=self.args.seed)
+            done = False
+            trunc = False
+            ts_list: list = []
+            eq_list: list[float] = []
+            cash_list: list[float] = []
+            dd_list: list[float] = []
+            gl_list: list[float] = []
+            nl_list: list[float] = []
+            to_list: list[float] = []
+            rbase_list: list[float] = []
+            pto_list: list[float] = []
+            pdd_list: list[float] = []
+            pvol_list: list[float] = []
+            plev_list: list[float] = []
+            weights_list: list[dict] = []
+
+            symbols = getattr(ev.unwrapped, "syms", None)
+
+            while not (done or trunc):
+                action, _ = self.model.predict(obs, deterministic=True)
+                obs, r, done, trunc, info = ev.step(action)
+                # timestamp for this step
+                try:
+                    ts = ev.unwrapped.src.index[ev.unwrapped._i - 1]  # type: ignore[attr-defined]
+                except Exception:
+                    from datetime import datetime as _dt
+                    ts = _dt.utcnow()
+                ts_list.append(ts)
+
+                eq_list.append(float(info.get("equity", 0.0)))
+                try:
+                    cash_val = float(getattr(getattr(ev.unwrapped, "port", None), "cash", 0.0))
+                except Exception:
+                    cash_val = 0.0
+                cash_list.append(cash_val)
+                dd_list.append(float(info.get("drawdown", 0.0)))
+                gl_list.append(float(info.get("gross_leverage", 0.0)))
+                nl_list.append(float(info.get("net_leverage", 0.0)))
+                to_list.append(float(info.get("turnover", 0.0)))
+                rbase_list.append(float(info.get("r_base", 0.0)))
+                pto_list.append(float(info.get("pen_turnover", 0.0)))
+                pdd_list.append(float(info.get("pen_drawdown", 0.0)))
+                pvol_list.append(float(info.get("pen_vol", 0.0)))
+                plev_list.append(float(info.get("pen_leverage", 0.0)))
+
+                if "weights" in info:
+                    w = info["weights"]
+                    try:
+                        if symbols is not None and len(w) == len(symbols):
+                            weights_list.append({symbols[i]: float(w[i]) for i in range(len(symbols))})
+                        else:
+                            weights_list.append({f"w{i}": float(w[i]) for i in range(len(w))})
+                    except Exception:
+                        weights_list.append({})
+                else:
+                    weights_list.append({})
+
+            # Persist equity curve and summary metrics under report/
+            report_dir = self.out_dir / "report"
+            report_dir.mkdir(parents=True, exist_ok=True)
+            base_df = pd.DataFrame({
+                "ts": ts_list,
+                "equity": eq_list,
+                "cash": cash_list,
+                "drawdown": dd_list,
+                "gross_leverage": gl_list,
+                "net_leverage": nl_list,
+                "turnover": to_list,
+                "r_base": rbase_list,
+                "pen_turnover": pto_list,
+                "pen_drawdown": pdd_list,
+                "pen_vol": pvol_list,
+                "pen_leverage": plev_list,
+            })
+            if weights_list and any(len(d) for d in weights_list):
+                wdf = pd.DataFrame(weights_list)
+                eqdf = pd.concat([base_df, wdf], axis=1)
+            else:
+                eqdf = base_df
+            eqdf = eqdf.sort_values("ts")
+            eqdf.to_csv(report_dir / "equity.csv", index=False)
+        except Exception as _e:
+            # Fallback to minimal equity-only CSV if rich logging fails
+            try:
+                import pandas as pd
+                report_dir = self.out_dir / "report"
+                report_dir.mkdir(parents=True, exist_ok=True)
+                eqdf = pd.DataFrame({
+                    "ts": ev.unwrapped._eq_ts,
+                    "equity": ev.unwrapped._eq_net,
+                })
+                eqdf.to_csv(report_dir / "equity.csv", index=False)
+            except Exception:
+                pass
+        # Also compute arrays for summary metrics below
+        curve, to = episode_rollout(self._eval_env_fn(), self.model, deterministic=True, seed=self.args.seed)
         tr = total_return(curve, start_cash)
         mdd = max_drawdown(curve)
         shp = sharpe(curve, start_cash)
@@ -175,3 +338,19 @@ class PPOTrainer:
                 tr, mdd, shp, sor, cal, to_metric
             )
         )
+        try:
+            import json
+            summary = {
+                "total_return": float(tr),
+                "max_drawdown": float(mdd),
+                "sharpe": float(shp),
+                "sortino": float(sor),
+                "calmar": float(cal),
+                "turnover": float(to_metric),
+            }
+            report_dir = self.out_dir / "report"
+            report_dir.mkdir(parents=True, exist_ok=True)
+            (report_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+            (report_dir / "metrics.json").write_text(json.dumps(summary, indent=2))
+        except Exception:
+            pass
