@@ -33,6 +33,7 @@ connectDB();
 const app = express();
 
 const BACKEND_URL = process.env.BACKEND_URL;
+console.log("BACKEND_URL:", BACKEND_URL);
 const PORT = process.env.BACKEND_PORT;
 const CERT_PATH = process.env.SSL_CERT;
 const KEY_PATH = process.env.SSL_KEY;
@@ -46,7 +47,7 @@ app.use(pinoHttp({ logger }));
 
 app.use(cors(corsOptions));
 app.use(cookieParser());
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
 app.use(helmet());
 // Global rate limit, skipping stockbot (mounted separately below)
 const globalLimiter = rateLimit({

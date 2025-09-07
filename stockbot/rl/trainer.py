@@ -39,11 +39,67 @@ class PPOTrainer:
     # Setup helpers
     # ------------------------------------------------------------------
     def _build_envs(self):
+        gamma_seq = None
+        regime_scalars = None
+        append_gamma = False
+
+        try:
+            import numpy as np, json
+            gamma_path = self.out_dir / "regime_posteriors.csv"
+            if gamma_path.exists():
+                gamma_seq = np.loadtxt(gamma_path, delimiter=",")
+            schema_path = self.out_dir / "obs_schema.json"
+            if gamma_seq is not None and schema_path.exists():
+                schema = json.loads(schema_path.read_text())
+                append_gamma = "gamma" not in schema
+            scalars_path = self.out_dir / "state_scalars.json"
+            if scalars_path.exists():
+                regime_scalars = json.loads(scalars_path.read_text())
+        except Exception as e:  # pragma: no cover - best effort
+            print(f"[PPOTrainer] failed to load regime metadata: {e}")
+
+        def maybe_wrap_overlay(env):
+            mode = str(getattr(self.args, "overlay", "none"))
+            if mode == "none":
+                return env
+            if mode == "hmm":
+                try:
+                    from .overlay import RiskOverlayWrapper, HMMEngine
+                    engine = HMMEngine()
+                    return RiskOverlayWrapper(env, engine)
+                except Exception as e:
+                    print(f"[PPOTrainer] Failed to enable overlay '{mode}': {e}")
+                    return env
+            print(f"[PPOTrainer] Unknown overlay mode '{mode}', proceeding without overlay.")
+            return env
+
         def train_env_fn():
-            return make_env(self.cfg, self.split, mode="train", normalize=self.args.normalize)
+            env = make_env(
+                self.cfg,
+                self.split,
+                mode="train",
+                normalize=self.args.normalize,
+                regime_gamma=gamma_seq,
+                regime_scalars=regime_scalars,
+                append_gamma_to_obs=append_gamma,
+                run_dir=self.out_dir,
+                data_source=getattr(self.args, "data_source", "yfinance"),
+            )
+            return maybe_wrap_overlay(env)
 
         def eval_env_fn():
-            return make_env(self.cfg, self.split, mode="eval", normalize=self.args.normalize)
+            env = make_env(
+                self.cfg,
+                self.split,
+                mode="eval",
+                normalize=self.args.normalize,
+                regime_gamma=gamma_seq,
+                regime_scalars=regime_scalars,
+                append_gamma_to_obs=append_gamma,
+                run_dir=self.out_dir,
+                data_source=getattr(self.args, "data_source", "yfinance"),
+            )
+            return maybe_wrap_overlay(env)
 
         self.train_env = make_vec_env(train_env_fn)
         self.eval_env = make_vec_env(eval_env_fn)
@@ -103,6 +159,30 @@ class PPOTrainer:
         )
         logger = configure(str(self.out_dir), ["stdout", "csv", "tensorboard"])
         self.model.set_logger(logger)
+        # Optional: schema compatibility check vs saved obs_schema.json
+        try:
+            import json
+            schema_path = self.out_dir / "obs_schema.json"
+            if schema_path.exists():
+                schema = json.loads(schema_path.read_text())
+                probe_env = self._eval_env_fn()
+                obs_space = probe_env.unwrapped.observation_space
+                win_shape = list(obs_space["window"].shape)
+                port_shape = list(obs_space["portfolio"].shape)
+                sch_win = list(schema.get("window", {}).get("shape", []))
+                sch_port = list(schema.get("portfolio", {}).get("shape", []))
+                if sch_win and sch_port and (sch_win != win_shape or sch_port != port_shape):
+                    model_path = self.out_dir / "ppo_policy.zip"
+                    msg = (
+                        f"Observation shape mismatch: env window={win_shape}, portfolio={port_shape}; "
+                        f"schema window={sch_win}, portfolio={sch_port}"
+                    )
+                    if model_path.exists():
+                        raise RuntimeError(msg)
+                    print(f"[PPOTrainer] Warning: {msg}")
+                del probe_env
+        except Exception as e:
+            print(f"[PPOTrainer] Schema compat check skipped: {e}")
 
     def _build_callbacks(self):
         diag_cb = RLDiagCallback(log_dir=str(self.out_dir / "tb"), every_n_updates=1)
@@ -146,6 +226,18 @@ class PPOTrainer:
         )
         ev = self._eval_env_fn()
         curve, to = episode_rollout(ev, self.model, deterministic=True, seed=self.args.seed)
+        # Persist equity curve and summary metrics under report/
+        try:
+            import pandas as pd, json
+            report_dir = self.out_dir / "report"
+            report_dir.mkdir(parents=True, exist_ok=True)
+            eqdf = pd.DataFrame({
+                "ts": ev.unwrapped._eq_ts,
+                "equity": ev.unwrapped._eq_net,
+            })
+            eqdf.to_csv(report_dir / "equity.csv", index=False)
+        except Exception:
+            pass
         tr = total_return(curve, start_cash)
         mdd = max_drawdown(curve)
         shp = sharpe(curve, start_cash)
@@ -158,3 +250,19 @@ class PPOTrainer:
                 tr, mdd, shp, sor, cal, to_metric
             )
         )
+        try:
+            import json
+            summary = {
+                "total_return": float(tr),
+                "max_drawdown": float(mdd),
+                "sharpe": float(shp),
+                "sortino": float(sor),
+                "calmar": float(cal),
+                "turnover": float(to_metric),
+            }
+            report_dir = self.out_dir / "report"
+            report_dir.mkdir(parents=True, exist_ok=True)
+            (report_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+            (report_dir / "metrics.json").write_text(json.dumps(summary, indent=2))
+        except Exception:
+            pass

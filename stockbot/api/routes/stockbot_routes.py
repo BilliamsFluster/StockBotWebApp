@@ -2,11 +2,16 @@ from fastapi import APIRouter, BackgroundTasks, File, UploadFile, Depends, Reque
 from fastapi.responses import StreamingResponse
 import asyncio
 import os
+import json
+import hashlib
+import yaml
+from pathlib import Path
 from api.controllers.stockbot_controller import (
     TrainRequest,
     BacktestRequest,
     start_train_job,
     start_backtest_job,
+    start_train_job as start_cv_job,
     list_runs,
     get_run,
     get_artifacts,
@@ -23,6 +28,13 @@ from api.controllers.stockbot_controller import (
 )
 from api.controllers.insights_controller import InsightsRequest, generate_insights
 from api.controllers.highlights_controller import HighlightsRequest, generate_highlights
+from api.controllers.trade_controller import (
+    TradeStartRequest,
+    TradeStatusRequest,
+    start_live,
+    status_live,
+    stop_live,
+)
 
 
 '''def verify_api_key(request: Request): -- security will be implemented soon
@@ -47,6 +59,11 @@ async def post_train(req: TrainRequest, bg: BackgroundTasks):
 @router.post("/backtest")
 async def post_backtest(req: BacktestRequest, bg: BackgroundTasks):
     return await start_backtest_job(req, bg)
+
+
+@router.post("/cv")
+async def post_cv(req: TrainRequest, bg: BackgroundTasks):
+    return await start_cv_job(req, bg)
 
 
 @router.get("/runs")
@@ -111,6 +128,24 @@ def delete_run_route(run_id: str):
     return delete_run(run_id)
 
 
+# ---- Live trading endpoints ----
+
+
+@router.post("/trade/start")
+def trade_start(req: TradeStartRequest):
+    return start_live(req)
+
+
+@router.post("/trade/status")
+def trade_status(req: TradeStatusRequest):
+    return status_live(req)
+
+
+@router.post("/trade/stop")
+def trade_stop():
+    return stop_live()
+
+
 # Optional: WebSocket live status (parallel to SSE stream)
 @router.websocket("/runs/{run_id}/ws")
 async def ws_run_status(ws: WebSocket, run_id: str):
@@ -155,11 +190,33 @@ async def stream_run_status(run_id: str):
 
     async def event_gen():
         last = None
+        sent_init = False
         while True:
             rec = RUNS.get(run_id)
             if not rec:
                 yield "event: error\n" + f"data: {{\"error\": \"not found\"}}\n\n"
                 return
+            if not sent_init:
+                if isinstance(rec.meta, dict):
+                    payload_obj = rec.meta.get("payload") or rec.meta
+                    cfg_path = rec.meta.get("config_snapshot") or rec.meta.get("resolved_config")
+                else:
+                    payload_obj = {}
+                    cfg_path = None
+                cfg = {}
+                if cfg_path:
+                    try:
+                        cfg = yaml.safe_load(Path(cfg_path).read_text()) or {}
+                    except Exception:
+                        cfg = {}
+                try:
+                    payload_hash = hashlib.sha256(json.dumps(payload_obj or {}, sort_keys=True).encode()).hexdigest()
+                except Exception:
+                    payload_hash = ""
+                init = {"payload_hash": payload_hash, "config": cfg}
+                yield "event: init\n" + "data: " + json.dumps(init) + "\n\n"
+                sent_init = True
+
             payload = {
                 "id": rec.id,
                 "type": rec.type,

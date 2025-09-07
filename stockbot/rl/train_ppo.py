@@ -33,6 +33,10 @@ def parse_args():
     # Model/Env knobs
     ap.add_argument("--normalize", action="store_true", help="Enable observation normalization")
     ap.add_argument("--policy", type=str, default="mlp", choices=["mlp", "window_cnn", "window_lstm"])
+    ap.add_argument("--overlay", type=str, default="none", choices=["none", "hmm"],
+                    help="Use a risk overlay with baseline engine (hmm) or none")
+    ap.add_argument("--data-source", type=str, default="yfinance", choices=["yfinance", "cached", "auto"],
+                    help="Where env pulls market data from")
 
     # PPO HPs
     ap.add_argument("--n-steps", type=int, default=1024)
@@ -41,7 +45,14 @@ def parse_args():
     ap.add_argument("--gamma", type=float, default=0.99)
     ap.add_argument("--gae-lambda", type=float, default=0.95)
     ap.add_argument("--clip-range", type=float, default=0.2)
-    ap.add_argument("--entropy-coef", type=float, default=0.0)
+     # accept both --entropy-coef and --ent-coef for convenience
+    ap.add_argument(
+        "--entropy-coef",
+        "--ent-coef",
+        type=float,
+        dest="entropy_coef",
+        default=0.0,
+    )    
     ap.add_argument("--vf-coef", type=float, default=0.5)
     ap.add_argument("--max-grad-norm", type=float, default=0.5)
     ap.add_argument("--dropout", type=float, default=0.10, help="Dropout for extractors where applicable")
