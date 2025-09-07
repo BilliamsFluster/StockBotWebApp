@@ -21,6 +21,8 @@ import numpy as np
 import pandas as pd
 
 from stockbot.env.config import EnvConfig
+from gymnasium import spaces
+from stable_baselines3.common.save_util import load_from_zip_file
 from stockbot.rl.utils import make_env, Split, make_strategy, episode_rollout  # strategy-aware
 from stockbot.backtest.metrics import compute_all, save_metrics
 from stockbot.backtest.trades import build_trades_fifo
@@ -153,8 +155,43 @@ def main():
 
     split = Split(train=(args.start, args.end), eval=(args.start, args.end))
 
-    # Build eval env (no normalization stats changing in eval)
-    env = make_env(cfg, split, mode="eval", normalize=args.normalize)
+    # Build eval env with observation layout matching the model ZIP when provided.
+    append_gamma = False
+    recompute_gamma = False
+    if _policy_kind(args.policy) == "rl":
+        try:
+            data, _params, _vars = load_from_zip_file(args.policy)
+            obs_space = data.get("observation_space")
+            if isinstance(obs_space, spaces.Dict) and "window" in obs_space.spaces and "portfolio" in obs_space.spaces:
+                win_shape = obs_space.spaces["window"].shape  # (L, N, F)
+                port_size = int(obs_space.spaces["portfolio"].shape[0])
+                has_gamma_key = "gamma" in obs_space.spaces
+                # Compute baseline portfolio size 7+N from model meta
+                try:
+                    N = int(win_shape[1])
+                except Exception:
+                    N = len(list(cfg.symbols)) if hasattr(cfg, "symbols") else 1
+                base_port = 7 + N
+                if has_gamma_key:
+                    append_gamma = False
+                    recompute_gamma = True
+                else:
+                    # If portfolio bigger than baseline, it's appended beliefs
+                    append_gamma = port_size > base_port
+                    recompute_gamma = append_gamma
+        except Exception:
+            # fallback: no layout inference
+            append_gamma = False
+            recompute_gamma = False
+
+    env = make_env(
+        cfg,
+        split,
+        mode="eval",
+        normalize=args.normalize,
+        append_gamma_to_obs=append_gamma,
+        recompute_gamma=recompute_gamma,
+    )
 
     # Strategy (baseline or SB3)
     strategy = _as_strategy(args.policy, env)

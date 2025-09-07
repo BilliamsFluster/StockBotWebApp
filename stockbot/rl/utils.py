@@ -58,6 +58,7 @@ def make_env(
     append_gamma_to_obs: bool = False,
     run_dir: Optional[str | Path] = None,
     data_source: str = "yfinance",  # choices: 'yfinance', 'cached', 'auto'
+    recompute_gamma: bool = True,
 ):
     """Build a monitored Gym env from EnvConfig + date split."""
     run_cfg = replace(
@@ -99,6 +100,10 @@ def make_env(
         # using live provider data, recompute gamma on this panel.
         def _recompute_gamma_if_needed():
             nonlocal regime_gamma
+            if not recompute_gamma:
+                # Honor caller's request to keep gamma disabled
+                regime_gamma = None
+                return
             need = (regime_gamma is None) or (hasattr(regime_gamma, "__len__") and len(regime_gamma) != panel_len)
             if not need:
                 return
