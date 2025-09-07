@@ -224,17 +224,20 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
       if (art?.equity) {
         try {
           const rows = await parseCSV(art.equity);
-          const eq = rows
+          const eqRaw = rows
             .map((r: any, i: number) => ({ step: i, equity: Number(r.equity) }))
             .filter((r: any) => Number.isFinite(r.step) && Number.isFinite(r.equity));
+          // Normalize equity to base=100 for visibility
+          const baseEq = eqRaw.length ? (eqRaw[0].equity || 1) : 1;
+          const eq = eqRaw.map((e: any) => ({ step: e.step, equity: ((e.equity || 0) / baseEq) * 100 }));
           setEquity(eq);
-          const ddRows = drawdownFromEquity(rows).map((r: any, i: number) => ({ step: i, dd: -Number(r.dd) }));
+          const ddRows = drawdownFromEquity(rows).map((r: any, i: number) => ({ step: i, dd: -100 * Number(r.dd) }));
           setDrawdown(ddRows);
           const levRows = rows.map((r: any, i: number) => ({
             step: i,
-            to: Number(r.turnover),
-            gl: Number(r.gross_leverage),
-            nl: Number(r.net_leverage),
+            to: Number.isFinite(Number(r.turnover)) ? Number(r.turnover) : 0,
+            gl: Number.isFinite(Number(r.gross_leverage)) ? Number(r.gross_leverage) : 0,
+            nl: Number.isFinite(Number(r.net_leverage)) ? Number(r.net_leverage) : 0,
           })).filter((r: any) => Number.isFinite(r.step));
           setLev(levRows);
         } catch {
@@ -852,16 +855,17 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
                 <div className="rounded-lg border p-3">
                   <div className="text-sm font-medium mb-2">Equity & Drawdown</div>
                   <ChartContainer
-                    config={{ equity: { label: "Equity", color: "hsl(var(--chart-1))" }, dd: { label: "Drawdown", color: "hsl(var(--chart-2))" } }}
+                    config={{ equity: { label: "Equity (Base=100)", color: "hsl(var(--chart-1))" }, dd: { label: "Drawdown (%)", color: "hsl(var(--chart-2))" } }}
                     className="h-[220px]"
                   >
                     <LineChart data={equity.map((e, i) => ({ step: e.step, equity: e.equity, dd: drawdown[i]?.dd ?? 0 }))}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="step" />
-                      <YAxis />
+                      <YAxis yAxisId="left" tickFormatter={(v: any) => String(v)} />
+                      <YAxis yAxisId="right" orientation="right" tickFormatter={(v: any) => `${v}%`} domain={["auto", 0]} />
                       <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
-                      <Line dataKey="equity" type="monotone" stroke="var(--color-equity)" dot={false} />
-                      <Line dataKey="dd" type="monotone" stroke="var(--color-dd)" dot={false} />
+                      <Line yAxisId="left" dataKey="equity" type="monotone" stroke="var(--color-equity)" dot={false} />
+                      <Line yAxisId="right" dataKey="dd" type="monotone" stroke="var(--color-dd)" dot={false} />
                     </LineChart>
                   </ChartContainer>
                 </div>

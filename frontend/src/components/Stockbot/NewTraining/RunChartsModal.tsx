@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { buildUrl } from "@/api/client";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from "recharts";
 
 function parseCSV(text: string): { headers: string[]; rows: string[][] } {
@@ -22,7 +23,7 @@ export function RunChartsModal({ equityUrl, rollingUrl, onClose }: { equityUrl: 
     let alive = true;
     (async () => {
       try {
-        const resp = await fetch(equityUrl, { cache: "no-store" });
+        const resp = await fetch(buildUrl(equityUrl), { cache: "no-store", credentials: "include" });
         const text = await resp.text();
         const { headers, rows } = parseCSV(text);
         const col = (name: string) => headers.indexOf(name);
@@ -43,7 +44,7 @@ export function RunChartsModal({ equityUrl, rollingUrl, onClose }: { equityUrl: 
       } catch {}
       if (!rollingUrl) return;
       try {
-        const resp2 = await fetch(rollingUrl, { cache: "no-store" });
+        const resp2 = await fetch(buildUrl(rollingUrl), { cache: "no-store", credentials: "include" });
         const text2 = await resp2.text();
         const { headers, rows } = parseCSV(text2);
         const cTs = headers.indexOf("ts"), cSh = headers.indexOf("roll_sharpe_63"), cVol = headers.indexOf("roll_vol_63"), cMdd = headers.indexOf("roll_maxdd_252");

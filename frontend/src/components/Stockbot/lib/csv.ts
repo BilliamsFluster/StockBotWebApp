@@ -4,7 +4,8 @@ import { buildUrl } from "@/api/client";
 
 export async function parseCSV(url?: string | null): Promise<any[]> {
   if (!url) return [];
-  const res = await fetch(buildUrl(url), { cache: "no-store" });
+  // Include credentials so auth cookies are sent to the backend
+  const res = await fetch(buildUrl(url), { cache: "no-store", credentials: "include" });
   if (!res.ok) return [];
   const text = await res.text();
   // Guard: if server returned HTML (404 page), bail out

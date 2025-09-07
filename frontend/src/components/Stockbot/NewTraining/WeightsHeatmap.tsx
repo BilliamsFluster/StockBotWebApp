@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { buildUrl } from "@/api/client";
 import dynamic from "next/dynamic";
 
 function parseCSV(text: string): { headers: string[]; rows: string[][] } {
@@ -41,7 +42,7 @@ export function WeightsHeatmap({ equityUrl, onClose, inline = false }: { equityU
     let alive = true;
     (async () => {
       try {
-        const resp = await fetch(equityUrl, { cache: "no-store" });
+        const resp = await fetch(buildUrl(equityUrl), { cache: "no-store", credentials: "include" });
         const text = await resp.text();
         const head = text.slice(0, 160).toLowerCase();
         if (head.includes("<!doctype") || head.includes("<html") || head.includes("__next_f")) {
