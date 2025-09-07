@@ -1,7 +1,8 @@
 // src/components/Stockbot/NewTraining/index.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "react-hot-toast";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Accordion } from "@/components/ui/accordion";
@@ -138,8 +139,58 @@ export default function NewTraining({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [progress, setProgress] = useState<string | null>(null);
+  const toastRef = useRef<string | null>(null);
+  useEffect(() => {
+    return () => {
+      if (toastRef.current) {
+        toast.dismiss(toastRef.current);
+        toastRef.current = null;
+      }
+    };
+  }, []);
+
+  // Global toast: kick off when submitting and when job id is assigned
+  useEffect(() => {
+    if (progress && progress.toLowerCase().startsWith("submitting") && !toastRef.current) {
+      toastRef.current = toast.loading("Submitting training…", { duration: Infinity });
+    }
+  }, [progress]);
+
+  useEffect(() => {
+    if (jobId && !toastRef.current) {
+      toastRef.current = toast.loading(`Queued ${jobId}`, { duration: Infinity });
+    }
+  }, [jobId]);
+
+  // Global toast updates on status transitions
+  useEffect(() => {
+    if (!jobId || !status) return;
+    const st = status.status;
+    if (st === "RUNNING" && toastRef.current) {
+      toast.loading(`Training ${jobId} running…`, { id: toastRef.current, duration: Infinity });
+    }
+    if (["SUCCEEDED", "FAILED", "CANCELLED"].includes(st) && toastRef.current) {
+      if (st === "SUCCEEDED") {
+        toast.success(`Training ${jobId} completed`, { id: toastRef.current, duration: 4000 });
+      } else if (st === "FAILED") {
+        toast.error(`Training ${jobId} failed`, { id: toastRef.current, duration: 6000 });
+      } else {
+        toast(`Training ${jobId} cancelled`, { id: toastRef.current, duration: 4000 });
+      }
+      toastRef.current = null;
+    }
+  }, [status, jobId]);
 
   const isRunning = useMemo(() => !!status && !TERMINAL.includes(status.status), [status]);
+
+  // Dismiss queue toast when job starts running
+  useEffect(() => {
+    if (!jobId || !status) return;
+    if (status.status === "RUNNING" && toastRef.current) {
+      toast.dismiss(toastRef.current);
+      toastRef.current = null;
+    }
+  }, [status, jobId]);
 
   // ===== Poller =====
   useEffect(() => {
@@ -252,6 +303,7 @@ export default function NewTraining({
     if (!jobId) return;
     try {
       await api.post(`/stockbot/runs/${jobId}/cancel`);
+      if (toastRef.current) toast(`Training ${jobId} cancelled`, { id: toastRef.current, duration: 4000 });
     } catch {}
   };
 
@@ -359,6 +411,7 @@ export default function NewTraining({
       setJobId(resp.job_id);
       setProgress("Job started. Polling status…");
       addRecentRun({ id: resp.job_id, type: "train", status: "QUEUED", created_at: new Date().toISOString() });
+      if (toastRef.current) { toast.dismiss(toastRef.current); toastRef.current = null; }
       onJobCreated(resp.job_id);
     } catch (e: any) {
       setError(e?.message ?? String(e));

@@ -9,7 +9,6 @@ import { deleteRun } from "@/api/stockbot";
 import { RunSummary } from "./lib/types";
 import StatusChip from "./shared/StatusChip";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { formatLocalTime } from "./lib/time";
 import {
   loadRecentRuns,
   saveRecentRuns,
@@ -39,7 +38,6 @@ export default function Dashboard({
   const loadRuns = async () => {
     setLoading(true);
     try {
-      // You can pass ?type=train or ?type=backtest if your API supports filters
       const { data } = await api.get<RunSummary[]>("/stockbot/runs");
       const next = saveRecentRuns((data ?? []).slice(0, 50));
       setRuns(next);
@@ -52,6 +50,14 @@ export default function Dashboard({
 
   useEffect(() => {
     loadRuns();
+    let alive = true;
+    const tick = async () => {
+      if (!alive) return;
+      try { await loadRuns(); } catch {}
+      if (alive) setTimeout(tick, 5000);
+    };
+    const t = setTimeout(tick, 5000);
+    return () => { alive = false; clearTimeout(t); };
   }, []);
 
   const onToggleSave = (r: RunSummary) => {
@@ -62,9 +68,7 @@ export default function Dashboard({
   const onDelete = async (id: string) => {
     if (!window.confirm("Delete this run?")) return;
     try {
-
       await deleteRun(id);
-
       const nextRuns = runs.filter((r) => r.id !== id);
       setRuns(nextRuns);
       saveRecentRuns(nextRuns);
@@ -91,14 +95,12 @@ export default function Dashboard({
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Card className="p-4">
           <h3 className="text-lg font-semibold mb-3">Training Runs</h3>
-          <div className="max-h-96 overflow-hidden">
+          <div className="max-h-96 overflow-auto">
             <Table containerClassName="max-h-96">
               <TableHeader className="sticky top-0 bg-background z-10">
                 <TableRow>
                   <TableHead>Run ID</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Out Dir</TableHead>
-                  <TableHead>Created</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -111,8 +113,6 @@ export default function Dashboard({
                       <TableCell>
                         <StatusChip status={r.status} />
                       </TableCell>
-                      <TableCell className="font-mono">{r.out_dir ?? "—"}</TableCell>
-                      <TableCell>{formatLocalTime(r.created_at)}</TableCell>
                       <TableCell className="flex gap-2">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -131,7 +131,7 @@ export default function Dashboard({
                 })}
                 {trainRuns.length === 0 && !loading && (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-muted-foreground italic">
+                    <TableCell colSpan={3} className="text-muted-foreground italic">
                       No runs yet.
                     </TableCell>
                   </TableRow>
@@ -143,14 +143,12 @@ export default function Dashboard({
 
         <Card className="p-4">
           <h3 className="text-lg font-semibold mb-3">Backtests</h3>
-          <div className="max-h-96 overflow-hidden">
+          <div className="max-h-96 overflow-auto">
             <Table containerClassName="max-h-96">
               <TableHeader className="sticky top-0 bg-background z-10">
                 <TableRow>
                   <TableHead>Run ID</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Out Dir</TableHead>
-                  <TableHead>Created</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -163,8 +161,6 @@ export default function Dashboard({
                       <TableCell>
                         <StatusChip status={r.status} />
                       </TableCell>
-                      <TableCell className="font-mono">{r.out_dir ?? "—"}</TableCell>
-                      <TableCell>{formatLocalTime(r.created_at)}</TableCell>
                       <TableCell className="flex gap-2">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -182,7 +178,7 @@ export default function Dashboard({
                 })}
                 {backtestRuns.length === 0 && !loading && (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-muted-foreground italic">
+                    <TableCell colSpan={3} className="text-muted-foreground italic">
                       No backtests yet.
                     </TableCell>
                   </TableRow>
@@ -195,14 +191,13 @@ export default function Dashboard({
 
       <Card className="p-4">
         <h3 className="text-lg font-semibold mb-3">Saved Runs</h3>
-        <div className="max-h-96 overflow-hidden">
+        <div className="max-h-96 overflow-auto">
           <Table containerClassName="max-h-96">
             <TableHeader className="sticky top-0 bg-background z-10">
             <TableRow>
               <TableHead>Run ID</TableHead>
               <TableHead>Type</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead>Created</TableHead>
               <TableHead>Actions</TableHead>
             </TableRow>
             </TableHeader>
@@ -214,7 +209,6 @@ export default function Dashboard({
                 <TableCell>
                   <StatusChip status={r.status} />
                 </TableCell>
-                <TableCell>{formatLocalTime(r.created_at)}</TableCell>
                 <TableCell className="flex gap-2">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -234,7 +228,7 @@ export default function Dashboard({
             ))}
             {saved.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="text-muted-foreground italic">
+                <TableCell colSpan={4} className="text-muted-foreground italic">
                   No saved runs.
                 </TableCell>
               </TableRow>
