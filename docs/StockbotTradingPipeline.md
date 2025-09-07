@@ -355,3 +355,65 @@ Guardrails (`stockbot/execution/live_guardrails.py`)
 
 This document will evolve with the code. If something differs in your local build, inspect the referenced files and the run artifacts in `stockbot/runs/<run_id>/`.
 
+--------------------------------------------------------------------------------
+
+## 16. Core System Components
+
+### Data Ingestion
+
+StockBot pulls historical bar data from pluggable ingestion modules under `stockbot/ingestion/*`.  The workflows download raw
+quotes from providers such as Alpha Vantage or Yahoo Finance, align the fields, and persist them in a standardized format.  The
+training and backtest engine then loads these cached datasets through the environment builders.  Reliable ingestion ensures
+that every experiment sees a consistent view of prices and corporate actions, providing the foundation for reproducible
+results.
+
+Each provider adapter normalizes symbol names, converts timestamps to UTC, and produces a Parquet cache under
+`data/<provider>/<symbol>.parquet`.  Split and dividend adjustments are applied when available so that OHLC bars always
+represent a continuous series.  A `dataset_manifest.json` accompanies the cache and records the date range, symbol universe,
+and feature columns present.  The manifest is later used by `make_env` to confirm that the data satisfy the requested
+configuration before a training or backtest run begins.
+
+During dataset preparation optional feature‑engineering steps can compute rolling returns, technical indicators, or
+log‑transforms.  The ingestion pipeline records the resulting schema in `obs_schema.json`, allowing downstream modules to
+understand exactly which fields appear in each observation window.  By decoupling the external download from the internal
+cache format the system can deterministically replay experiments even if the upstream data provider changes or becomes
+unavailable.
+
+### PPO Training System
+
+The reinforcement‑learning core uses Stable‑Baselines3 Proximal Policy Optimization.  During a training run the engine steps the
+selected environment, collects transitions, and performs clipped policy‑gradient updates.  The trained actor–critic network is
+exported as `ppo_policy.zip` and later consumed by backtests or live trading.  PPO’s ability to balance exploration and
+stability allows StockBot to learn trading policies that generalize beyond the training period.
+
+Rollouts are gathered in fixed‑length batches (`n_steps` per environment) and processed with Generalized Advantage Estimation
+to reduce variance.  The optimizer shuffles these batches into mini‑batches for several epochs, applying the clipped surrogate
+objective and entropy/value regularizers configured in the request payload.  Learning‑rate schedules, gradient clipping, and
+early stopping hooks mirror Stable‑Baselines3 defaults so that experiments are reproducible across machines.  After each
+training phase the engine runs a deterministic evaluation episode, logging per‑step rewards and portfolio metrics to
+`report/equity.csv` for later analysis.
+
+Snapshots of the policy (`ppo_policy.zip`) and normalization statistics are written to the run folder.  These artifacts can be
+reloaded for out‑of‑sample backtests or deployed to the live trading service without retraining, enabling rapid iteration on
+strategy ideas.
+
+### Markov/HMM Regime Module
+
+An optional Hidden Markov Model analyzes market returns to infer latent regimes such as bull, bear, or sideways conditions.  The
+module estimates transition matrices and per‑bar regime probabilities, writing artifacts like `regime_posteriors.csv` for
+inspection.  When enabled these probabilities are appended to the observation space (`gamma`), allowing the PPO policy to adapt
+its behavior according to the prevailing market state.  Incorporating regime awareness helps the final policy respond more
+robustly to changing macro environments.
+
+The regime detector fits a Gaussian HMM to log‑returns using the Expectation–Maximization algorithm.  Users may configure the
+number of states and whether the means or covariances are tied across regimes.  Once trained, a forward‑backward pass produces
+smoothed posterior probabilities for every bar in the dataset.  These arrays are saved alongside the dataset cache
+(`regime_posteriors.csv` and `regime_model.pkl`) so that subsequent training runs can reuse the same regime labelling without
+re‑estimating the model.
+
+At runtime the environment simply concatenates the regime probability vector to each observation window.  Policies can choose to
+ignore this additional context or condition their allocations on the inferred market state.  By separating regime estimation
+from policy training the pipeline keeps the HMM transparent and interpretable while still giving reinforcement‑learning agents
+access to a higher‑level view of market dynamics.
+
+
