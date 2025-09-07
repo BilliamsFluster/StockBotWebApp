@@ -75,14 +75,14 @@ export default function NewTraining({
   const [totalTimesteps, setTotalTimesteps] = useState(1_000_000);
   const [nSteps, setNSteps] = useState(4096);
   const [batchSize, setBatchSize] = useState(1024);
-  const [learningRate, setLearningRate] = useState(3e-5);
+  const [learningRate, setLearningRate] = useState(1e-4);
   const [gamma, setGamma] = useState(0.997);
   const [gaeLambda, setGaeLambda] = useState(0.985);
   const [clipRange, setClipRange] = useState(0.15);
-  const [entCoef, setEntCoef] = useState(0.04);
+  const [entCoef, setEntCoef] = useState(0.015);
   const [vfCoef, setVfCoef] = useState(1.0);
   const [maxGradNorm, setMaxGradNorm] = useState(1.0);
-  const [dropout, setDropout] = useState(0.1);
+  const [dropout, setDropout] = useState(0.15);
   const [seed, setSeed] = useState<number | undefined>(undefined);
 
   // ===== Sizing (init from defaults) =====
@@ -94,6 +94,7 @@ export default function NewTraining({
     useState(DEFAULT_SIZING.maxStepChange);
   const [rebalanceEps, setRebalanceEps] =
     useState(DEFAULT_SIZING.rebalanceEps);
+  const [minHoldBars, setMinHoldBars] = useState(DEFAULT_SIZING.minHoldBars);
 
   const [kellyEnabled, setKellyEnabled] =
     useState(DEFAULT_SIZING.kellyEnabled);
@@ -119,7 +120,7 @@ export default function NewTraining({
   const [wDrawdown, setWDrawdown] =
     useState(DEFAULT_REWARD?.wDrawdown ?? 0.10);
   const [wTurnover, setWTurnover] =
-    useState(DEFAULT_REWARD?.wTurnover ?? 0.005);
+    useState(DEFAULT_REWARD?.wTurnover ?? 0.003);
   const [wVol, setWVol] = useState(DEFAULT_REWARD?.wVol ?? 0.0);
   const [wLeverage, setWLeverage] =
     useState(DEFAULT_REWARD?.wLeverage ?? 0.0);
@@ -331,6 +332,7 @@ export default function NewTraining({
         grossLevCap,
         maxStepChange,
         rebalanceEps,
+        minHoldBars,
         kellyEnabled,
         kellyLambda,
         kellyFMax,
@@ -508,11 +510,13 @@ export default function NewTraining({
           setInvestMax={setInvestMax}
           grossLevCap={grossLevCap}
           setGrossLevCap={setGrossLevCap}
-          maxStepChange={maxStepChange}
-          setMaxStepChange={setMaxStepChange}
-          rebalanceEps={rebalanceEps}
-          setRebalanceEps={setRebalanceEps}
-          kellyEnabled={kellyEnabled}
+        maxStepChange={maxStepChange}
+        setMaxStepChange={setMaxStepChange}
+        rebalanceEps={rebalanceEps}
+        setRebalanceEps={setRebalanceEps}
+        minHoldBars={minHoldBars}
+        setMinHoldBars={setMinHoldBars}
+        kellyEnabled={kellyEnabled}
           setKellyEnabled={setKellyEnabled}
           kellyLambda={kellyLambda}
           setKellyLambda={setKellyLambda}
