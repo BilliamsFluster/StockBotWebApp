@@ -118,12 +118,14 @@ class DatasetModel(BaseModel):
 
 
 class FeaturesModel(BaseModel):
-    feature_set: List[Literal["ohlcv", "ohlcv_ta_basic", "ohlcv_ta_rich"]] = Field(
-        default_factory=lambda: ["ohlcv_ta_basic"]
-    )
+    # Be permissive here; controller maps to EnvConfig later
+    feature_set: List[str] = Field(default_factory=lambda: ["ohlcv_ta_basic"]) 
     ta_basic_opts: Optional[Dict[str, bool]] = None
     normalize_observation: bool = True
     embargo_bars: int = 1
+    # NEW: optional direct indicators list and data source selection
+    indicators: Optional[List[str]] = None
+    data_source: Optional[Literal["yfinance", "cached", "auto"]] = "yfinance"
 
 
 class CostsModel(BaseModel):
@@ -327,6 +329,94 @@ def _dump_yaml(d: Dict[str, Any], path: Path) -> None:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write YAML snapshot: {e}")
 
+def _env_snapshot_from_train(req: "TrainRequest") -> Dict[str, Any]:
+    """Map TrainRequest payload to an EnvConfig-compatible YAML dict.
+
+    Starts from env.example.yaml and overlays UI selections so YFinance-based
+    training uses the requested symbols/dates/costs/features/sizing.
+    """
+    base = _load_yaml("stockbot/env/env.example.yaml");
+
+    ds = req.dataset
+    base["symbols"] = list(ds.symbols)
+    base["interval"] = ds.interval
+    base["start"] = ds.start_date
+    base["end"] = ds.end_date
+    base["adjusted"] = bool(ds.adjusted_prices)
+
+    # Episode lookback
+    base.setdefault("episode", {})
+    base["episode"]["lookback"] = int(ds.lookback)
+
+    # Features
+    feats = req.features
+    base.setdefault("features", {})
+    # If explicit indicators are provided (e.g., ["minimal"]) prefer built-ins
+    # so the indicator list is respected. Otherwise allow custom pipeline.
+    if getattr(feats, "indicators", None):
+        base["features"]["use_custom_pipeline"] = False
+        base["features"]["indicators"] = list(feats.indicators)  # type: ignore[attr-defined]
+    else:
+        base["features"]["use_custom_pipeline"] = True
+
+    # Fees / costs
+    costs = req.costs
+    base.setdefault("fees", {})
+    base["fees"]["commission_per_share"] = float(costs.commission_per_share)
+    base["fees"]["taker_fee_bps"] = float(costs.taker_fee_bps)
+    base["fees"]["maker_rebate_bps"] = float(costs.maker_rebate_bps)
+    base["fees"]["half_spread_bps"] = float(costs.half_spread_bps)
+
+    # Execution
+    ex = req.execution_model
+    base.setdefault("exec", {})
+    base["exec"]["fill_policy"] = ex.fill_policy
+    base["exec"]["participation_cap"] = float(ex.max_participation)
+    # impact_k supplied under costs in UI
+    try:
+        base["exec"]["impact_k"] = float(costs.impact_k)
+    except Exception:
+        pass
+
+    # Sizing / episode mapping knobs
+    sz = req.sizing
+    if hasattr(sz, "mapping_mode"):
+        base["episode"]["mapping_mode"] = sz.mapping_mode
+    if getattr(sz, "invest_max", None) is not None:
+        base["episode"]["invest_max"] = float(sz.invest_max)
+    if getattr(sz, "max_step_change", None) is not None:
+        base["episode"]["max_step_change"] = float(sz.max_step_change)
+    if getattr(sz, "rebalance_eps", None) is not None:
+        base["episode"]["rebalance_eps"] = float(sz.rebalance_eps)
+
+    # Margin guardrails (per-name cap only for now)
+    base.setdefault("margin", {})
+    try:
+        cap = float(getattr(sz.guards, "per_name_weight_cap", 0.0))  # type: ignore[attr-defined]
+        if cap > 0:
+            base["margin"]["max_position_weight"] = cap
+    except Exception:
+        pass
+
+    # Reward
+    rw = req.reward
+    base.setdefault("reward", {})
+    try:
+        mode = rw.base if hasattr(rw, "base") else None
+        if mode in ("delta_nav", "log_nav"):
+            base["reward"]["mode"] = mode
+    except Exception:
+        pass
+    for k in ("w_drawdown", "w_turnover", "w_vol", "w_leverage"):
+        try:
+            v = getattr(rw, k)
+            if v is not None:
+                base["reward"][k] = float(v)
+        except Exception:
+            pass
+
+    return base
+
 # -------- Subprocess runner ---------
 
 def _run_subprocess_sync(args: List[str], rec: RunRecord):
@@ -395,7 +485,12 @@ async def start_train_job(req: TrainRequest, bg: BackgroundTasks):
     out_dir = _choose_outdir(None, run_id)
 
     snapshot_path = Path(out_dir) / "config.snapshot.yaml"
-    _dump_yaml(req.model_dump(), snapshot_path)
+    # Build EnvConfig-shaped snapshot so trainer respects UI dataset/costs/etc
+    try:
+        env_snapshot = _env_snapshot_from_train(req)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to build env snapshot: {e}")
+    _dump_yaml(env_snapshot, snapshot_path)
     payload_path = Path(out_dir) / "payload.json"
     try:
         payload_path.write_text(json.dumps(req.model_dump(), indent=2))
@@ -410,17 +505,29 @@ async def start_train_job(req: TrainRequest, bg: BackgroundTasks):
     except Exception as e:  # pragma: no cover - best effort only
         print(f"[start_train_job] env prep failed: {e}")
 
+    # augment meta with dataset manifest hash if present
+    meta = {
+        "payload": req.model_dump(),
+        "config_snapshot": str(snapshot_path),
+        "payload_path": str(payload_path),
+    }
+    try:
+        manifest_path = Path(out_dir) / "dataset_manifest.json"
+        if manifest_path.exists():
+            import json as _json
+            manifest = _json.loads(manifest_path.read_text())
+            if "content_hash" in manifest:
+                meta["dataset_manifest_hash"] = manifest["content_hash"]
+    except Exception:
+        pass
+
     rec = RunRecord(
         id=run_id,
         type="train",
         status="QUEUED",
         out_dir=str(out_dir),
         created_at=datetime.utcnow().isoformat(),
-        meta={
-            "payload": req.model_dump(),
-            "config_snapshot": str(snapshot_path),
-            "payload_path": str(payload_path),
-        },
+        meta=meta,
     )
     RUN_MANAGER.store(rec)
 
@@ -460,6 +567,31 @@ async def start_train_job(req: TrainRequest, bg: BackgroundTasks):
         "--dropout",
         str(req.model.dropout),
     ])
+
+    # Observation normalization toggle (env-side RL wrapper)
+    try:
+        if bool(req.features.normalize_observation):
+            args.append("--normalize")
+    except Exception:
+        pass
+
+    # Data source toggle for training env (yfinance|cached|auto)
+    ds = None
+    try:
+        # Prefer Pydantic attribute access
+        if getattr(req, "features", None) is not None:
+            ds = getattr(req.features, "data_source", None)  # type: ignore[attr-defined]
+    except Exception:
+        ds = None
+    if ds is None:
+        # Fallback to dict-style from model_dump
+        try:
+            dumped = req.model_dump() if hasattr(req, "model_dump") else {}
+            ds = ((dumped or {}).get("features") or {}).get("data_source")
+        except Exception:
+            ds = None
+    if ds in ("yfinance", "cached", "auto"):
+        args.extend(["--data-source", ds])
 
     bg.add_task(_run_subprocess_sync, args, rec)
     return JSONResponse({"job_id": run_id})
@@ -597,6 +729,8 @@ SAFE_NAME_MAP = {
     "orders":  "report/orders.csv",
     "trades":  "report/trades.csv",
     "summary": "report/summary.json",
+    "cv_report": "cv_report.json",
+    "stress_report": "stress_report.json",
     "config":  "config.snapshot.yaml",
     "model":   "ppo_policy.zip",
     "job_log": "job.log",

@@ -11,6 +11,8 @@ export interface TrainPayload {
   };
   features: {
     feature_set: ("ohlcv" | "ohlcv_ta_basic" | "ohlcv_ta_rich")[];
+    indicators?: string[];
+    data_source?: "yfinance" | "cached" | "auto";
     ta_basic_opts?: { rsi: boolean; macd: boolean; bbands: boolean };
     normalize_observation: boolean;
     embargo_bars: number;
@@ -97,6 +99,8 @@ export function buildTrainPayload(state: any): TrainPayload {
     },
     features: {
       feature_set: state.featureSet,
+      indicators: (state.featureSet || []).includes('minimal') ? ["minimal"] : undefined,
+      data_source: state.dataSource || 'yfinance',
       ta_basic_opts: { rsi: !!state.rsi, macd: !!state.macd, bbands: !!state.bbands },
       normalize_observation: !!state.normalizeObs,
       embargo_bars: Number(state.embargo) || 1,

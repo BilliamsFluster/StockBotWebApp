@@ -44,6 +44,11 @@ export function DownloadsSection({
               metrics.json
             </a>
           )}
+          {artifacts.summary && (
+            <a className="underline" href={artifacts.summary} target="_blank" rel="noreferrer">
+              summary.json
+            </a>
+          )}
           {artifacts.equity && (
             <a className="underline" href={artifacts.equity} target="_blank" rel="noreferrer">
               equity.csv
@@ -59,9 +64,14 @@ export function DownloadsSection({
               trades.csv
             </a>
           )}
-          {artifacts.summary && (
-            <a className="underline" href={artifacts.summary} target="_blank" rel="noreferrer">
-              summary.json
+          {artifacts.cv_report && (
+            <a className="underline" href={artifacts.cv_report} target="_blank" rel="noreferrer">
+              cv_report.json
+            </a>
+          )}
+          {artifacts.stress_report && (
+            <a className="underline" href={artifacts.stress_report} target="_blank" rel="noreferrer">
+              stress_report.json
             </a>
           )}
           {artifacts.config && (

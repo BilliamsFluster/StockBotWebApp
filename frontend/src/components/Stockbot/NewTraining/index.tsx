@@ -45,6 +45,7 @@ export default function NewTraining({
   const [bbands, setBbands] = useState(true);
   const [normalizeObs, setNormalizeObs] = useState(true);
   const [embargo, setEmbargo] = useState(1);
+  const [dataSource, setDataSource] = useState<"yfinance" | "cached" | "auto">("yfinance");
 
   // ===== Costs & Execution =====
   const [commissionPerShare, setCommissionPerShare] = useState(0.0005);
@@ -292,6 +293,7 @@ export default function NewTraining({
         lookback,
         trainSplit,
         featureSet,
+        dataSource,
         rsi,
         macd,
         bbands,
@@ -421,20 +423,22 @@ export default function NewTraining({
           setTrainEvalSplit={setTrainSplit}
         />
 
-        <FeaturesSection
-          featureSet={featureSet}
-          setFeatureSet={setFeatureSet}
-          rsi={rsi}
-          setRsi={setRsi}
-          macd={macd}
-          setMacd={setMacd}
-          bbands={bbands}
-          setBbands={setBbands}
-          normalize={normalizeObs}
-          setNormalize={setNormalizeObs}
-          embargo={embargo}
-          setEmbargo={setEmbargo}
-        />
+          <FeaturesSection
+            featureSet={featureSet}
+            setFeatureSet={setFeatureSet}
+            rsi={rsi}
+            setRsi={setRsi}
+            macd={macd}
+            setMacd={setMacd}
+            bbands={bbands}
+            setBbands={setBbands}
+            normalize={normalizeObs}
+            setNormalize={setNormalizeObs}
+            embargo={embargo}
+            setEmbargo={setEmbargo}
+            dataSource={dataSource}
+            setDataSource={setDataSource}
+          />
 
         <CostsExecutionSection
           commissionPerShare={commissionPerShare}

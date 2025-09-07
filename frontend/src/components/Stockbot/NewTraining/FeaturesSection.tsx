@@ -19,6 +19,8 @@ interface FeaturesProps {
   setNormalize: (v: boolean) => void;
   embargo: number;
   setEmbargo: (v: number) => void;
+  dataSource: "yfinance" | "cached" | "auto";
+  setDataSource: (v: "yfinance" | "cached" | "auto") => void;
 }
 
 export function FeaturesSection({
@@ -34,6 +36,8 @@ export function FeaturesSection({
   setNormalize,
   embargo,
   setEmbargo,
+  dataSource,
+  setDataSource,
 }: FeaturesProps) {
   const toggleSet = (item: string) => {
     if (featureSet.includes(item)) {
@@ -50,11 +54,12 @@ export function FeaturesSection({
         <div className="space-y-4 pt-2">
           <div className="space-y-2">
             <TooltipLabel tooltip="Select which built-in feature sets to include">Feature Set</TooltipLabel>
-            <div className="flex gap-4">
+            <div className="flex gap-4 flex-wrap">
               {[
                 { id: "ohlcv", label: "ohlcv" },
                 { id: "ohlcv_ta_basic", label: "ohlcv_ta_basic" },
                 { id: "ohlcv_ta_rich", label: "ohlcv_ta_rich" },
+                { id: "minimal", label: "minimal (recommended core)" },
               ].map((opt) => (
                 <label key={opt.id} className="flex items-center gap-2 text-sm">
                   <Checkbox
@@ -93,6 +98,21 @@ export function FeaturesSection({
               value={embargo}
               onChange={(e) => setEmbargo(parseInt(e.target.value) || embargo)}
             />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <TooltipLabel tooltip="Where to source market data for training" className="min-w-[160px]">
+              Data Source
+            </TooltipLabel>
+            <select
+              className="border rounded px-2 py-1 text-sm"
+              value={dataSource}
+              onChange={(e) => setDataSource(e.target.value as any)}
+            >
+              <option value="yfinance">yfinance (live fetch)</option>
+              <option value="cached">cached (prepared windows)</option>
+              <option value="auto">auto (prefer cached)</option>
+            </select>
           </div>
         </div>
       </AccordionContent>

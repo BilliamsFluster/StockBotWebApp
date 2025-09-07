@@ -41,6 +41,7 @@ class PortfolioTradingEnv(gym.Env):
         *,
         regime_gamma: np.ndarray | None = None,
         regime_scaler: RegimeScalerConfig | None = None,
+        append_gamma_to_obs: bool = False,
     ):
         super().__init__()
         self.cfg = cfg
@@ -50,6 +51,7 @@ class PortfolioTradingEnv(gym.Env):
         self.lookback = cfg.episode.lookback
         self._gamma_seq = regime_gamma
         self._regime_scaler = regime_scaler
+        self._append_gamma = append_gamma_to_obs
 
         required = self.src.cols_required()
         for s in self.syms:
@@ -69,13 +71,16 @@ class PortfolioTradingEnv(gym.Env):
 
         self._cols = list(required)
         F = len(self._cols)
+        extra = 0
+        if self._gamma_seq is not None and self._append_gamma:
+            extra = int(self._gamma_seq.shape[1]) if self._gamma_seq.ndim > 1 else 1
         obs_spaces = {
             "window": spaces.Box(low=-np.inf, high=np.inf, shape=(self.lookback, self.N, F), dtype=np.float32),
             # portfolio: [cash_frac, margin_used, drawdown, unrealized, realized,
             #             rolling_vol, turnover] + weights (N)
-            "portfolio": spaces.Box(low=-np.inf, high=np.inf, shape=(7 + self.N,), dtype=np.float32),
+            "portfolio": spaces.Box(low=-np.inf, high=np.inf, shape=(7 + self.N + extra,), dtype=np.float32),
         }
-        if self._gamma_seq is not None:
+        if self._gamma_seq is not None and not self._append_gamma:
             K = int(self._gamma_seq.shape[1]) if self._gamma_seq.ndim > 1 else 1
             obs_spaces["gamma"] = spaces.Box(low=0.0, high=1.0, shape=(K,), dtype=np.float32)
         self.observation_space = spaces.Dict(obs_spaces)
@@ -169,12 +174,19 @@ class PortfolioTradingEnv(gym.Env):
         turnover = float(self._turnover_last)
         w = self.port.weights(prices)
         weights = np.array([w.get(s, 0.0) for s in self.syms], dtype=np.float32)
-        return np.concatenate([[cash_frac, margin_used, dd, unreal, realized, vol, turnover], weights]).astype(np.float32)
+        base = np.concatenate([[cash_frac, margin_used, dd, unreal, realized, vol, turnover], weights])
+        if self._gamma_seq is not None and self._append_gamma:
+            # Align gamma with the current decision index `self._i`,
+            # consistent with separate `gamma` key and sizing logic in step().
+            gamma = self._gamma_seq[self._i]
+            gamma = np.asarray(gamma, dtype=np.float32).reshape(-1)
+            base = np.concatenate([base, gamma])
+        return base.astype(np.float32)
 
     def _obs(self, i):
         prices = self._prices(i - 1)
         obs = {"window": self._window_obs(i), "portfolio": self._portfolio_obs(prices)}
-        if self._gamma_seq is not None:
+        if self._gamma_seq is not None and not self._append_gamma:
             obs["gamma"] = self._gamma_seq[i]
         return obs
 
