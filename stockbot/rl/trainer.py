@@ -39,6 +39,25 @@ class PPOTrainer:
     # Setup helpers
     # ------------------------------------------------------------------
     def _build_envs(self):
+        gamma_seq = None
+        regime_scalars = None
+        append_gamma = False
+
+        try:
+            import numpy as np, json
+            gamma_path = self.out_dir / "regime_posteriors.csv"
+            if gamma_path.exists():
+                gamma_seq = np.loadtxt(gamma_path, delimiter=",")
+            schema_path = self.out_dir / "obs_schema.json"
+            if gamma_seq is not None and schema_path.exists():
+                schema = json.loads(schema_path.read_text())
+                append_gamma = "gamma" not in schema
+            scalars_path = self.out_dir / "state_scalars.json"
+            if scalars_path.exists():
+                regime_scalars = json.loads(scalars_path.read_text())
+        except Exception as e:  # pragma: no cover - best effort
+            print(f"[PPOTrainer] failed to load regime metadata: {e}")
+
         def maybe_wrap_overlay(env):
             mode = str(getattr(self.args, "overlay", "none"))
             if mode == "none":
@@ -55,11 +74,27 @@ class PPOTrainer:
             return env
 
         def train_env_fn():
-            env = make_env(self.cfg, self.split, mode="train", normalize=self.args.normalize)
+            env = make_env(
+                self.cfg,
+                self.split,
+                mode="train",
+                normalize=self.args.normalize,
+                regime_gamma=gamma_seq,
+                regime_scalars=regime_scalars,
+                append_gamma_to_obs=append_gamma,
+            )
             return maybe_wrap_overlay(env)
 
         def eval_env_fn():
-            env = make_env(self.cfg, self.split, mode="eval", normalize=self.args.normalize)
+            env = make_env(
+                self.cfg,
+                self.split,
+                mode="eval",
+                normalize=self.args.normalize,
+                regime_gamma=gamma_seq,
+                regime_scalars=regime_scalars,
+                append_gamma_to_obs=append_gamma,
+            )
             return maybe_wrap_overlay(env)
 
         self.train_env = make_vec_env(train_env_fn)

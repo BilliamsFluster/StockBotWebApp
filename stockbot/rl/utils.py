@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, replace
-from typing import Tuple, Optional, Dict, Callable, Any
+from typing import Tuple, Optional, Dict, Callable, Any, Sequence
 import numpy as np
 import gymnasium as gym
 from stable_baselines3.common.monitor import Monitor
@@ -13,6 +13,7 @@ try:  # pragma: no cover - allow running with or without package prefix
     from stockbot.env.wrappers import as_float32
     from stockbot.env.obs_norm import ObsNorm
     from stockbot.ingestion.yfinance_ingestion import YFinanceProvider
+    from stockbot.strategy.regime_sizing import RegimeScalerConfig
 except ModuleNotFoundError:  # when repository root not on sys.path
     import sys
     from pathlib import Path
@@ -25,6 +26,7 @@ except ModuleNotFoundError:  # when repository root not on sys.path
     from env.wrappers import as_float32
     from env.obs_norm import ObsNorm
     from ingestion.yfinance_ingestion import YFinanceProvider
+    from strategy.regime_sizing import RegimeScalerConfig
 
 @dataclass
 class Split:
@@ -37,6 +39,9 @@ def make_env(
     mode: str = "train",
     normalize: bool = False,
     norm_state: Optional[dict] = None,
+    regime_gamma: Optional[np.ndarray] = None,
+    regime_scalars: Optional[Sequence[float]] = None,
+    append_gamma_to_obs: bool = False,
 ):
     """Build a monitored Gym env from EnvConfig + date split."""
     run_cfg = replace(
@@ -49,7 +54,18 @@ def make_env(
     syms = list(run_cfg.symbols) if isinstance(run_cfg.symbols, (list, tuple)) else [run_cfg.symbols]
     if len(syms) > 1:
         panel = PanelSource(prov, run_cfg)
-        env = PortfolioTradingEnv(panel, run_cfg)
+        regime_cfg = (
+            RegimeScalerConfig(state_scalars=list(regime_scalars))
+            if regime_scalars is not None
+            else None
+        )
+        env = PortfolioTradingEnv(
+            panel,
+            run_cfg,
+            regime_gamma=regime_gamma,
+            regime_scaler=regime_cfg,
+            append_gamma_to_obs=append_gamma_to_obs,
+        )
     else:
         data = BarWindowSource(prov, run_cfg)
         env = StockTradingEnv(data, episode=run_cfg.episode, fees=run_cfg.fees, features=run_cfg.features)
