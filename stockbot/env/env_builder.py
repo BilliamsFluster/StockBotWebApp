@@ -95,4 +95,9 @@ def prepare_env(payload: Dict[str, Any], run_dir: str | Path) -> Tuple[Any, Dict
         schema["gamma"] = {"dtype": "float32", "shape": [K]}
     (run_path / "obs_schema.json").write_text(json.dumps(schema, indent=2))
 
+    kelly = payload.get("sizing", {}).get("kelly", {})
+    state_scalars = kelly.get("state_scalars")
+    if state_scalars is not None:
+        (run_path / "state_scalars.json").write_text(json.dumps(state_scalars))
+
     return windows, meta
