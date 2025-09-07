@@ -82,6 +82,8 @@ class PPOTrainer:
                 regime_gamma=gamma_seq,
                 regime_scalars=regime_scalars,
                 append_gamma_to_obs=append_gamma,
+                run_dir=self.out_dir,
+                data_source=getattr(self.args, "data_source", "yfinance"),
             )
             return maybe_wrap_overlay(env)
 
@@ -94,6 +96,8 @@ class PPOTrainer:
                 regime_gamma=gamma_seq,
                 regime_scalars=regime_scalars,
                 append_gamma_to_obs=append_gamma,
+                run_dir=self.out_dir,
+                data_source=getattr(self.args, "data_source", "yfinance"),
             )
             return maybe_wrap_overlay(env)
 
@@ -155,6 +159,30 @@ class PPOTrainer:
         )
         logger = configure(str(self.out_dir), ["stdout", "csv", "tensorboard"])
         self.model.set_logger(logger)
+        # Optional: schema compatibility check vs saved obs_schema.json
+        try:
+            import json
+            schema_path = self.out_dir / "obs_schema.json"
+            if schema_path.exists():
+                schema = json.loads(schema_path.read_text())
+                probe_env = self._eval_env_fn()
+                obs_space = probe_env.unwrapped.observation_space
+                win_shape = list(obs_space["window"].shape)
+                port_shape = list(obs_space["portfolio"].shape)
+                sch_win = list(schema.get("window", {}).get("shape", []))
+                sch_port = list(schema.get("portfolio", {}).get("shape", []))
+                if sch_win and sch_port and (sch_win != win_shape or sch_port != port_shape):
+                    model_path = self.out_dir / "ppo_policy.zip"
+                    msg = (
+                        f"Observation shape mismatch: env window={win_shape}, portfolio={port_shape}; "
+                        f"schema window={sch_win}, portfolio={sch_port}"
+                    )
+                    if model_path.exists():
+                        raise RuntimeError(msg)
+                    print(f"[PPOTrainer] Warning: {msg}")
+                del probe_env
+        except Exception as e:
+            print(f"[PPOTrainer] Schema compat check skipped: {e}")
 
     def _build_callbacks(self):
         diag_cb = RLDiagCallback(log_dir=str(self.out_dir / "tb"), every_n_updates=1)
@@ -198,6 +226,18 @@ class PPOTrainer:
         )
         ev = self._eval_env_fn()
         curve, to = episode_rollout(ev, self.model, deterministic=True, seed=self.args.seed)
+        # Persist equity curve and summary metrics under report/
+        try:
+            import pandas as pd, json
+            report_dir = self.out_dir / "report"
+            report_dir.mkdir(parents=True, exist_ok=True)
+            eqdf = pd.DataFrame({
+                "ts": ev.unwrapped._eq_ts,
+                "equity": ev.unwrapped._eq_net,
+            })
+            eqdf.to_csv(report_dir / "equity.csv", index=False)
+        except Exception:
+            pass
         tr = total_return(curve, start_cash)
         mdd = max_drawdown(curve)
         shp = sharpe(curve, start_cash)
@@ -210,3 +250,19 @@ class PPOTrainer:
                 tr, mdd, shp, sor, cal, to_metric
             )
         )
+        try:
+            import json
+            summary = {
+                "total_return": float(tr),
+                "max_drawdown": float(mdd),
+                "sharpe": float(shp),
+                "sortino": float(sor),
+                "calmar": float(cal),
+                "turnover": float(to_metric),
+            }
+            report_dir = self.out_dir / "report"
+            report_dir.mkdir(parents=True, exist_ok=True)
+            (report_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+            (report_dir / "metrics.json").write_text(json.dumps(summary, indent=2))
+        except Exception:
+            pass

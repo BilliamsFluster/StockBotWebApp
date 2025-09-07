@@ -41,9 +41,18 @@ def prepare_env(payload: Dict[str, Any], run_dir: str | Path) -> Tuple[Any, Dict
     (run_path / "dataset_manifest.json").write_text(json.dumps(manifest, indent=2))
 
     feat = payload.get("features", {})
-    feature_set = feat.get("feature_set", ["ohlcv"])
-    if isinstance(feature_set, (list, tuple)):
-        feature_set = feature_set[0]
+    # Prefer explicit indicators alias (e.g., ["minimal"]) if present
+    feature_set = None
+    try:
+        inds = feat.get("indicators")
+        if isinstance(inds, (list, tuple)) and any(x in ("minimal", "minimal_core") for x in inds):
+            feature_set = "minimal"
+    except Exception:
+        pass
+    if not feature_set:
+        feature_set = feat.get("feature_set", ["ohlcv"]) 
+        if isinstance(feature_set, (list, tuple)):
+            feature_set = feature_set[0]
     spec = FeatureSpec(
         set=feature_set,
         embargo_bars=feat.get("embargo_bars", 0),
@@ -52,6 +61,12 @@ def prepare_env(payload: Dict[str, Any], run_dir: str | Path) -> Tuple[Any, Dict
     lookback = ds.get("lookback", payload.get("lookback", 2))
 
     windows, meta = build_features(parquet_map, lookback, spec)
+    # Persist windows and meta to allow downstream consumers (training, eval)
+    try:  # best-effort
+        np.savez_compressed(run_path / "windows.npz", X=windows)
+        (run_path / "meta.json").write_text(json.dumps({k: (v.tolist() if hasattr(v, "tolist") else v) for k, v in meta.items()}, indent=2, default=str))
+    except Exception:
+        pass
 
     regime = payload.get("regime", {})
     gamma_seq = None

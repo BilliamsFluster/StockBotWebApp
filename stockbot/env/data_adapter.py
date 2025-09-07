@@ -44,11 +44,31 @@ def compute_indicators(df: pd.DataFrame, indicators: Sequence[str]) -> pd.DataFr
     All NaNs are filled at the end; intermediate rolling NaNs are forward/back filled sensibly.
     """
     out = df.copy()
-    logret = np.log(out["close"]).diff()
+    # defensive clip to avoid log of non-positive in synthetic or bad ticks
+    logp = np.log(out["close"].clip(lower=1e-9))
+    logret = logp.diff()
 
-    for ind in indicators:
+    # Expand convenience sets/aliases
+    inds = list(indicators)
+    if any(x in inds for x in ("minimal", "minimal_core")):
+        # Minimal, proven core set (stationary, robust)
+        base = [
+            "logret", "logret5", "logret20",
+            "vol10", "vol20", "atr14",
+            "bb_width", "keltner_width",
+            "vol_z20", "amihud",
+        ]
+        inds = [i for i in inds if i not in ("minimal", "minimal_core")] + base
+
+    for ind in inds:
         if ind == "logret":
             out["logret"] = logret.fillna(0.0)
+
+        elif ind == "logret5":
+            out["logret5"] = logret.rolling(5).sum().fillna(0.0)
+
+        elif ind == "logret20":
+            out["logret20"] = logret.rolling(20).sum().fillna(0.0)
 
         elif ind == "ret5":
             out["ret5"] = out["close"].pct_change(5).fillna(0.0)
@@ -142,10 +162,38 @@ def compute_indicators(df: pd.DataFrame, indicators: Sequence[str]) -> pd.DataFr
             s = out["close"].rolling(20).std()
             out["bb_lower"] = (m - 2 * s).fillna(0.0)
 
+        elif ind == "bb_width":
+            m = out["close"].rolling(20).mean()
+            s = out["close"].rolling(20).std()
+            upper = m + 2 * s
+            lower = m - 2 * s
+            width = (upper - lower) / (m.replace(0, np.nan))
+            out["bb_width"] = width.replace([np.inf, -np.inf], 0.0).fillna(0.0)
+
+        elif ind == "keltner_width":
+            ema = out["close"].ewm(span=20, adjust=False).mean()
+            prev_close = out["close"].shift(1)
+            tr = pd.concat([
+                (out["high"] - out["low"]),
+                (out["high"] - prev_close).abs(),
+                (out["low"] - prev_close).abs()
+            ], axis=1).max(axis=1)
+            atr = tr.rolling(14).mean()
+            upper = ema + 2 * atr
+            lower = ema - 2 * atr
+            width = (upper - lower) / (ema.replace(0, np.nan))
+            out["keltner_width"] = width.replace([np.inf, -np.inf], 0.0).fillna(0.0)
+
         elif ind == "vol_z20":
             mean = out["volume"].rolling(20).mean()
             std = out["volume"].rolling(20).std().replace(0, np.nan)
             out["vol_z20"] = ((out["volume"] - mean) / std).fillna(0.0)
+
+        elif ind == "amihud":
+            # |return| / dollar volume (proxy for price impact)
+            dv = (out["close"].abs() * out["volume"].abs()).replace(0, np.nan)
+            illiq = logret.abs() / dv
+            out["amihud"] = illiq.replace([np.inf, -np.inf], 0.0).fillna(0.0)
 
     return out.fillna(0.0)
 
@@ -226,11 +274,26 @@ class PanelSource:
             raise RuntimeError("No overlapping timestamps across symbols")
 
         # drop NaN only on required columns, recompute a new common index
-        # expand meta indicators like "bbands" -> ["bb_upper", "bb_lower"]
+        # expand meta indicators like "bbands" -> ["bb_upper", "bb_lower"] and
+        # expand the alias "minimal" into its constituent features
         base_cols = ["open", "high", "low", "close", "volume"]
-        expanded_inds = []
+        expanded_inds: list[str] = []
+        alias_minimal = [
+            "logret",
+            "logret5",
+            "logret20",
+            "vol10",
+            "vol20",
+            "atr14",
+            "bb_width",
+            "keltner_width",
+            "vol_z20",
+            "amihud",
+        ]
         for ind in list(cfg.features.indicators):
-            if ind == "bbands":
+            if ind in ("minimal", "minimal_core"):
+                expanded_inds.extend(alias_minimal)
+            elif ind == "bbands":
                 expanded_inds.extend(["bb_upper", "bb_lower"])
             else:
                 expanded_inds.append(ind)

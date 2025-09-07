@@ -35,6 +35,8 @@ def parse_args():
     ap.add_argument("--policy", type=str, default="mlp", choices=["mlp", "window_cnn", "window_lstm"])
     ap.add_argument("--overlay", type=str, default="none", choices=["none", "hmm"],
                     help="Use a risk overlay with baseline engine (hmm) or none")
+    ap.add_argument("--data-source", type=str, default="yfinance", choices=["yfinance", "cached", "auto"],
+                    help="Where env pulls market data from")
 
     # PPO HPs
     ap.add_argument("--n-steps", type=int, default=1024)

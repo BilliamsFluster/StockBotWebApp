@@ -176,7 +176,9 @@ class PortfolioTradingEnv(gym.Env):
         weights = np.array([w.get(s, 0.0) for s in self.syms], dtype=np.float32)
         base = np.concatenate([[cash_frac, margin_used, dd, unreal, realized, vol, turnover], weights])
         if self._gamma_seq is not None and self._append_gamma:
-            gamma = self._gamma_seq[self._i - 1]
+            # Align gamma with the current decision index `self._i`,
+            # consistent with separate `gamma` key and sizing logic in step().
+            gamma = self._gamma_seq[self._i]
             gamma = np.asarray(gamma, dtype=np.float32).reshape(-1)
             base = np.concatenate([base, gamma])
         return base.astype(np.float32)

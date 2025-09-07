@@ -49,6 +49,7 @@ class GaussianDiagHMM:
             n_iter=cfg.max_iter,
             tol=cfg.tol,
             random_state=cfg.seed,
+            init_params="",  # keep any manually set params; avoid overwrite warnings
         )
         self.feature_mean_: np.ndarray | None = None
         self.feature_std_: np.ndarray | None = None

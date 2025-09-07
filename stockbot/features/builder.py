@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List
 
 import numpy as np
 import pandas as pd
@@ -39,13 +39,73 @@ def build_features(
         # Files are stored as CSV in the light-weight test environment.
         df = pd.read_csv(parquet_map[sym])
         df = df.set_index("timestamp")
+        # Normalize column names to lower-case expected by downstream
+        df = df.rename(columns={c: c.lower() for c in df.columns})
+        # Add minimal feature set if requested
+        if str(getattr(spec, "set", "ohlcv")).lower() in ("minimal", "minimal_core"):
+            # log price and returns
+            close = df["close"].astype(float)
+            logp = np.log(close.clip(lower=1e-9))
+            logret = logp.diff().fillna(0.0)
+            df["logret"] = logret
+            df["logret5"] = logret.rolling(5).sum().fillna(0.0)
+            df["logret20"] = logret.rolling(20).sum().fillna(0.0)
+            # realized vol
+            df["vol10"] = logret.rolling(10).std().fillna(0.0)
+            df["vol20"] = logret.rolling(20).std().fillna(0.0)
+            # ATR14
+            prev_close = close.shift(1)
+            tr = pd.concat([
+                (df["high"] - df["low"]).abs(),
+                (df["high"] - prev_close).abs(),
+                (df["low"] - prev_close).abs(),
+            ], axis=1).max(axis=1)
+            atr14 = tr.rolling(14).mean().fillna(0.0)
+            df["atr14"] = atr14
+            # BB width (20,2)
+            ma20 = close.rolling(20).mean()
+            sd20 = close.rolling(20).std()
+            upper = ma20 + 2 * sd20
+            lower = ma20 - 2 * sd20
+            width = (upper - lower) / (ma20.replace(0, np.nan))
+            df["bb_width"] = width.replace([np.inf, -np.inf], 0.0).fillna(0.0)
+            # Keltner width
+            ema20 = close.ewm(span=20, adjust=False).mean()
+            upper_k = ema20 + 2 * atr14
+            lower_k = ema20 - 2 * atr14
+            kwidth = (upper_k - lower_k) / (ema20.replace(0, np.nan))
+            df["keltner_width"] = kwidth.replace([np.inf, -np.inf], 0.0).fillna(0.0)
+            # Volume z-score (20)
+            vol = df["volume"].astype(float)
+            v_mean = vol.rolling(20).mean()
+            v_std = vol.rolling(20).std().replace(0, np.nan)
+            df["vol_z20"] = ((vol - v_mean) / v_std).replace([np.inf, -np.inf], 0.0).fillna(0.0)
+            # Amihud: |return| / dollar volume
+            dv = (close.abs() * vol.abs()).replace(0, np.nan)
+            df["amihud"] = logret.abs() / dv
+            df["amihud"] = df["amihud"].replace([np.inf, -np.inf], 0.0).fillna(0.0)
         dfs.append(df)
     # Align on the union of timestamps for all symbols
     combined = pd.concat(dfs, axis=1, keys=symbols)
 
-    # We'll use OHLCV features for all sets; additional feature sets can be
-    # added later without changing the interface.
-    feature_cols = ["open", "high", "low", "close", "volume"]
+    # Choose feature columns based on requested set
+    base_cols: List[str] = ["open", "high", "low", "close", "volume"]
+    if str(getattr(spec, "set", "ohlcv")).lower() in ("minimal", "minimal_core"):
+        extra = [
+            "logret",
+            "logret5",
+            "logret20",
+            "vol10",
+            "vol20",
+            "atr14",
+            "bb_width",
+            "keltner_width",
+            "vol_z20",
+            "amihud",
+        ]
+        feature_cols = base_cols + extra
+    else:
+        feature_cols = base_cols
     arr = combined.loc[:, pd.IndexSlice[:, feature_cols]].to_numpy()
     T = len(combined)
     N = len(symbols)
