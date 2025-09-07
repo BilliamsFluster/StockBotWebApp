@@ -5,6 +5,11 @@ export async function parseCSV(url?: string | null): Promise<any[]> {
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) return [];
   const text = await res.text();
+  // Guard: if server returned HTML (404 page), bail out
+  const head = text.slice(0, 200).toLowerCase();
+  if (head.includes("<!doctype") || head.includes("<html") || head.includes("__next_f")) {
+    return [];
+  }
   const lines = text.split(/\r?\n/).filter(Boolean);
   if (lines.length === 0) return [];
   const header = lines[0].split(",").map((s) => s.trim());

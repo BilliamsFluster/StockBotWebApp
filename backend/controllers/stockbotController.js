@@ -1,9 +1,66 @@
 import axios from "axios";
 import FormData from "form-data";
+import fs from "fs";
+import path from "path";
 import User from "../models/User.js";
 import { getBrokerCredentials } from "../config/getBrokerCredentials.js";
 
 const STOCKBOT_URL = process.env.STOCKBOT_URL;
+
+// Local fallback for artifact streaming in case upstream proxying fails.
+const SAFE_NAME_MAP = {
+  metrics: "report/metrics.json",
+  equity: "report/equity.csv",
+  orders: "report/orders.csv",
+  trades: "report/trades.csv",
+  rolling_metrics: "report/rolling_metrics.csv",
+  summary: "report/summary.json",
+  cv_report: "cv_report.json",
+  stress_report: "stress_report.json",
+  gamma_train_yf: "regime_posteriors.yf.csv",
+  gamma_eval_yf: "regime_posteriors.eval.yf.csv",
+  gamma_prebuilt: "regime_posteriors.csv",
+  config: "config.snapshot.yaml",
+  model: "ppo_policy.zip",
+  job_log: "job.log",
+  payload: "payload.json",
+};
+
+function findRepoRoot(startDir) {
+  let dir = startDir;
+  for (let i = 0; i < 6; i++) {
+    if (fs.existsSync(path.join(dir, "stockbot"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return startDir;
+}
+
+const REPO_ROOT = process.env.PROJECT_ROOT
+  ? path.resolve(process.env.PROJECT_ROOT)
+  : findRepoRoot(process.cwd());
+const RUNS_DIR = path.join(REPO_ROOT, "stockbot", "runs");
+
+function guessContentType(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  switch (ext) {
+    case ".csv":
+      return "text/csv";
+    case ".json":
+      return "application/json";
+    case ".yaml":
+    case ".yml":
+      return "text/yaml";
+    case ".zip":
+      return "application/zip";
+    case ".log":
+    case ".txt":
+      return "text/plain";
+    default:
+      return "application/octet-stream";
+  }
+}
 
 function errMsg(err) {
   if (axios.isAxiosError(err)) {
@@ -110,7 +167,33 @@ export async function getRunArtifactFileProxy(req, res) {
     if (resp.headers["content-disposition"]) res.setHeader("content-disposition", resp.headers["content-disposition"]);
     resp.data.pipe(res);
   } catch (e) {
-    return res.status(400).json({ error: errMsg(e) });
+    // Fallback: attempt to stream directly from local runs directory
+    try {
+      const rel = SAFE_NAME_MAP[String(req.params.name)] || null;
+      if (rel) {
+        const abs = path.join(RUNS_DIR, String(req.params.id), rel);
+        if (fs.existsSync(abs)) {
+          res.setHeader("content-type", guessContentType(abs));
+          res.setHeader("content-disposition", `inline; filename="${path.basename(abs)}"`);
+          const stream = fs.createReadStream(abs);
+          stream.on("error", () => res.status(500).end());
+          stream.pipe(res);
+          return;
+        }
+        // Second fallback: try StockBot static mount /runs/<id>/<rel>
+        try {
+          const staticUrl = `${STOCKBOT_URL}/runs/${encodeURIComponent(req.params.id)}/${rel.replace(/\\/g, '/')}`;
+          const up = await axios.get(staticUrl, { responseType: "stream" });
+          if (up.headers["content-type"]) res.setHeader("content-type", up.headers["content-type"]);
+          if (up.headers["content-disposition"]) res.setHeader("content-disposition", up.headers["content-disposition"]);
+          up.data.pipe(res);
+          return;
+        } catch {}
+      }
+    } catch {}
+    const status = e?.response?.status || 404;
+    const body = e?.response?.data || { error: errMsg(e) };
+    return res.status(status).json(body);
   }
 }
 

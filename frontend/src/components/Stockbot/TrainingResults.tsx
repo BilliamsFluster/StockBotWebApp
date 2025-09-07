@@ -12,6 +12,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import api from "@/api/client";
 import { deleteRun } from "@/api/stockbot";
 import type { RunSummary, Metrics, RunArtifacts } from "./lib/types";
+import { WeightsHeatmap } from "./NewTraining/WeightsHeatmap";
+import { RunChartsModal } from "./NewTraining/RunChartsModal";
 import { parseCSV, drawdownFromEquity } from "./lib/csv";
 import { formatPct, formatSigned } from "./lib/formats";
 import {
@@ -28,6 +30,11 @@ import {
   Area,
   ErrorBar,
 } from "recharts";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from "@/components/ui/chart";
 
 type TBTags = { scalars: string[]; histograms: string[] };
 type TBPoint = { step: number; wall_time: number; value: number };
@@ -62,6 +69,10 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [equity, setEquity] = useState<Array<{ step: number; equity: number }>>([]);
   const [drawdown, setDrawdown] = useState<Array<{ step: number; dd: number }>>([]);
+  const [lev, setLev] = useState<Array<{ step: number; to: number; gl: number; nl: number }>>([]);
+  const [artifacts, setArtifacts] = useState<RunArtifacts | null>(null);
+  const [showHeatmap, setShowHeatmap] = useState(false);
+  const [showCharts, setShowCharts] = useState(false);
   const tickRef = useRef(0);
   const busyRef = useRef(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -198,6 +209,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   const loadArtifacts = async () => {
     try {
       const { data: art } = await api.get<RunArtifacts>(`/stockbot/runs/${runId}/artifacts`);
+      setArtifacts(art || null);
       if (art?.metrics) {
         try {
           const { data: m } = await api.get<Metrics>(art.metrics, { baseURL: "" });
@@ -217,14 +229,21 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
           setEquity(eq);
           const ddRows = drawdownFromEquity(rows).map((r: any, i: number) => ({ step: i, dd: -Number(r.dd) }));
           setDrawdown(ddRows);
+          const levRows = rows.map((r: any, i: number) => ({
+            step: i,
+            to: Number(r.turnover),
+            gl: Number(r.gross_leverage),
+            nl: Number(r.net_leverage),
+          })).filter((r: any) => Number.isFinite(r.step));
+          setLev(levRows);
         } catch {
-          setEquity([]); setDrawdown([]);
+          setEquity([]); setDrawdown([]); setLev([]);
         }
       } else {
-        setEquity([]); setDrawdown([]);
+        setEquity([]); setDrawdown([]); setLev([]);
       }
     } catch {
-      setMetrics(null); setEquity([]); setDrawdown([]);
+      setMetrics(null); setEquity([]); setDrawdown([]); setLev([]);
     }
   };
 
@@ -464,6 +483,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   }, [gradMatrix]);
 
   return (
+    <>
     <div className="space-y-6">
       <Card className="p-4 space-y-3">
         <div className="flex flex-wrap items-center gap-3">
@@ -630,6 +650,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
           <TabsTrigger value="timing">Timing</TabsTrigger>
           <TabsTrigger value="grads">Gradients</TabsTrigger>
           <TabsTrigger value="scalars">Scalars</TabsTrigger>
+          <TabsTrigger value="report">Report</TabsTrigger>
         </TabsList>
         {/* Rollout/Eval */}
         <TabsContent value="overview">
@@ -757,8 +778,8 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
           {selectedTags.length > 0 && (
             <>
               <div className="flex flex-wrap gap-2 text-xs">
-                {selectedTags.map((t) => (
-                  <label key={t} className="flex items-center gap-1 border rounded px-2 py-1">
+                {selectedTags.map((t, i) => (
+                  <label key={`${t}-${i}`} className="flex items-center gap-1 border rounded px-2 py-1">
                     <input
                       type="checkbox"
                       checked={visibleSelected[t] !== false}
@@ -774,8 +795,8 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
                 <button className="text-xs underline" onClick={()=>{ setSelectedTags([]); setVisibleSelected({}); }}>Clear</button>
               </div>
               <div className="grid md:grid-cols-2 gap-4">
-                {selectedTags.filter((t)=>visibleSelected[t] !== false).map((t) => (
-                  <ChartCard key={t} title={t} tag={t} />
+                {selectedTags.filter((t)=>visibleSelected[t] !== false).map((t, i) => (
+                  <ChartCard key={`${t}-${i}`} title={t} tag={t} />
                 ))}
               </div>
             </>
@@ -783,12 +804,106 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
         </Card>
       )}
         </TabsContent>
+        <TabsContent value="report">
+          <Card className="p-4 space-y-4">
+            <TooltipLabel className="font-semibold" tooltip="Downloaded artifacts saved under the run's report folder.">
+              Report Files
+            </TooltipLabel>
+            {artifacts ? (
+              <div className="flex flex-wrap gap-3 text-sm">
+                {artifacts.metrics && (
+                  <a className="underline" href={artifacts.metrics} target="_blank" rel="noreferrer">metrics.json</a>
+                )}
+                {artifacts.equity && (
+                  <a className="underline" href={artifacts.equity} target="_blank" rel="noreferrer">equity.csv</a>
+                )}
+                {artifacts.rolling_metrics && (
+                  <a className="underline" href={artifacts.rolling_metrics} target="_blank" rel="noreferrer">rolling_metrics.csv</a>
+                )}
+                {artifacts.orders && (
+                  <a className="underline" href={artifacts.orders} target="_blank" rel="noreferrer">orders.csv</a>
+                )}
+                {artifacts.trades && (
+                  <a className="underline" href={artifacts.trades} target="_blank" rel="noreferrer">trades.csv</a>
+                )}
+                {artifacts.gamma_train_yf && (
+                  <a className="underline" href={artifacts.gamma_train_yf} target="_blank" rel="noreferrer">regime_posteriors.yf.csv</a>
+                )}
+                {artifacts.gamma_eval_yf && (
+                  <a className="underline" href={artifacts.gamma_eval_yf} target="_blank" rel="noreferrer">regime_posteriors.eval.yf.csv</a>
+                )}
+                {artifacts.gamma_prebuilt && (
+                  <a className="underline" href={artifacts.gamma_prebuilt} target="_blank" rel="noreferrer">regime_posteriors.csv</a>
+                )}
+                {artifacts.summary && (
+                  <a className="underline" href={artifacts.summary} target="_blank" rel="noreferrer">summary.json</a>
+                )}
+                {artifacts.config && (
+                  <a className="underline" href={artifacts.config} target="_blank" rel="noreferrer">config.snapshot.yaml</a>
+                )}
+              </div>
+            ) : (
+              <div className="text-sm text-muted-foreground">No artifacts found for this run.</div>
+            )}
+
+            {artifacts?.equity && (
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="rounded-lg border p-3">
+                  <div className="text-sm font-medium mb-2">Equity & Drawdown</div>
+                  <ChartContainer
+                    config={{ equity: { label: "Equity", color: "hsl(var(--chart-1))" }, dd: { label: "Drawdown", color: "hsl(var(--chart-2))" } }}
+                    className="h-[220px]"
+                  >
+                    <LineChart data={equity.map((e, i) => ({ step: e.step, equity: e.equity, dd: drawdown[i]?.dd ?? 0 }))}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="step" />
+                      <YAxis />
+                      <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+                      <Line dataKey="equity" type="monotone" stroke="var(--color-equity)" dot={false} />
+                      <Line dataKey="dd" type="monotone" stroke="var(--color-dd)" dot={false} />
+                    </LineChart>
+                  </ChartContainer>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <div className="text-sm font-medium mb-2">Turnover & Leverage</div>
+                  <ChartContainer
+                    config={{ to: { label: "Turnover", color: "hsl(var(--chart-3))" }, gl: { label: "Gross", color: "hsl(var(--chart-4))" }, nl: { label: "Net", color: "hsl(var(--chart-5))" } }}
+                    className="h-[220px]"
+                  >
+                    <AreaChart data={lev}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="step" />
+                      <YAxis />
+                      <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+                      <Area dataKey="to" stroke="var(--color-to)" fill="var(--color-to)" fillOpacity={0.15} />
+                      <Area dataKey="gl" stroke="var(--color-gl)" fill="var(--color-gl)" fillOpacity={0.15} />
+                      <Area dataKey="nl" stroke="var(--color-nl)" fill="var(--color-nl)" fillOpacity={0.15} />
+                    </AreaChart>
+                  </ChartContainer>
+                </div>
+              </div>
+            )}
+
+            {artifacts?.equity && (
+              <div className="rounded-lg border p-3">
+                <WeightsHeatmap inline equityUrl={artifacts.equity} />
+              </div>
+            )}
+          </Card>
+        </TabsContent>
       </Tabs>
 
       <div className="text-xs text-muted-foreground">
         Tip: Expand Everything you want to see in detail.
       </div>
     </div>
+    {showHeatmap && artifacts?.equity && (
+      <WeightsHeatmap equityUrl={artifacts.equity} onClose={()=>setShowHeatmap(false)} />
+    )}
+    {showCharts && artifacts?.equity && (
+      <RunChartsModal equityUrl={artifacts.equity} rollingUrl={artifacts.rolling_metrics || undefined} onClose={()=>setShowCharts(false)} />
+    )}
+    </>
   );
 }
 
@@ -825,8 +940,8 @@ function ActionsHistogramSection({ runId, tags }: { runId: string; tags: TBTags 
           Tag
         </TooltipLabel>
         <select className="border rounded h-9 px-2" value={tag || ""} onChange={(e)=>setTag(e.target.value)}>
-          {(tags?.histograms || []).map((t) => (
-            <option key={t} value={t}>{t}</option>
+          {(tags?.histograms || []).map((t, i) => (
+            <option key={`${t}-${i}`} value={t}>{t}</option>
           ))}
         </select>
         <Button size="sm" onClick={load} disabled={!tag || loading}>{loading?"Loading…":"Refresh"}</Button>

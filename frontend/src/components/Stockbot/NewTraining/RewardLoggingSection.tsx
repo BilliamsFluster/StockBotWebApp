@@ -10,7 +10,7 @@ import { TooltipLabel } from "../shared/TooltipLabel";
 export const DEFAULT_REWARD = {
   rewardMode: "log_nav" as "delta_nav" | "log_nav",
   wDrawdown: 0.10,
-  wTurnover: 0.005,
+  wTurnover: 0.003,
   wVol: 0.0,
   volWindow: 20,
   wLeverage: 0.0,

@@ -63,6 +63,7 @@ export interface TrainPayload {
     gross_leverage_cap?: number;
     max_step_change: number;
     rebalance_eps: number;
+    min_hold_bars?: number;
     kelly: { enabled: boolean; lambda: number; f_max?: number; ema_alpha?: number; state_scalars?: number[] };
     vol_target: { enabled: boolean; annual_target: number; min_vol?: number; clamp?: { min: number; max: number } };
     guards: {
@@ -152,11 +153,14 @@ export function buildTrainPayload(state: any): TrainPayload {
       gross_leverage_cap: state.mappingMode === 'tanh_leverage' ? Number(state.grossLevCap) || 1.5 : undefined,
       max_step_change: Number(state.maxStepChange) || 0.08,
       rebalance_eps: Number(state.rebalanceEps) || 0.02,
+      min_hold_bars: Number(state.minHoldBars) || undefined,
       kelly: {
         enabled: !!state.kellyEnabled,
         lambda: Number(state.kellyLambda) || 0.5,
         f_max: Number(state.kellyFMax) || undefined,
         ema_alpha: Number(state.kellyEmaAlpha) || undefined,
+        // provide a mild default for regime state scalars if not set
+        state_scalars: state.kellyStateScalars?.length ? state.kellyStateScalars : [0.7, 1.0, 1.3],
       },
       vol_target: {
         enabled: !!state.volEnabled,

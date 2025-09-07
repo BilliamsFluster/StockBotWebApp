@@ -203,6 +203,7 @@ class SizingModel(BaseModel):
     gross_leverage_cap: Optional[float] = 1.5
     max_step_change: float = 0.08
     rebalance_eps: float = 0.02
+    min_hold_bars: Optional[int] = 0
     kelly: KellyModel = KellyModel()
     vol_target: VolTargetModel = VolTargetModel()
     guards: GuardsModel = GuardsModel()
@@ -388,6 +389,8 @@ def _env_snapshot_from_train(req: "TrainRequest") -> Dict[str, Any]:
         base["episode"]["max_step_change"] = float(sz.max_step_change)
     if getattr(sz, "rebalance_eps", None) is not None:
         base["episode"]["rebalance_eps"] = float(sz.rebalance_eps)
+    if getattr(sz, "min_hold_bars", None) is not None and int(sz.min_hold_bars or 0) > 0:
+        base["episode"]["min_hold_bars"] = int(sz.min_hold_bars or 0)
 
     # Margin guardrails (per-name cap only for now)
     base.setdefault("margin", {})
@@ -728,9 +731,14 @@ SAFE_NAME_MAP = {
     "equity":  "report/equity.csv",
     "orders":  "report/orders.csv",
     "trades":  "report/trades.csv",
+    "rolling_metrics": "report/rolling_metrics.csv",
     "summary": "report/summary.json",
     "cv_report": "cv_report.json",
     "stress_report": "stress_report.json",
+    # Regime artifacts (best-effort; may not exist)
+    "gamma_train_yf": "regime_posteriors.yf.csv",
+    "gamma_eval_yf": "regime_posteriors.eval.yf.csv",
+    "gamma_prebuilt": "regime_posteriors.csv",
     "config":  "config.snapshot.yaml",
     "model":   "ppo_policy.zip",
     "job_log": "job.log",
