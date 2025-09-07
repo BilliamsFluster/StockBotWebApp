@@ -90,6 +90,73 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
     actionHist?: Array<{ mid: number; median: number; err: [number, number] }>;
   }>({});
   const [tab, setTab] = useState("overview");
+  const [runStatus, setRunStatus] = useState<RunSummary | null>(null);
+
+  // Keep runId in sync with parent prop if it changes (navigation)
+  useEffect(() => {
+    if (initialRunId && initialRunId !== runId) {
+      setRunId(initialRunId);
+    }
+  }, [initialRunId]);
+
+  // Live run status: WS -> SSE -> poll fallback
+  useEffect(() => {
+    if (!runId) return;
+    let ws: WebSocket | null = null;
+    let es: EventSource | null = null;
+    let timer: any = null;
+    const TERMINAL = new Set(["SUCCEEDED", "FAILED", "CANCELLED"]);
+
+    const stopAll = () => {
+      try { ws && ws.close(); } catch {}
+      try { es && es.close(); } catch {}
+      if (timer) clearTimeout(timer);
+      ws = null; es = null; timer = null;
+    };
+
+    const startPolling = () => {
+      const tick = async () => {
+        try {
+          const { data: st } = await api.get<RunSummary>(`/stockbot/runs/${runId}`);
+          setRunStatus(st);
+          if (!st || TERMINAL.has(String(st.status || ""))) return; // stop when terminal
+        } catch {}
+        timer = setTimeout(tick, 3000);
+      };
+      tick();
+    };
+
+    const startSSE = () => {
+      try {
+        const url = buildUrl(`/api/stockbot/runs/${runId}/stream`);
+        es = new EventSource(url);
+        es.onmessage = (ev) => {
+          try {
+            const st = JSON.parse(ev.data);
+            setRunStatus(st);
+            if (st && TERMINAL.has(String(st.status || ""))) stopAll();
+          } catch {}
+        };
+        es.onerror = () => { try { es && es.close(); } catch {}; startPolling(); };
+      } catch { startPolling(); }
+    };
+
+    try {
+      const u = new URL(buildUrl(`/api/stockbot/runs/${runId}/ws`));
+      u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
+      ws = new WebSocket(u.toString());
+      ws.onmessage = (ev) => {
+        try {
+          const st = JSON.parse(ev.data);
+          setRunStatus(st);
+          if (st && TERMINAL.has(String(st.status || ""))) stopAll();
+        } catch {}
+      };
+      ws.onerror = () => { try { ws && ws.close(); } catch {}; startSSE(); };
+    } catch { startSSE(); }
+
+    return stopAll;
+  }, [runId]);
 
   // Load persisted UI state per run
   useEffect(() => {

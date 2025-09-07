@@ -135,6 +135,26 @@ class PortfolioTradingEnv(gym.Env):
 
         self.sizing_cfg = SizingConfig()
         self.guards_cfg = GuardsConfig()
+        # Align runtime guards with YAML margin settings when provided
+        try:
+            per_cap = float(getattr(self.cfg.margin, "max_position_weight", 0.0))
+        except Exception:
+            per_cap = 0.0
+        try:
+            gl_cap = float(getattr(self.cfg.margin, "max_gross_leverage", self.guards_cfg.gross_leverage_cap))
+        except Exception:
+            gl_cap = self.guards_cfg.gross_leverage_cap
+        try:
+            dd_frac = float(getattr(self.cfg.margin, "daily_loss_limit", 0.0))  # fraction
+            dd_pct = dd_frac * 100.0 if dd_frac > 0 else 0.0
+        except Exception:
+            dd_pct = 0.0
+        # If any overrides are present, apply them
+        if per_cap > 0 or gl_cap != self.guards_cfg.gross_leverage_cap or dd_pct > 0:
+            self.guards_cfg.per_name_cap = per_cap if per_cap > 0 else self.guards_cfg.per_name_cap
+            self.guards_cfg.gross_leverage_cap = gl_cap
+            if dd_pct > 0:
+                self.guards_cfg.daily_loss_limit_pct = dd_pct
         self.risk_state = RiskState(
             nav_day_open=self._equity0,
             nav_current=self._equity0,
@@ -297,7 +317,12 @@ class PortfolioTradingEnv(gym.Env):
         target_w = self._map_action_to_weights(a)
         if self.min_hold_bars > 0:
             for k in range(self.N):
-                if self._hold_since[k] < self.min_hold_bars and np.sign(target_w[k]) != np.sign(prev_w[k]):
+                # Enforce minimum hold only when flipping between non-zero signs
+                if (
+                    abs(prev_w[k]) > 1e-6
+                    and self._hold_since[k] < self.min_hold_bars
+                    and np.sign(target_w[k]) != np.sign(prev_w[k])
+                ):
                     target_w[k] = prev_w[k]
 
         # ---- enforce micro-rebalance gate

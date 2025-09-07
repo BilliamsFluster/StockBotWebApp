@@ -373,6 +373,23 @@ def _env_snapshot_from_train(req: "TrainRequest") -> Dict[str, Any]:
     base.setdefault("exec", {})
     base["exec"]["fill_policy"] = ex.fill_policy
     base["exec"]["participation_cap"] = float(ex.max_participation)
+    # Additional execution knobs carried through for completeness
+    try:
+        base["exec"]["order_type"] = ex.order_type
+    except Exception:
+        pass
+    try:
+        base["exec"]["limit_offset_bps"] = float(ex.limit_offset_bps)
+    except Exception:
+        pass
+    try:
+        base["exec"]["spread_source"] = ex.spread_source
+    except Exception:
+        pass
+    try:
+        base["exec"]["vol_lookback"] = int(ex.vol_lookback)
+    except Exception:
+        pass
     # impact_k supplied under costs in UI
     try:
         base["exec"]["impact_k"] = float(costs.impact_k)
@@ -398,6 +415,20 @@ def _env_snapshot_from_train(req: "TrainRequest") -> Dict[str, Any]:
         cap = float(getattr(sz.guards, "per_name_weight_cap", 0.0))  # type: ignore[attr-defined]
         if cap > 0:
             base["margin"]["max_position_weight"] = cap
+    except Exception:
+        pass
+    # NEW: map gross leverage and daily loss guard into margin config
+    try:
+        gl_cap = getattr(sz, "gross_leverage_cap", None)
+        if gl_cap is not None:
+            base["margin"]["max_gross_leverage"] = float(gl_cap)
+    except Exception:
+        pass
+    try:
+        dd_pct = float(getattr(sz.guards, "daily_loss_limit_pct", 0.0))  # type: ignore[attr-defined]
+        if dd_pct > 0:
+            # Env expects fraction for margin.daily_loss_limit
+            base["margin"]["daily_loss_limit"] = dd_pct / 100.0
     except Exception:
         pass
 
@@ -501,12 +532,15 @@ async def start_train_job(req: TrainRequest, bg: BackgroundTasks):
         pass
 
     # Pre-build dataset manifest and observation schema using the P2 feature layer
+    # Do this in the background so it doesn't delay process launch.
     try:
         from stockbot.env.env_builder import prepare_env
 
-        prepare_env(req.model_dump(), out_dir)
+        # Non-blocking: schedule as background task. Training can start immediately.
+        # The trainer will proceed even if these artifacts are not ready yet.
+        bg.add_task(prepare_env, req.model_dump(), out_dir)
     except Exception as e:  # pragma: no cover - best effort only
-        print(f"[start_train_job] env prep failed: {e}")
+        print(f"[start_train_job] env prep scheduling failed: {e}")
 
     # augment meta with dataset manifest hash if present
     meta = {
@@ -602,8 +636,10 @@ async def start_train_job(req: TrainRequest, bg: BackgroundTasks):
 async def start_backtest_job(req: BacktestRequest, bg: BackgroundTasks):
     import uuid
 
-    out_dir = _choose_outdir(req.out_dir, req.out_tag)
     run_id = uuid.uuid4().hex[:10]
+    # If caller didn't provide an out_tag, default to run_id to avoid collisions
+    tag = req.out_tag if getattr(req, "out_tag", None) else run_id
+    out_dir = _choose_outdir(req.out_dir, tag)
 
     # pull fields but keep None if not explicitly provided
     policy  = (req.policy or "equal")

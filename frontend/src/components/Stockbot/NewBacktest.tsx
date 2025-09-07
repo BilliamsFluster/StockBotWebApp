@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
+import { toast } from "react-hot-toast";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import api from "@/api/client";
@@ -35,7 +36,6 @@ export default function NewBacktest({
   const [start, setStart] = useState("2022-01-01");
   const [end, setEnd] = useState("2022-12-31");
 
-  const [outTag, setOutTag] = useState("ppo_cnn_norm_eval");
   const [normalize, setNormalize] = useState(true);
 
   const [submitting, setSubmitting] = useState(false);
@@ -68,6 +68,7 @@ export default function NewBacktest({
     setSubmitting(true);
     setError(undefined);
     try {
+      const toastId = toast.loading("Submitting backtest…", { duration: Infinity });
       const payload: any = {
         config_path: "stockbot/env/env.example.yaml",
         symbols: symbols
@@ -76,7 +77,6 @@ export default function NewBacktest({
           .filter(Boolean),
         start,
         end,
-        out_tag: outTag,
         normalize,
       };
       if ((mode === "trained" && runId) || (lockedMode && runId)) {
@@ -99,9 +99,28 @@ export default function NewBacktest({
         created_at: new Date().toISOString(),
       });
 
+      toast.loading(`Queued ${resp.job_id}`, { id: toastId, duration: Infinity });
+      // Dismiss queued toast when job enters RUNNING or a terminal state
+      (async () => {
+        const id = resp.job_id;
+        let tries = 0;
+        while (tries < 40) {
+          try {
+            const { data: st } = await api.get<{ status: string }>(`/stockbot/runs/${id}`);
+            const s = (st?.status || '').toUpperCase();
+            if (s && s !== 'QUEUED' && s !== 'PENDING') {
+              toast.dismiss(toastId);
+              break;
+            }
+          } catch {}
+          await new Promise(r => setTimeout(r, 1000));
+          tries++;
+        }
+      })();
       onJobCreated(resp.job_id);
     } catch (e: any) {
       setError(e?.message ?? String(e));
+      toast.error(`Submit failed: ${e?.message ?? String(e)}`);
     } finally {
       setSubmitting(false);
     }
@@ -145,12 +164,7 @@ export default function NewBacktest({
           setEnd={setEnd}
         />
 
-        <OutputOptionsSection
-          outTag={outTag}
-          setOutTag={setOutTag}
-          normalize={normalize}
-          setNormalize={setNormalize}
-        />
+        <OutputOptionsSection normalize={normalize} setNormalize={setNormalize} />
       </div>
 
       {error && <div className="text-red-500 text-sm">{error}</div>}
