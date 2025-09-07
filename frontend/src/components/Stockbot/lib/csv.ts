@@ -1,8 +1,10 @@
 // Tiny CSV reader (assumes header row, comma-separated, no quoted commas).
 // lib/csv.ts
+import { buildUrl } from "@/api/client";
+
 export async function parseCSV(url?: string | null): Promise<any[]> {
   if (!url) return [];
-  const res = await fetch(url, { cache: "no-store" });
+  const res = await fetch(buildUrl(url), { cache: "no-store" });
   if (!res.ok) return [];
   const text = await res.text();
   // Guard: if server returned HTML (404 page), bail out

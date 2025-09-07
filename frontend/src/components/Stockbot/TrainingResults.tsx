@@ -15,6 +15,7 @@ import type { RunSummary, Metrics, RunArtifacts } from "./lib/types";
 import { WeightsHeatmap } from "./NewTraining/WeightsHeatmap";
 import { RunChartsModal } from "./NewTraining/RunChartsModal";
 import { parseCSV, drawdownFromEquity } from "./lib/csv";
+import { buildUrl } from "@/api/client";
 import { formatPct, formatSigned } from "./lib/formats";
 import {
   ResponsiveContainer,
@@ -212,7 +213,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
       setArtifacts(art || null);
       if (art?.metrics) {
         try {
-          const { data: m } = await api.get<Metrics>(art.metrics, { baseURL: "" });
+          const { data: m } = await api.get<Metrics>(buildUrl(art.metrics));
           setMetrics(m);
         } catch {
           setMetrics(null);
