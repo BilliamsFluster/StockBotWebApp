@@ -302,13 +302,13 @@ function HighlightCard({ title, items }: { title: string; items?: string[] }) {
         {items && items.length ? (
           <div>
             <div
-              className={`pr-4 overflow-y-auto ${
+              className={`pr-4 overflow-x-hidden overflow-y-hidden hover:overflow-y-auto ${
                 expanded ? "max-h-80" : "max-h-40"
               }`}
             >
               <ul className="space-y-2 text-sm list-disc pl-4">
                 {items.map((item, i) => (
-                  <li key={i} className="leading-relaxed">
+                  <li key={i} className="leading-relaxed break-words">
                     {item}
                   </li>
                 ))}
