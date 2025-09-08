@@ -16,13 +16,17 @@ export async function getActiveApiPortfolioData() {
   } catch (error: any) {
     console.error('❌ Error fetching active broker portfolio:', error);
     const status = (error as any).status;
-    if (status === 500) {
-      throw new Error('Server error: Unable to fetch portfolio data. Check if active broker is connected.');
-    } else if (status === 400) {
-      throw new Error('No active broker set. Please select and connect a broker first.');
-    } else {
-      throw new Error('Failed to fetch portfolio data');
+    const msg = (error as Error)?.message || '';
+    if (status === 401) {
+      throw new Error(msg || 'Unauthorized: check broker credentials (API key/secret and mode).');
     }
+    if (status === 400) {
+      throw new Error('No active broker set. Please select and connect a broker first.');
+    }
+    if (status === 500) {
+      throw new Error(msg || 'Server error: Unable to fetch portfolio data. Check if active broker is connected.');
+    }
+    throw new Error(msg || 'Failed to fetch portfolio data');
   }
 }
 
