@@ -18,7 +18,18 @@ function normalizeError(err: unknown): Error {
     const ax = err as AxiosError<any>;
     const status = ax.response?.status;
     const statusText = ax.response?.statusText ?? 'Error';
-    const serverMsg = ax.response?.data?.error ?? ax.response?.data?.message;
+    const data: any = ax.response?.data || {};
+    const serverMsg =
+      data?.error ??
+      data?.message ??
+      data?.detail ??
+      (Array.isArray(data?.errors)
+        ? data.errors
+            .map((e: any) => e?.message || e?.msg)
+            .filter(Boolean)
+            .join('; ')
+        : undefined);
+
     const e = new Error(serverMsg || (status ? `${status} ${statusText}` : ax.message));
     (e as any).status = status;
     return e;

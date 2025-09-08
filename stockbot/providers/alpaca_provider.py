@@ -38,6 +38,8 @@ class AlpacaProvider(BaseProvider):
             "APCA-API-KEY-ID": app_key,
             "APCA-API-SECRET-KEY": app_secret,
         })
+        # Remove generic Bearer header from BaseProvider; Alpaca uses APCA headers only
+        self.session.headers.pop("Authorization", None)
 
     def _request(self, method: str, path: str,
                  params: Optional[Dict[str, Any]] = None,
@@ -81,7 +83,6 @@ class AlpacaProvider(BaseProvider):
         return resp.get("bars", [])
 
     def get_account(self) -> Dict[str, Any]:
-        print(self.api_key)
         return self._request("GET", "/v2/account")
 
     def get_account_summary(self) -> Dict[str, Any]:
