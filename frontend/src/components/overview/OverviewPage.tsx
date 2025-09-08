@@ -293,7 +293,6 @@ export default function OverviewPage() {
 /** ---------- Reusable UI Components (Styled with Theme Variables) ---------- */
 function HighlightCard({ title, items }: { title: string; items?: string[] }) {
   const [expanded, setExpanded] = React.useState(false);
-  const maxHeight = expanded ? "max-h-80" : "max-h-40";
   return (
     <Card className="ink-card">
       <CardHeader>
@@ -302,8 +301,10 @@ function HighlightCard({ title, items }: { title: string; items?: string[] }) {
       <CardContent>
         {items && items.length ? (
           <div>
-            <ScrollArea
-              className={`pr-4 ${expanded ? "max-h-80" : "max-h-40"}`}
+            <div
+              className={`pr-4 overflow-y-auto ${
+                expanded ? "max-h-80" : "max-h-40"
+              }`}
             >
               <ul className="space-y-2 text-sm list-disc pl-4">
                 {items.map((item, i) => (
@@ -312,7 +313,7 @@ function HighlightCard({ title, items }: { title: string; items?: string[] }) {
                   </li>
                 ))}
               </ul>
-            </ScrollArea>
+            </div>
             {items.length > 4 && (
               <Button
                 variant="ghost"
