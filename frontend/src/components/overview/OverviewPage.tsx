@@ -36,6 +36,8 @@ import { fmtCash } from "./lib";
 type Bench = "SPY" | "QQQ" | "Custom Factor";
 type IdxRow = { name: string; chg: number };
 type Mover = { sym: string; name: string; chg: number; vol: string };
+type Transaction = { type: string; date: string; amount?: number };
+type Position = { dayPL?: number };
 export default function OverviewPage() {
   const { setShowOnboarding } = useOnboarding();
   const { activeBroker, checkingBroker } = useActiveBroker();
@@ -43,18 +45,18 @@ export default function OverviewPage() {
   // Load live portfolio data only when a broker is active
   const { data, isLoading } = usePortfolioData(Boolean(activeBroker));
   const summary = data?.portfolio?.summary;
-  const positions = data?.portfolio?.positions ?? [];
-  const transactions = data?.portfolio?.transactions ?? [];
+  const positions: Position[] = data?.portfolio?.positions ?? [];
+  const transactions: Transaction[] = data?.portfolio?.transactions ?? [];
 
   const realizedPL = useMemo(() => {
     const start = new Date(new Date().getFullYear(), 0, 1);
     return transactions
-      .filter(tx => tx.type === "TRADE" && new Date(tx.date) >= start)
-      .reduce((acc, tx) => acc + (tx.amount || 0), 0);
+      .filter((tx: Transaction) => tx.type === "TRADE" && new Date(tx.date) >= start)
+      .reduce((acc: number, tx: Transaction) => acc + (tx.amount || 0), 0);
   }, [transactions]);
 
   const unrealizedPL = useMemo(() => {
-    return positions.reduce((acc, p) => acc + (p.dayPL || 0), 0);
+    return positions.reduce((acc: number, p: Position) => acc + (p.dayPL || 0), 0);
   }, [positions]);
 
   const cashAllocation = useMemo(() => {
