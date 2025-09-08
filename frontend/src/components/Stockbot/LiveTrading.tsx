@@ -168,6 +168,30 @@ export default function LiveTrading() {
                   <TableCell>Status</TableCell>
                   <TableCell className="font-mono">{status?.status || "unknown"}</TableCell>
                 </TableRow>
+                {status?.details && (
+                  <>
+                    <TableRow>
+                      <TableCell>Stage</TableCell>
+                      <TableCell className="font-mono">{typeof status.details.stage === 'number' ? status.details.stage.toFixed(3) : '—'}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell>Gated Capital</TableCell>
+                      <TableCell className="font-mono">{typeof status.details.deploy_capital === 'number' ? status.details.deploy_capital.toLocaleString() : '—'}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell>Last Heartbeat</TableCell>
+                      <TableCell className="font-mono">{status.details.last_heartbeat_ts ? new Date(status.details.last_heartbeat_ts * 1000).toLocaleString() : '—'}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell>Last Risk Event</TableCell>
+                      <TableCell className="font-mono">{status.details.last_event || '—'}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell>Halted</TableCell>
+                      <TableCell className="font-mono">{String(!!status.details.halted)}</TableCell>
+                    </TableRow>
+                  </>
+                )}
                 {status?.message && (
                   <TableRow>
                     <TableCell>Message</TableCell>

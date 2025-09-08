@@ -36,7 +36,7 @@ Node/Express proxy (prefix `/api`), forwarding to FastAPI at `STOCKBOT_URL`:
 - TensorBoard: `GET /api/stockbot/runs/:id/tb/tags|scalars|scalars-batch|histograms|grad-matrix`
 - Policies: `POST /api/stockbot/policies/upload` (SB3 `.zip`)
 - Insights: `GET /api/stockbot/insights`, `GET /api/stockbot/highlights`
-- Live trading: `POST /api/stockbot/trade/start`, `POST /api/stockbot/trade/status`, `POST /api/stockbot/trade/stop`
+- Live trading: `POST /api/stockbot/trade/start`, `POST /api/stockbot/trade/status` (engine heartbeat), `GET /api/stockbot/trade/status` (UI snapshot), `POST /api/stockbot/trade/stop`
 
 FastAPI also mounts static runs under `/runs/<id>/...` for direct file access.
 
