@@ -416,4 +416,16 @@ ignore this additional context or condition their allocations on the inferred ma
 from policy training the pipeline keeps the HMM transparent and interpretable while still giving reinforcement‑learning agents
 access to a higher‑level view of market dynamics.
 
+### Payload Preparation Helper
+
+The `stockbot.pipeline.prepare_from_payload` function ties together ingestion
+and feature generation into a single entry point. Given a training or
+backtesting request it ensures parquet caches via `ensure_parquet`,
+materializes a `dataset_manifest.json` with `build_manifest`, and builds the
+feature tensor using `FeatureSpec` and `build_features`. If regime parameters
+are provided it also fits an HMM and attaches posterior probabilities to the
+metadata. The helper returns the feature array and a metadata dictionary,
+allowing tests and higher‑level services to bootstrap runs without touching
+individual data-layer modules.
+
 
