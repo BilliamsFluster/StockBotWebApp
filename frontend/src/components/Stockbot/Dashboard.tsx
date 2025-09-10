@@ -2,7 +2,15 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
-import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import api from "@/api/client";
 import { deleteRun } from "@/api/stockbot";
@@ -97,8 +105,8 @@ export default function Dashboard({
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Card className="p-4">
           <h3 className="text-lg font-semibold mb-3">Training Runs</h3>
-          <div className="max-h-60 overflow-auto">
-            <Table containerClassName="max-h-60">
+          <ScrollArea className="max-h-60">
+            <Table containerClassName="overflow-visible">
               <TableHeader className="sticky top-0 bg-background z-10">
                 <TableRow>
                   <TableHead>Run ID</TableHead>
@@ -140,13 +148,13 @@ export default function Dashboard({
                 )}
               </TableBody>
             </Table>
-          </div>
+          </ScrollArea>
         </Card>
 
         <Card className="p-4">
           <h3 className="text-lg font-semibold mb-3">Backtests</h3>
-          <div className="max-h-60 overflow-auto">
-            <Table containerClassName="max-h-60">
+          <ScrollArea className="max-h-60">
+            <Table containerClassName="overflow-visible">
               <TableHeader className="sticky top-0 bg-background z-10">
                 <TableRow>
                   <TableHead>Run ID</TableHead>
@@ -187,7 +195,7 @@ export default function Dashboard({
                 )}
               </TableBody>
             </Table>
-          </div>
+          </ScrollArea>
         </Card>
       </div>
 
