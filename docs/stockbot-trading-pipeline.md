@@ -36,7 +36,7 @@ Node/Express proxy (prefix `/api`), forwarding to FastAPI at `STOCKBOT_URL`:
 - TensorBoard: `GET /api/stockbot/runs/:id/tb/tags|scalars|scalars-batch|histograms|grad-matrix`
 - Policies: `POST /api/stockbot/policies/upload` (SB3 `.zip`)
 - Insights: `GET /api/stockbot/insights`, `GET /api/stockbot/highlights`
-- Live trading: `POST /api/stockbot/trade/start`, `POST /api/stockbot/trade/status`, `POST /api/stockbot/trade/stop`
+- Live trading: `POST /api/stockbot/trade/start`, `POST /api/stockbot/trade/status` (engine heartbeat), `GET /api/stockbot/trade/status` (UI snapshot), `POST /api/stockbot/trade/stop`
 
 FastAPI also mounts static runs under `/runs/<id>/...` for direct file access.
 
@@ -415,5 +415,17 @@ At runtime the environment simply concatenates the regime probability vector to 
 ignore this additional context or condition their allocations on the inferred market state.  By separating regime estimation
 from policy training the pipeline keeps the HMM transparent and interpretable while still giving reinforcement‑learning agents
 access to a higher‑level view of market dynamics.
+
+### Payload Preparation Helper
+
+The `stockbot.pipeline.prepare_from_payload` function ties together ingestion
+and feature generation into a single entry point. Given a training or
+backtesting request it ensures parquet caches via `ensure_parquet`,
+materializes a `dataset_manifest.json` with `build_manifest`, and builds the
+feature tensor using `FeatureSpec` and `build_features`. If regime parameters
+are provided it also fits an HMM and attaches posterior probabilities to the
+metadata. The helper returns the feature array and a metadata dictionary,
+allowing tests and higher‑level services to bootstrap runs without touching
+individual data-layer modules.
 
 

@@ -30,7 +30,20 @@ export async function getMarketHighlights() {
 }
 
 // Live trading endpoints
-export async function startLiveTrading(params: { run_id?: string; policy_path?: string } = {}) {
+export type CanaryOverrides = {
+  stages?: number[];
+  window_trades?: number;
+  min_hitrate?: number;
+  min_sharpe?: number;
+  max_slippage_bps?: number;
+  daily_loss_limit_pct?: number;
+  vol_target_annual?: number;
+  vol_band_frac?: number;
+};
+
+export async function startLiveTrading(
+  params: { run_id?: string; policy_path?: string } & CanaryOverrides = {}
+) {
   const { data } = await api.post('/stockbot/trade/start', params);
   return data as { status: string; session_id?: string; message?: string };
 }

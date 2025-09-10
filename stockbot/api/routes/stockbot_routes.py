@@ -34,6 +34,7 @@ from api.controllers.trade_controller import (
     start_live,
     status_live,
     stop_live,
+    get_status_snapshot,
 )
 
 
@@ -139,6 +140,11 @@ def trade_start(req: TradeStartRequest):
 @router.post("/trade/status")
 def trade_status(req: TradeStatusRequest):
     return status_live(req)
+
+
+@router.get("/trade/status")
+def trade_status_get():
+    return get_status_snapshot()
 
 
 @router.post("/trade/stop")
