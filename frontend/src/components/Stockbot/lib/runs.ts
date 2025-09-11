@@ -2,9 +2,8 @@ import { RunSummary } from "./types";
 
 const RECENT_KEY = "stockbot_recent_runs";
 const SAVED_KEY = "stockbot_saved_runs";
-// Keep a larger history so runs/backtests don't "disappear" as new ones arrive
-const MAX_RECENT = 50;
-const MAX_SAVED = 50;
+const MAX_RECENT = 5;
+const MAX_SAVED = 5;
 
 type StoreKey = typeof RECENT_KEY | typeof SAVED_KEY;
 

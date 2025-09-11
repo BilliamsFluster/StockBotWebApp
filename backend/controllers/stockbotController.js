@@ -385,14 +385,12 @@ export async function startLiveTradingProxy(req, res) {
 
     const credentials = await getBrokerCredentials(user, broker);
 
-    // Pass through any optional canary overrides from the client safely
-    const { broker: _b, credentials: _c, ...rest } = body;
     const payload = {
       broker,
       credentials,
       run_id: body.run_id,
       policy_path: body.policy_path,
-      ...rest,
+      // optional: trading parameters could be passed-through here later
     };
 
     const { data } = await axios.post(
