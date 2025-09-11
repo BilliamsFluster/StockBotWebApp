@@ -48,11 +48,6 @@ export default function Page() {
               setBacktestRunId(id);
               setTab("new-backtest");
             }}
-            onOpenBacktest={(id) => {
-              // Navigate to Run Detail for backtests
-              setBacktestRunId(id);
-              setTab("run-detail");
-            }}
           />
         </TabsContent>
 
@@ -71,7 +66,6 @@ export default function Page() {
           <NewBacktest
             runId={backtestRunId ?? undefined}
             onJobCreated={(_id) => {
-              setBacktestRunId(_id);
               setTab("run-detail");
             }}
             onCancel={() => setTab("dashboard")}
@@ -79,8 +73,8 @@ export default function Page() {
         </TabsContent>
 
         <TabsContent value="run-detail">
-          {/* RunDetail can auto-load a run by ID */}
-          <RunDetail initialRunId={backtestRunId || undefined} />
+          {/* RunDetail is now upload-only and takes no props */}
+          <RunDetail />
         </TabsContent>
 
         <TabsContent value="training-results">
