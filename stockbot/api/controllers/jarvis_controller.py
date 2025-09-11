@@ -65,6 +65,18 @@ class ChatAskIn(BaseModel):
 class ChatAskOut(BaseModel):
     response: str
 
+
+# -----------------------------
+# Chat handlers
+# -----------------------------
+def chat_ask(
+    req: ChatAskIn,
+    service: JarvisService = Depends(get_jarvis_service),
+) -> ChatAskOut:
+    """Simple text chat endpoint."""
+    response = service.agent.generate(req.prompt, output_format=req.format)
+    return ChatAskOut(response=response)
+
 # DOM action models
 class WaitFor(BaseModel):
     op: Literal["wait_for"]
