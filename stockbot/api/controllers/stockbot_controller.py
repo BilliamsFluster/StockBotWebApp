@@ -471,6 +471,16 @@ def _run_subprocess_sync(args: List[str], rec: RunRecord):
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
     env["PYTHONLEGACYWINDOWSSTDIO"] = "1"
+    # Telemetry wiring for child process
+    try:
+        out_abs = str(Path(rec.out_dir).resolve())
+        env["STOCKBOT_RUN_ID"] = rec.id
+        env["STOCKBOT_OUT_DIR"] = out_abs
+        env["STOCKBOT_TELEMETRY_PATH"] = str(Path(out_abs) / "live_telemetry.jsonl")
+        env["STOCKBOT_EVENT_PATH"] = str(Path(out_abs) / "live_events.jsonl")
+        env["STOCKBOT_ROLLUP_PATH"] = str(Path(out_abs) / "live_rollups.jsonl")
+    except Exception:
+        pass
 
     # ---- Defensive: forbid None and coerce to str
     clean_args: List[str] = []
@@ -779,6 +789,10 @@ SAFE_NAME_MAP = {
     "model":   "ppo_policy.zip",
     "job_log": "job.log",
     "payload": "payload.json",
+    # Live telemetry files for the new monitor UI
+    "live_telemetry": "live_telemetry.jsonl",
+    "live_events": "live_events.jsonl",
+    "live_rollups": "live_rollups.jsonl",
 }
 
 def get_artifact_file(run_id: str, name: str):

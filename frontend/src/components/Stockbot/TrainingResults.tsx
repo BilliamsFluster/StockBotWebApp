@@ -15,6 +15,7 @@ import type { RunSummary, Metrics, RunArtifacts } from "./lib/types";
 import { WeightsHeatmap } from "./NewTraining/WeightsHeatmap";
 import { RunChartsModal } from "./NewTraining/RunChartsModal";
 import { parseCSV, drawdownFromEquity } from "./lib/csv";
+import RunMonitor from "./RunMonitor";
 import { buildUrl } from "@/api/client";
 import { formatPct, formatSigned } from "./lib/formats";
 import {
@@ -129,7 +130,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
     const startSSE = () => {
       try {
         const url = buildUrl(`/api/stockbot/runs/${runId}/stream`);
-        es = new EventSource(url);
+        es = new EventSource(url, { withCredentials: true });
         es.onmessage = (ev) => {
           try {
             const st = JSON.parse(ev.data);
@@ -142,7 +143,11 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
     };
 
     try {
-      const u = new URL(buildUrl(`/api/stockbot/runs/${runId}/ws`));
+      // Prefer SSE first; only try WS if not proxying via :5001
+      startSSE();
+      const wsu = buildUrl(`/api/stockbot/runs/${runId}/ws`);
+      if (/:5001\//.test(wsu)) return () => {}; // skip WS on proxy port
+      const u = new URL(wsu);
       u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
       ws = new WebSocket(u.toString());
       ws.onmessage = (ev) => {
@@ -152,8 +157,8 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
           if (st && TERMINAL.has(String(st.status || ""))) stopAll();
         } catch {}
       };
-      ws.onerror = () => { try { ws && ws.close(); } catch {}; startSSE(); };
-    } catch { startSSE(); }
+      ws.onerror = () => { try { ws && ws.close(); } catch {}; };
+    } catch { /* ignore */ }
 
     return stopAll;
   }, [runId]);
@@ -722,6 +727,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
           <TabsTrigger value="grads">Gradients</TabsTrigger>
           <TabsTrigger value="scalars">Scalars</TabsTrigger>
           <TabsTrigger value="report">Report</TabsTrigger>
+          {runId && <TabsTrigger value="monitor">Monitor</TabsTrigger>}
         </TabsList>
         {/* Rollout/Eval */}
         <TabsContent value="overview">
@@ -742,6 +748,13 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
       </Card>
 
         </TabsContent>
+        {runId && (
+          <TabsContent value="monitor">
+            <Card className="p-2">
+              <RunMonitor runId={runId} />
+            </Card>
+          </TabsContent>
+        )}
         <TabsContent value="optim">
       {/* Optimization */}
       <Card className="p-4 space-y-3">

@@ -341,6 +341,11 @@ class PortfolioTradingEnv(gym.Env):
         target_w, events, self.risk_state = apply_caps_and_guards(
             target_w, None, self.guards_cfg, self.risk_state, now_ts
         )
+        try:
+            trace = dict(trace)
+            trace["gamma"] = float(gamma_t)
+        except Exception:
+            pass
         self.sizing_trace.append({"ts": self.src.index[self._i], **trace})
         self.risk_events.extend(events)
         self.risk_state.nav_day_open = self.risk_state.nav_current
