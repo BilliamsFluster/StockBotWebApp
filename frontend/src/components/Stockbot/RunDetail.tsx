@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -19,11 +19,10 @@ import {
   TableCell,
 } from "@/components/ui/table";
 
-import { parseCSVText, drawdownFromEquity, parseCSV } from "./lib/csv";
+import { parseCSVText, drawdownFromEquity } from "./lib/csv";
 import { formatPct, formatUSD, formatSigned } from "./lib/formats";
-import { Metrics, RunArtifacts } from "./lib/types";
+import { Metrics } from "./lib/types";
 import { TooltipLabel } from "./shared/TooltipLabel";
-import api, { buildUrl } from "@/api/client";
 
 import {
   LineChart,
@@ -57,7 +56,7 @@ type OrderRow = {
   commission?: number;
 };
 
-export default function RunDetail({ initialRunId }: { initialRunId?: string }) {
+export default function RunDetail() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [summary, setSummary] = useState<any | null>(null);
   const [equity, setEquity] = useState<EquityRow[]>([]);
@@ -68,7 +67,6 @@ export default function RunDetail({ initialRunId }: { initialRunId?: string }) {
   const [loading, setLoading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [tab, setTab] = useState("overview");
-  const [loadedRunId, setLoadedRunId] = useState<string | null>(null);
 
   const resetAll = useCallback(() => {
     setMetrics(null);
@@ -86,22 +84,6 @@ export default function RunDetail({ initialRunId }: { initialRunId?: string }) {
     const clean = String(v).replace(/\$/g, "").replace(/,/g, "");
     const n = Number(clean);
     return Number.isFinite(n) ? n : undefined;
-  };
-  const fetchJson = async (url?: string | null) => {
-    if (!url) return null;
-    try {
-      const { data } = await api.get(buildUrl(url));
-      return data ?? null;
-    } catch {
-      return null;
-    }
-  };
-  const fetchCsvRows = async (url?: string | null): Promise<any[]> => {
-    try {
-      return await parseCSV(url);
-    } catch {
-      return [];
-    }
   };
   const toEpoch = (v: any) => {
     if (typeof v === "number" && Number.isFinite(v)) return v;
@@ -246,92 +228,6 @@ export default function RunDetail({ initialRunId }: { initialRunId?: string }) {
       setLoading(false);
     }
   }, []);
-
-  // Auto-load artifacts when a runId is provided
-  useEffect(() => {
-    if (!initialRunId) return;
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      resetAll();
-      try {
-        const { data: art } = await api.get<RunArtifacts>(`/stockbot/runs/${initialRunId}/artifacts`);
-        if (cancelled) return;
-
-        // Metrics and summary
-        const [m, s] = await Promise.all([
-          fetchJson(art?.metrics || undefined),
-          fetchJson(art?.summary || undefined),
-        ]);
-        if (!cancelled) {
-          setMetrics(m);
-          setSummary(s);
-        }
-
-        // Equity + drawdown
-        const eqRows = await fetchCsvRows(art?.equity || undefined);
-        if (!cancelled) {
-          const norm: EquityRow[] = (eqRows || [])
-            .map((r: any) => ({ ts: toEpoch(r.ts)!, equity: toNum(r.equity)! }))
-            .filter((r) => r.ts != null && r.equity != null)
-            .sort((a, b) => a.ts - b.ts);
-          setEquity(norm);
-          let dd = drawdownFromEquity(eqRows || []).map((d: any) => ({ ts: toEpoch(d.ts)!, dd: -Math.abs(Number(d.dd)) })) as DrawdownRow[];
-          dd = dd.filter((d) => d.ts != null && Number.isFinite(d.dd));
-          setDrawdown(dd);
-        }
-
-        // Trades
-        const trRows = await fetchCsvRows(art?.trades || undefined);
-        if (!cancelled) {
-          const nextTrades = (trRows || []).map((r: any) => ({
-            symbol: r.symbol,
-            side: r.side,
-            qty: toNum(r.qty),
-            entry_ts: toEpoch(r.entry_ts ?? r.ts),
-            exit_ts: toEpoch(r.exit_ts),
-            net_pnl: toNum(r.net_pnl),
-          }));
-          setTrades(nextTrades);
-        }
-
-        // Orders
-        const orRows = await fetchCsvRows(art?.orders || undefined);
-        if (!cancelled) {
-          const nextOrders = (orRows || []).map((r: any) => ({
-            ts: toEpoch(r.ts),
-            symbol: r.symbol,
-            qty: toNum(r.qty),
-            price: toNum(r.price),
-            commission: toNum(r.commission),
-          }));
-          setOrders(nextOrders);
-        }
-
-        // Rolling metrics
-        const rmRows = await fetchCsvRows(art?.rolling_metrics || undefined);
-        if (!cancelled) {
-          const rm = (rmRows || [])
-            .map((r: any) => ({
-              ts: toEpoch(r.ts)!,
-              roll_sharpe_63: toNum(r.roll_sharpe_63),
-              roll_vol_63: toNum(r.roll_vol_63),
-              roll_maxdd_252: toNum(r.roll_maxdd_252),
-            }))
-            .filter((r: any) => Number.isFinite(r.ts));
-          setRolling(rm as any);
-        }
-
-        setLoadedRunId(initialRunId);
-        setTab("overview");
-      } catch {
-        // ignore
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [initialRunId]);
 
   const onFileInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files?.length) return;

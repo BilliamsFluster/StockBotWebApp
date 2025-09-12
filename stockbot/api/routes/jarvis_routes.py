@@ -19,6 +19,15 @@ router = APIRouter()
 
 #jarvis_service = JarvisService(llm_agent=ollama_agent)
 
+@router.post("/chat/ask", response_model=ctrl.ChatAskOut)
+def chat_ask(
+    req: ctrl.ChatAskIn,
+    service: JarvisService = Depends(ctrl.get_jarvis_service),
+):
+    # Pass the DI-injected service to the controller
+    return ctrl.chat_ask(req, service=service)
+
+
 @router.websocket("/voice/ws")
 async def jarvis_voice_ws(
     websocket: WebSocket,

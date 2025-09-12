@@ -5,6 +5,7 @@ import {
   planJarvisEdit,
   proxyJarvisVoiceWs,
   fetchModels,
+  handleJarvisPrompt,
 } from "../controllers/jarvisController.js";
 
 export default function createJarvisRoutes(app) {
@@ -13,9 +14,9 @@ export default function createJarvisRoutes(app) {
   // =====================
   // TEXT + CONTROL ROUTES
   // =====================
-  /*router.post("/ask", protectRoute, handleJarvisPrompt);
+  router.post("/ask", protectRoute, handleJarvisPrompt);
 
-  router.post("/voice/start", protectRoute, startVoiceAssistant);
+  /*router.post("/voice/start", protectRoute, startVoiceAssistant);
   router.post("/voice/stop", protectRoute, stopVoiceAssistant);
   router.post("/voice/interrupt", protectRoute, interruptVoiceAssistant);
   router.get("/voice/status", protectRoute, getVoiceStatus);
