@@ -7,7 +7,6 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import BrokerSelector from "@/components/brokers/BrokerSelector";
 import { getUserPreferences } from "@/api/client";
 import api from "@/api/client";
@@ -26,16 +25,6 @@ export default function LiveTrading() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showBrokerManager, setShowBrokerManager] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  // Canary advanced options (optional); empty values are omitted from payload
-  const [stages, setStages] = useState<string>("0.01,0.02,0.05,0.10,0.20");
-  const [windowTrades, setWindowTrades] = useState<string>("100");
-  const [minHitRate, setMinHitRate] = useState<string>("0.53");
-  const [minSharpe, setMinSharpe] = useState<string>("0.5");
-  const [maxSlipBps, setMaxSlipBps] = useState<string>("15");
-  const [dailyLossPct, setDailyLossPct] = useState<string>("1.0");
-  const [volTarget, setVolTarget] = useState<string>("0.10");
-  const [volBand, setVolBand] = useState<string>("0.25");
   const pollTimer = useRef<any>(null);
 
   const brokerLabel = useMemo(() => {
@@ -87,35 +76,7 @@ export default function LiveTrading() {
     setLoading(true);
     setError(null);
     try {
-      // Build optional overrides only if advanced is shown
-      let overrides: any = {};
-      if (showAdvanced) {
-        const parseNum = (s: string) => (s?.trim() ? Number(s) : undefined);
-        const parseArr = (s: string) =>
-          (s || "")
-            .split(",")
-            .map((x) => x.trim())
-            .filter(Boolean)
-            .map((x) => Number(x))
-            .filter((x) => !Number.isNaN(x));
-        const st = parseArr(stages);
-        if (st.length) overrides.stages = st;
-        const wt = parseNum(windowTrades);
-        if (wt !== undefined) overrides.window_trades = wt;
-        const hr = parseNum(minHitRate);
-        if (hr !== undefined) overrides.min_hitrate = hr;
-        const sh = parseNum(minSharpe);
-        if (sh !== undefined) overrides.min_sharpe = sh;
-        const sl = parseNum(maxSlipBps);
-        if (sl !== undefined) overrides.max_slippage_bps = sl;
-        const dl = parseNum(dailyLossPct);
-        if (dl !== undefined) overrides.daily_loss_limit_pct = dl;
-        const vt = parseNum(volTarget);
-        if (vt !== undefined) overrides.vol_target_annual = vt;
-        const vb = parseNum(volBand);
-        if (vb !== undefined) overrides.vol_band_frac = vb;
-      }
-      const resp = await startLiveTrading({ run_id: selectedRunId, ...overrides });
+      const resp = await startLiveTrading({ run_id: selectedRunId });
       setStatus(resp as any);
       // start polling after kick-off
       if (pollTimer.current) clearInterval(pollTimer.current);
@@ -187,46 +148,7 @@ export default function LiveTrading() {
                 {loading ? "Starting…" : "Start Live Trading"}
               </Button>
               <Button variant="outline" onClick={stop} disabled={loading}>Stop</Button>
-              <Button size="sm" variant="ghost" onClick={() => setShowAdvanced((s) => !s)}>
-                {showAdvanced ? "Hide Advanced" : "Canary Options"}
-              </Button>
             </div>
-            {showAdvanced && (
-              <div className="grid grid-cols-2 gap-3 pt-2">
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">Stage ladder (comma‑sep)</div>
-                  <Input value={stages} onChange={(e) => setStages(e.target.value)} placeholder="0.01,0.02,0.05,0.10,0.20" />
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">Window trades</div>
-                  <Input value={windowTrades} onChange={(e) => setWindowTrades(e.target.value)} placeholder="100" />
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">Min hit‑rate</div>
-                  <Input value={minHitRate} onChange={(e) => setMinHitRate(e.target.value)} placeholder="0.53" />
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">Min Sharpe</div>
-                  <Input value={minSharpe} onChange={(e) => setMinSharpe(e.target.value)} placeholder="0.5" />
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">Max slippage (bps)</div>
-                  <Input value={maxSlipBps} onChange={(e) => setMaxSlipBps(e.target.value)} placeholder="15" />
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">Daily loss limit (%)</div>
-                  <Input value={dailyLossPct} onChange={(e) => setDailyLossPct(e.target.value)} placeholder="1.0" />
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">Vol target (annual)</div>
-                  <Input value={volTarget} onChange={(e) => setVolTarget(e.target.value)} placeholder="0.10" />
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">Vol band (fraction)</div>
-                  <Input value={volBand} onChange={(e) => setVolBand(e.target.value)} placeholder="0.25" />
-                </div>
-              </div>
-            )}
             <p className="text-xs text-muted-foreground">
               Note: Ensure your Alpaca credentials are connected and in paper mode before starting.
             </p>
@@ -246,30 +168,6 @@ export default function LiveTrading() {
                   <TableCell>Status</TableCell>
                   <TableCell className="font-mono">{status?.status || "unknown"}</TableCell>
                 </TableRow>
-                {status?.details && (
-                  <>
-                    <TableRow>
-                      <TableCell>Stage</TableCell>
-                      <TableCell className="font-mono">{typeof status.details.stage === 'number' ? status.details.stage.toFixed(3) : '—'}</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell>Gated Capital</TableCell>
-                      <TableCell className="font-mono">{typeof status.details.deploy_capital === 'number' ? status.details.deploy_capital.toLocaleString() : '—'}</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell>Last Heartbeat</TableCell>
-                      <TableCell className="font-mono">{status.details.last_heartbeat_ts ? new Date(status.details.last_heartbeat_ts * 1000).toLocaleString() : '—'}</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell>Last Risk Event</TableCell>
-                      <TableCell className="font-mono">{status.details.last_event || '—'}</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell>Halted</TableCell>
-                      <TableCell className="font-mono">{String(!!status.details.halted)}</TableCell>
-                    </TableRow>
-                  </>
-                )}
                 {status?.message && (
                   <TableRow>
                     <TableCell>Message</TableCell>

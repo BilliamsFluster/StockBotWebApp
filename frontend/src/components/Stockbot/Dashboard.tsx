@@ -30,13 +30,11 @@ export default function Dashboard({
   onNewBacktest,
   onOpenRun,
   onBacktestRun,
-  onOpenBacktest,
 }: {
   onNewTraining: () => void;
   onNewBacktest: () => void;
   onOpenRun: (jobId: string) => void;
   onBacktestRun: (jobId: string) => void;
-  onOpenBacktest: (jobId: string) => void;
 }) {
   const [runs, setRuns] = useState<RunSummary[]>(loadRecentRuns());
   const [saved, setSaved] = useState<RunSummary[]>(loadSavedRuns());
@@ -105,8 +103,8 @@ export default function Dashboard({
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Card className="p-4">
           <h3 className="text-lg font-semibold mb-3">Training Runs</h3>
-          <div className="max-h-60 overflow-auto">
-            <Table containerClassName="max-h-60">
+          <div className="max-h-96 overflow-auto">
+            <Table containerClassName="max-h-96">
               <TableHeader className="sticky top-0 bg-background z-10">
                 <TableRow>
                   <TableHead>Run ID</TableHead>
@@ -153,8 +151,8 @@ export default function Dashboard({
 
         <Card className="p-4">
           <h3 className="text-lg font-semibold mb-3">Backtests</h3>
-          <div className="max-h-60 overflow-auto">
-            <Table containerClassName="max-h-60">
+          <div className="max-h-96 overflow-auto">
+            <Table containerClassName="max-h-96">
               <TableHeader className="sticky top-0 bg-background z-10">
                 <TableRow>
                   <TableHead>Run ID</TableHead>
@@ -177,7 +175,7 @@ export default function Dashboard({
                             <Button size="sm" variant="outline">Actions</Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => onOpenBacktest(r.id)}>Open</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => onOpenRun(r.id)}>Open</DropdownMenuItem>
                             <DropdownMenuItem onClick={() => onToggleSave(r)}>{isSaved ? "Unsave" : "Save"}</DropdownMenuItem>
                             <DropdownMenuItem onClick={() => onDelete(r.id)} className="text-red-600">Delete</DropdownMenuItem>
                           </DropdownMenuContent>
@@ -225,11 +223,7 @@ export default function Dashboard({
                       <Button size="sm" variant="outline">Actions</Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      {r.type === 'backtest' ? (
-                        <DropdownMenuItem onClick={() => onOpenBacktest(r.id)}>Open</DropdownMenuItem>
-                      ) : (
-                        <DropdownMenuItem onClick={() => onOpenRun(r.id)}>Open</DropdownMenuItem>
-                      )}
+                      <DropdownMenuItem onClick={() => onOpenRun(r.id)}>Open</DropdownMenuItem>
                       {r.type === 'train' && (
                         <DropdownMenuItem onClick={() => onBacktestRun(r.id)}>Backtest</DropdownMenuItem>
                       )}
