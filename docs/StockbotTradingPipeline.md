@@ -476,14 +476,15 @@ flowchart TD
   A[POST /api/stockbot/train] -->|Validate TrainRequest| B(start_train_job)
   B -->|Create run_id & directory| C[Run Directory]
   B -->|Snapshot EnvConfig + archive payload| D[config.snapshot.yaml + payload.json]
-  B -->|Schedule prepare_env| E[prepare_env (async)]
-  B -->|Store RunRecord as QUEUED| F[Run Registry]
+  B -->|Schedule prepare_env| E[prepare_env async]
+  B -->|Store RunRecord = QUEUED| F[Run Registry]
   B -->|Build CLI args & queue subprocess| G[_run_subprocess_sync]
   G -->|Launch python -m stockbot.rl.train_ppo| H[train_ppo]
   H -->|Build RL env & model| I[PPOTrainer.train]
-  I -->|Save policy & eval reports| J[out_dir: ppo_policy.zip & report/]
-  J -->|Update RunRecord to SUCCEEDED/FAILED| F
+  I -->|Save policy & eval reports| J[policy.zip + report/]
+  J -->|Update RunRecord SUCCEEDED / FAILED| F
   E -->|Write dataset_manifest.json, windows.npz, obs_schema.json| C
+
 ```
 
 This diagram shows how an HTTP request triggers operations across the controller, environment builder,
