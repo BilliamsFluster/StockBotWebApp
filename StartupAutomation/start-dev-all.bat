@@ -1,13 +1,16 @@
 @echo off
-REM capture the root of this script
-set "ROOT=%~dp0"
+
+REM ───── Set ROOT to one level up from this script ─────
+pushd "%~dp0.."
+set "ROOT=%CD%\"
+popd
 
 REM ───────────── Backend ─────────────
 pushd "%ROOT%backend"
 if errorlevel 1 (
   echo ⚠️  Could not cd into "%ROOT%backend"
 ) else (
-  start "Backend" cmd /k "npm run dev"
+  start "Backend Window" cmd /k "npm run dev & pause"
 )
 popd
 
@@ -16,7 +19,7 @@ pushd "%ROOT%frontend"
 if errorlevel 1 (
   echo ⚠️  Could not cd into "%ROOT%frontend"
 ) else (
-  start "Frontend" cmd /k "npm run dev"
+  start "Frontend Window" cmd /k "npm run dev & pause"
 )
 popd
 
@@ -25,7 +28,7 @@ pushd "%ROOT%stockbot"
 if errorlevel 1 (
   echo ⚠️  Could not cd into "%ROOT%stockbot"
 ) else (
-  start "StockBot" cmd /k "call run_dev.bat"
+  start "StockBot Window" cmd /k "call commands\run_dev.bat & pause"
 )
 popd
 
