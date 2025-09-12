@@ -379,6 +379,17 @@ understand exactly which fields appear in each observation window.  By decouplin
 cache format the system can deterministically replay experiments even if the upstream data provider changes or becomes
 unavailable.
 
+The asynchronous `prepare_env` helper expands this pipeline further by:
+
+- calling `ensure_parquet` for each symbol and interval to populate the cache,
+- writing a detailed `dataset_manifest.json` via `build_manifest`,
+- generating sliding feature windows in `windows.npz` alongside a `meta.json` descriptor,
+- optionally fitting a regime HMM and saving posteriors (`regime_posteriors.csv`) and state statistics,
+- emitting an `obs_schema.json` so downstream environments can validate tensor shapes,
+- persisting any state scalars used by sizing rules or Kelly optimisers.
+
+These artifacts allow the training subprocess to bootstrap immediately while background preparation finishes.
+
 ### PPO Training System
 
 The reinforcement‑learning core uses Stable‑Baselines3 Proximal Policy Optimization.  During a training run the engine steps the
@@ -396,6 +407,17 @@ training phase the engine runs a deterministic evaluation episode, logging per�
 Snapshots of the policy (`ppo_policy.zip`) and normalization statistics are written to the run folder.  These artifacts can be
 reloaded for out‑of‑sample backtests or deployed to the live trading service without retraining, enabling rapid iteration on
 strategy ideas.
+
+Before training begins the API controller constructs explicit CLI arguments from the `TrainRequest` and launches
+`python -m stockbot.rl.train_ppo` in a background subprocess.  The trainer:
+
+- loads the frozen `config.snapshot.yaml` and resolves train/eval date splits,
+- builds vectorised train and evaluation environments with optional observation normalisation and data‑source selection,
+- chooses a policy extractor (`mlp`, `window_cnn`, or `window_lstm`) and associated network kwargs,
+- instantiates SB3 PPO with hyper‑parameters such as `n_steps`, `batch_size`, `learning_rate`, `gamma`, `gae_lambda`,
+  `clip_range`, `entropy_coef`, `vf_coef`, and `max_grad_norm`,
+- attaches callbacks for diagnostics, evaluation, early stopping, and TensorBoard logging,
+- saves the final policy, evaluation CSV, and summary metrics back into the run directory.
 
 ### Markov/HMM Regime Module
 
@@ -415,5 +437,115 @@ At runtime the environment simply concatenates the regime probability vector to 
 ignore this additional context or condition their allocations on the inferred market state.  By separating regime estimation
 from policy training the pipeline keeps the HMM transparent and interpretable while still giving reinforcement‑learning agents
 access to a higher‑level view of market dynamics.
+
+When the risk overlay option is enabled the same HMM can drive a `RiskOverlayWrapper` that scales or shifts returns according
+to regime characteristics.  Both the raw posteriors and overlay adjustments are stored so that later runs can replicate the
+exact regime‑aware behaviour.
+
+
+## 17. Detailed Pipeline Walkthrough
+
+The sections above describe the major components at a high level.  This appendix walks through the full
+training pipeline in finer detail, mirroring the implementation in the FastAPI service and trainer.
+
+### High‑level Request & API
+
+Training jobs are submitted to the FastAPI route `POST /api/stockbot/train` with a `TrainRequest` payload
+that is divided into typed subsections:
+
+- **dataset** – symbol universe, date range, bar interval, adjusted‑price toggle and lookback length.
+- **features** – indicator set or custom list, observation normalisation flag and data source selection.
+- **costs** – commissions, taker/maker fees, spread and market‑impact parameters.
+- **execution_model** – fill policy (market or VWAP window), participation caps and optional limit offsets.
+- **sizing** – capital allocation rules, mapping mode, `invest_max`, `max_step_change`, `rebalance_eps` and
+  margin guardrails like leverage caps and daily loss limits.
+- **model** – PPO hyper‑parameters such as total timesteps, policy type, `n_steps`, batch size, learning
+  rate, discount factor, GAE λ, clip range, entropy/value coefficients, gradient clipping and dropout.
+- **reward** – base reward mode and weights for drawdown, turnover, volatility and leverage penalties.
+- **regime** – optional HMM settings (enabled flag, number of states, emission type) and whether to append
+  regime probabilities to observations.
+- **artifacts** – toggles for TensorBoard logs, action histories and regime plots.
+
+The controller validates the request and invokes `start_train_job` with the payload and a background task
+manager.
+
+### Pipeline Flow Diagram
+
+```mermaid
+flowchart TD
+  A[POST /api/stockbot/train] -->|Validate TrainRequest| B(start_train_job)
+  B -->|Create run_id & directory| C[Run Directory]
+  B -->|Snapshot EnvConfig + archive payload| D[config.snapshot.yaml + payload.json]
+  B -->|Schedule prepare_env| E[prepare_env (async)]
+  B -->|Store RunRecord as QUEUED| F[Run Registry]
+  B -->|Build CLI args & queue subprocess| G[_run_subprocess_sync]
+  G -->|Launch python -m stockbot.rl.train_ppo| H[train_ppo]
+  H -->|Build RL env & model| I[PPOTrainer.train]
+  I -->|Save policy & eval reports| J[out_dir: ppo_policy.zip & report/]
+  J -->|Update RunRecord to SUCCEEDED/FAILED| F
+  E -->|Write dataset_manifest.json, windows.npz, obs_schema.json| C
+```
+
+This diagram shows how an HTTP request triggers operations across the controller, environment builder,
+subprocess runner and RL trainer.
+
+### Step‑by‑Step Breakdown
+
+1. **Creating the run directory** – generate a unique `run_id` and choose an output folder under `runs/`.
+2. **Freezing the configuration** – resolve the environment YAML with user overrides and archive the original
+   payload for reproducibility.
+3. **Preparing the dataset** – asynchronously fetch price data, build the dataset manifest, generate feature
+   windows and optionally fit the regime HMM, writing `obs_schema.json` and state scalars.
+4. **Registering the run** – record a `RunRecord` with status `QUEUED` for UI status queries.
+5. **Constructing the training command** – assemble explicit CLI arguments for `train_ppo.py` including
+   policy choice, timesteps and normalisation flags.
+6. **Launching the subprocess** – `_run_subprocess_sync` marks the run `RUNNING`, writes the command to
+   `job.log`, starts `python -m stockbot.rl.train_ppo`, captures stdout/stderr and updates the registry when
+   the process finishes.
+7. **Inside the training subprocess** – parse arguments, load the YAML snapshot, derive train/eval splits and
+   instantiate `PPOTrainer`.
+8. **Building environments** – `PPOTrainer` constructs train and evaluation environments via `make_env`,
+   optionally loading regime posteriors and applying observation normalisation.
+9. **Choosing the policy architecture** – select between MLP, Window CNN or Window LSTM feature extractors.
+10. **Building the PPO model** – determine batch size, assemble the SB3 PPO learner and attach logging
+    facilities.
+11. **Setting up callbacks** – register diagnostic and evaluation callbacks including `EvalCallback` and
+    optional early‑stopping logic.
+12. **Training loop and model saving** – run `model.learn`, save `ppo_policy.zip` and evaluation reports.
+13. **Evaluation and reporting** – roll out a deterministic evaluation episode and write `report/equity.csv`
+    plus summary metrics.
+
+### Artifacts and Directory Layout
+
+Each run produces a dedicated folder under `runs/` containing the payload, frozen configuration, dataset
+manifest, feature windows, regime outputs, logs and reports.  TensorBoard files live in `tb/` for rich
+visualisation.
+
+### Configuration & Hyper‑Parameter Options
+
+Most knobs are surfaced through the `TrainRequest`, allowing users to override data sources, policy types,
+reward shaping and risk limits without editing YAML by hand.
+
+### Reproducibility & Safety
+
+Explicit configuration snapshots, run‑scoped directories, precise command logging and content hashes ensure
+that experiments can be audited and reproduced while preventing writes outside approved areas.
+
+### Glossary
+
+**Episode** – sequence of steps from reset to termination.
+
+**Lookback** – number of past bars included in each observation window.
+
+**Regime HMM** – Hidden‑Markov‑Model that estimates latent market regimes and outputs per‑bar probabilities.
+
+**PPO** – Proximal Policy Optimisation, the on‑policy RL algorithm used for training.
+
+**Policy extractor** – neural network front‑end (MLP, CNN or LSTM) that converts observation windows into
+latent features.
+
+**Timesteps** – total number of environment interactions used for training.
+
+**TensorBoard** – visualisation tool for monitoring training metrics.
 
 
