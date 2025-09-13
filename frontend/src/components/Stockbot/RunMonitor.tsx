@@ -433,6 +433,19 @@ export default function RunMonitor({ runId }: { runId: string }) {
     return i >= 0 ? slipTurnSeries[i] : null;
   }, [slipTurnSeries, hoverTs]);
 
+  // Summary values at hover time for quick glance
+  const hoverVals = useMemo(() => {
+    if (hoverTs == null) return null as null | { t: number; cum: number; dd: number; gross: number; slip: number; to: number };
+    return {
+      t: hoverTs,
+      cum: Number(hoverPNLPt?.cum ?? 0),
+      dd: Number(hoverPNLPt?.dd ?? 0),
+      gross: Number(hoverExpoPt?.gross ?? 0),
+      slip: Number(hoverSlipPt?.slip ?? 0),
+      to: Number(hoverSlipPt?.to ?? 0),
+    };
+  }, [hoverTs, hoverPNLPt, hoverExpoPt, hoverSlipPt]);
+
   // (Tooltip UI intentionally hidden via Tooltip content={() => null})
 
   // Latest weights table (limit to top 8 by |capped|)
@@ -464,6 +477,20 @@ export default function RunMonitor({ runId }: { runId: string }) {
   }, [viewBar]);
   const intended = useMemo(() => Array.isArray(viewBar?.orders?.intended) ? viewBar.orders.intended.slice(-15) : [], [viewBar]);
   const sent = useMemo(() => Array.isArray(viewBar?.orders?.sent) ? viewBar.orders.sent.slice(-15) : [], [viewBar]);
+  const viewTs = useMemo(() => parseTime((viewBar as any)?.t), [viewBar]);
+
+  // Color helpers
+  const colorClass = (v: any): string => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n === 0) return "text-muted-foreground";
+    return n > 0 ? "text-green-600" : "text-red-600";
+  };
+  const sideClass = (side: any): string => {
+    const s = String(side || "").toLowerCase();
+    if (s.includes("buy") || s.includes("long")) return "text-green-600";
+    if (s.includes("sell") || s.includes("short")) return "text-red-600";
+    return "text-muted-foreground";
+  };
 
   const loadJobLog = async () => {
     try {
@@ -534,6 +561,60 @@ export default function RunMonitor({ runId }: { runId: string }) {
             <option value={3000}>Low</option>
           </select>
         </div>
+      </Card>
+
+      {hoverVals && (
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          <span className="text-muted-foreground">At Cursor:</span>
+          <span className="rounded border px-2 py-1 bg-background/70">
+            <span className="font-mono">{new Date(hoverVals.t).toLocaleString([], { hour12: false })}</span>
+          </span>
+          <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1">
+            <span className="w-2 h-2 rounded" style={{background:'#2563eb'}} />
+            <span>P&L</span>
+            <span className={["font-mono", colorClass(hoverVals.cum)].join(" ")}>{formatPct(hoverVals.cum)}</span>
+          </span>
+          <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1">
+            <span className="w-2 h-2 rounded" style={{background:'#ef4444'}} />
+            <span>DD</span>
+            <span className={["font-mono", colorClass(hoverVals.dd)].join(" ")}>{formatPct(hoverVals.dd)}</span>
+          </span>
+          <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1">
+            <span className="w-2 h-2 rounded" style={{background:'#16a34a'}} />
+            <span>Gross</span>
+            <span className={["font-mono", colorClass(hoverVals.gross)].join(" ")}>{formatSigned(hoverVals.gross)}</span>
+          </span>
+          <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1">
+            <span className="w-2 h-2 rounded" style={{background:'#a855f7'}} />
+            <span>Slip</span>
+            <span className={["font-mono", colorClass(hoverVals.slip)].join(" ")}>{`${hoverVals.slip.toFixed(1)} bps`}</span>
+          </span>
+          <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1">
+            <span className="w-2 h-2 rounded" style={{background:'#f59e0b'}} />
+            <span>Turnover</span>
+            <span className={["font-mono", colorClass(hoverVals.to)].join(" ")}>{formatPct(hoverVals.to/100)}</span>
+          </span>
+        </div>
+      )}
+
+      {/* Compact guide for interpreting metrics */}
+      <Card className="p-3">
+        <details>
+          <summary className="cursor-pointer text-sm font-medium">How to read these metrics</summary>
+          <div className="mt-2 text-xs leading-relaxed space-y-1">
+            <div><span className="font-medium">Equity / Cum P&L (%):</span> Prefer % returns for training. Smooth upward drift is healthy; long flat/declines need review.</div>
+            <div><span className="font-medium">Drawdown (%):</span> <span className="text-green-600">Good: &lt; 10%</span> · <span className="text-amber-600">OK: 10–20%</span> · <span className="text-red-600">High: &gt; 20%</span></div>
+            <div><span className="font-medium">Rolling Sharpe:</span> <span className="text-green-600">Good: &gt; 1.0</span> · <span className="text-amber-600">OK: 0.5–1.0</span> · <span className="text-red-600">Weak: &lt; 0.5</span></div>
+            <div><span className="font-medium">Hit rate:</span> <span className="text-green-600">Good: &gt; 55%</span> · <span className="text-amber-600">OK: 45–55%</span> · <span className="text-red-600">Low: &lt; 45%</span> (context: payoff ratio matters)</div>
+            <div><span className="font-medium">Realized vol:</span> Stability is key; match your risk target. Rising vol with flat P&L is a warning.</div>
+            <div><span className="font-medium">Gross exposure (lev):</span> Stay within policy. Persistent &gt; 2–3x may be aggressive; near 0 implies risk gating or no signals.</div>
+            <div><span className="font-medium">Turnover:</span> Higher turnover increases costs; ensure P&L covers slippage/fees.</div>
+            <div><span className="font-medium">Slippage (bps):</span> <span className="text-green-600">Good: &lt; 5–10</span> · <span className="text-amber-600">OK: 10–25</span> · <span className="text-red-600">High: &gt; 25</span> and watch for spikes.</div>
+            <div><span className="font-medium">Orders/Fills:</span> Large qty oscillations or frequent rejects indicate sizing/routing issues.</div>
+            <div><span className="font-medium">Decision path:</span> Sanity‑check weights; large caps with poor Sharpe/High DD likely need constraints.</div>
+            <div className="text-muted-foreground">Tip: For training, exact dollar equity is optional — focus on returns %, drawdown, and costs.</div>
+          </div>
+        </details>
       </Card>
 
       <div className="grid lg:grid-cols-3 gap-6">
@@ -651,8 +732,11 @@ export default function RunMonitor({ runId }: { runId: string }) {
       </div>
 
       {/* Rolling performance metrics */}
-      <Card className="p-4 space-y-2">
+      <Card className="p-4 space-y-2 lg:max-w-md">
         <div className="font-medium">Rolling Metrics</div>
+        {viewBar?.t != null && Number.isFinite(viewTs) && viewTs > 0 && (
+          <div className="text-xs text-muted-foreground">As of {new Date(Number(viewTs)).toLocaleString([], { hour12: false })}</div>
+        )}
         <Table>
           <TableHeader>
             <TableRow>
@@ -663,11 +747,11 @@ export default function RunMonitor({ runId }: { runId: string }) {
           <TableBody>
             <TableRow>
               <TableCell>Sharpe</TableCell>
-              <TableCell className="font-mono text-xs">{formatSigned(Number(viewBar?.rolling?.sharpe ?? 0))}</TableCell>
+              <TableCell className={["font-mono text-xs", colorClass(viewBar?.rolling?.sharpe)].join(" ")}>{formatSigned(Number(viewBar?.rolling?.sharpe ?? 0))}</TableCell>
             </TableRow>
             <TableRow>
               <TableCell>Sortino</TableCell>
-              <TableCell className="font-mono text-xs">{formatSigned(Number(viewBar?.rolling?.sortino ?? 0))}</TableCell>
+              <TableCell className={["font-mono text-xs", colorClass(viewBar?.rolling?.sortino)].join(" ")}>{formatSigned(Number(viewBar?.rolling?.sortino ?? 0))}</TableCell>
             </TableRow>
             <TableRow>
               <TableCell>Realized Vol</TableCell>
@@ -682,9 +766,12 @@ export default function RunMonitor({ runId }: { runId: string }) {
       </Card>
 
       {/* Decision path and Orders */}
-      <div className="grid lg:grid-cols-2 gap-6">
-        <Card className="p-4 space-y-2">
+      <div className="grid lg:grid-cols-3 gap-6">
+        <Card className="p-4 space-y-2 min-w-0">
           <div className="font-medium">Decision Path</div>
+          {viewBar?.t != null && Number.isFinite(viewTs) && viewTs > 0 && (
+            <div className="text-xs text-muted-foreground">As of {new Date(Number(viewTs)).toLocaleString([], { hour12: false })}</div>
+          )}
           {viewBar?.risk?.applied && (
             <div className="text-xs text-muted-foreground">
               Applied: {Array.isArray(viewBar.risk.applied) ? viewBar.risk.applied.join(", ") : String(viewBar.risk.applied)}
@@ -695,7 +782,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
               Flags: {viewBar.risk.flags.join(", ")}
             </div>
           )}
-          <div className="max-h-80 overflow-auto">
+          <div className="max-h-80 overflow-auto min-w-0">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -710,10 +797,10 @@ export default function RunMonitor({ runId }: { runId: string }) {
                 {decisionRows.map((r) => (
                   <TableRow key={r.sym}>
                     <TableCell className="font-mono text-xs">{r.sym}</TableCell>
-                    {showRaw && <TableCell className="font-mono text-xs">{r.raw == null ? '' : formatSigned(Number(r.raw))}</TableCell>}
-                    {showReg && <TableCell className="font-mono text-xs">{r.reg == null ? '' : formatSigned(Number(r.reg))}</TableCell>}
-                    {showKV  && <TableCell className="font-mono text-xs">{r.kv  == null ? '' : formatSigned(Number(r.kv))}</TableCell>}
-                    {showCap && <TableCell className="font-mono text-xs">{r.cap == null ? '' : formatSigned(Number(r.cap))}</TableCell>}
+                    {showRaw && <TableCell className={["font-mono text-xs", colorClass(r.raw)].join(" ")}>{r.raw == null ? '' : formatSigned(Number(r.raw))}</TableCell>}
+                    {showReg && <TableCell className={["font-mono text-xs", colorClass(r.reg)].join(" ")}>{r.reg == null ? '' : formatSigned(Number(r.reg))}</TableCell>}
+                    {showKV  && <TableCell className={["font-mono text-xs", colorClass(r.kv)].join(" ")}>{r.kv  == null ? '' : formatSigned(Number(r.kv))}</TableCell>}
+                    {showCap && <TableCell className={["font-mono text-xs", colorClass(r.cap)].join(" ")}>{r.cap == null ? '' : formatSigned(Number(r.cap))}</TableCell>}
                   </TableRow>
                 ))}
               </TableBody>
@@ -721,44 +808,60 @@ export default function RunMonitor({ runId }: { runId: string }) {
           </div>
         </Card>
 
-        <Card className="p-4 space-y-4">
+        <Card className="p-4 space-y-4 lg:col-span-2 min-w-0">
           <div className="font-medium">Orders & Fills</div>
-          <div className="grid md:grid-cols-3 lg:grid-cols-4 gap-4">
-            <div className="max-h-64 overflow-auto">
+          {viewBar?.t != null && Number.isFinite(viewTs) && viewTs > 0 && (
+            <div className="text-xs text-muted-foreground">As of {new Date(Number(viewTs)).toLocaleString([], { hour12: false })}</div>
+          )}
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+            <div className="max-h-64 overflow-auto min-w-0">
               <div className="text-sm font-medium mb-1">Intended</div>
               <Table>
                 <TableHeader><TableRow><TableHead>Sym</TableHead><TableHead>Side</TableHead><TableHead>Qty</TableHead></TableRow></TableHeader>
                 <TableBody>
                   {intended.map((o: any, i: number) => (
-                    <TableRow key={i}><TableCell className="font-mono text-xs">{o?.sym}</TableCell><TableCell className="text-xs">{o?.side}</TableCell><TableCell className="font-mono text-xs">{o?.qty}</TableCell></TableRow>
+                    <TableRow key={i}>
+                      <TableCell className="font-mono text-xs">{o?.sym}</TableCell>
+                      <TableCell className={["text-xs", sideClass(o?.side)].join(" ")}>{o?.side}</TableCell>
+                      <TableCell className={["font-mono text-xs", colorClass(o?.qty)].join(" ")}>{o?.qty}</TableCell>
+                    </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </div>
-            <div className="max-h-64 overflow-auto">
+            <div className="max-h-64 overflow-auto min-w-0">
               <div className="text-sm font-medium mb-1">Sent</div>
               <Table>
                 <TableHeader><TableRow><TableHead>Sym</TableHead><TableHead>Side</TableHead><TableHead>Qty</TableHead></TableRow></TableHeader>
                 <TableBody>
                   {sent.map((o: any, i: number) => (
-                    <TableRow key={i}><TableCell className="font-mono text-xs">{o?.sym}</TableCell><TableCell className="text-xs">{o?.side}</TableCell><TableCell className="font-mono text-xs">{o?.qty}</TableCell></TableRow>
+                    <TableRow key={i}>
+                      <TableCell className="font-mono text-xs">{o?.sym}</TableCell>
+                      <TableCell className={["text-xs", sideClass(o?.side)].join(" ")}>{o?.side}</TableCell>
+                      <TableCell className={["font-mono text-xs", colorClass(o?.qty)].join(" ")}>{o?.qty}</TableCell>
+                    </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </div>
-            <div className="max-h-64 overflow-auto">
+            <div className="max-h-64 overflow-auto min-w-0">
               <div className="text-sm font-medium mb-1">Fills</div>
               <Table>
                 <TableHeader><TableRow><TableHead>Sym</TableHead><TableHead>Qty</TableHead><TableHead>Price</TableHead><TableHead>Fee (bps)</TableHead></TableRow></TableHeader>
                 <TableBody>
                   {fills.map((f: any, i: number) => (
-                    <TableRow key={i}><TableCell className="font-mono text-xs">{f?.sym}</TableCell><TableCell className="font-mono text-xs">{f?.qty}</TableCell><TableCell className="font-mono text-xs">{Number(f?.price).toFixed(4)}</TableCell><TableCell className="font-mono text-xs">{Number(f?.fee_bps ?? 0).toFixed(2)}</TableCell></TableRow>
+                    <TableRow key={i}>
+                      <TableCell className="font-mono text-xs">{f?.sym}</TableCell>
+                      <TableCell className={["font-mono text-xs", colorClass(f?.qty)].join(" ")}>{f?.qty}</TableCell>
+                      <TableCell className="font-mono text-xs">{Number(f?.price).toFixed(4)}</TableCell>
+                      <TableCell className={["font-mono text-xs", Number(f?.fee_bps ?? 0) > 0 ? "text-amber-600" : "text-muted-foreground"].join(" ")}>{Number(f?.fee_bps ?? 0).toFixed(2)}</TableCell>
+                    </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </div>
             {Array.isArray(viewBar?.orders?.rejects) && viewBar.orders.rejects.length > 0 && (
-              <div className="max-h-64 overflow-auto">
+              <div className="max-h-64 overflow-auto min-w-0">
                 <div className="text-sm font-medium mb-1">Rejects</div>
                 <Table>
                   <TableHeader><TableRow><TableHead>Sym</TableHead><TableHead>Side</TableHead><TableHead>Qty</TableHead></TableRow></TableHeader>
