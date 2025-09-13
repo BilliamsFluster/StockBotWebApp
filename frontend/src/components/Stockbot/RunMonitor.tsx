@@ -17,6 +17,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const [bars, setBars] = useState<TelemetryBar[]>([]);
   const [events, setEvents] = useState<TelemetryEvent[]>([]);
   const [jobLog, setJobLog] = useState<string | null>(null);
+  const [viewIndex, setViewIndex] = useState<number>(-1);
   const esBarsRef = useRef<EventSource | null>(null);
   const esEventsRef = useRef<EventSource | null>(null);
 
@@ -66,19 +67,26 @@ export default function RunMonitor({ runId }: { runId: string }) {
   }, [runId]);
 
   // Derived series for charts
+  const parseTime = (t: any): number => {
+    if (t == null) return 0;
+    if (typeof t === "number") return t;
+    const parsed = Date.parse(t);
+    return Number.isNaN(parsed) ? Number(t) || 0 : parsed;
+  };
+
   const pnlSeries = useMemo(() => bars.map((b) => ({
-    t: Date.parse(b?.t || 0),
+    t: parseTime(b?.t),
     cum: Number(b?.pnl?.cum_pct ?? 0), // fraction (0.012 -> 1.2%)
     dd: Number(b?.pnl?.dd_pct ?? 0),   // negative fraction (-0.006 -> -0.6%)
   })), [bars]);
 
   const expoSeries = useMemo(() => bars.map((b) => ({
-    t: Date.parse(b?.t || 0),
+    t: parseTime(b?.t),
     gross: Number(b?.leverage?.gross ?? b?.gross_leverage ?? b?.info?.gross_leverage ?? 0),
   })), [bars]);
 
   const slipTurnSeries = useMemo(() => bars.map((b) => ({
-    t: Date.parse(b?.t || 0),
+    t: parseTime(b?.t),
     slip: Number(b?.slippage_bps?.arrival ?? 0),   // bps
     to: Number(b?.turnover?.bar_pct ?? 0),         // percent number (0..100)
   })), [bars]);
@@ -108,10 +116,12 @@ export default function RunMonitor({ runId }: { runId: string }) {
     return arr.length ? Math.max(...arr) : 1;
   }, [pnlSeries]);
 
+  const viewBar = useMemo(() => (viewIndex >= 0 && viewIndex < bars.length ? bars[viewIndex] : last), [viewIndex, bars, last]);
+
   // Latest weights table (limit to top 8 by |capped|)
   const decisionRows = useMemo(() => {
-    const w = last?.weights || {};
-    const syms: string[] = Array.isArray(last?.symbols) ? last.symbols : [];
+    const w = viewBar?.weights || {};
+    const syms: string[] = Array.isArray(viewBar?.symbols) ? viewBar.symbols : [];
     const raw: number[] | undefined = w?.raw || undefined;
     const reg: number[] | undefined = w?.regime || undefined;
     const kv: number[] | undefined = w?.kelly_vol || undefined;
@@ -124,7 +134,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
       cap: cap ? cap[i] : undefined,
     }));
     return rows.sort((a, b) => Math.abs(b.cap || 0) - Math.abs(a.cap || 0)).slice(0, 8);
-  }, [last]);
+  }, [viewBar]);
 
   const showRaw = useMemo(() => decisionRows.some(r => r.raw != null), [decisionRows]);
   const showReg = useMemo(() => decisionRows.some(r => r.reg != null), [decisionRows]);
@@ -132,11 +142,11 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const showCap = true;
 
   const fills = useMemo(() => {
-    const arr = last?.orders?.fills || [];
+    const arr = viewBar?.orders?.fills || [];
     return Array.isArray(arr) ? arr.slice().reverse().slice(0, 15) : [];
-  }, [last]);
-  const intended = useMemo(() => Array.isArray(last?.orders?.intended) ? last.orders.intended.slice(-15) : [], [last]);
-  const sent = useMemo(() => Array.isArray(last?.orders?.sent) ? last.orders.sent.slice(-15) : [], [last]);
+  }, [viewBar]);
+  const intended = useMemo(() => Array.isArray(viewBar?.orders?.intended) ? viewBar.orders.intended.slice(-15) : [], [viewBar]);
+  const sent = useMemo(() => Array.isArray(viewBar?.orders?.sent) ? viewBar.orders.sent.slice(-15) : [], [viewBar]);
 
   const loadJobLog = async () => {
     try {
@@ -180,6 +190,21 @@ export default function RunMonitor({ runId }: { runId: string }) {
         )}
         <Badge variant="outline">Heartbeat: {(last?.health?.heartbeat_ms ?? 0)} ms</Badge>
         <Badge variant="outline">Status: {last?.health?.status || "OK"}</Badge>
+        <select
+          className="text-xs border rounded p-1 ml-2"
+          value={viewIndex}
+          onChange={(e) => setViewIndex(Number(e.target.value))}
+        >
+          <option value={-1}>Latest</option>
+          {(() => {
+            const start = Math.max(0, bars.length - 50);
+            return bars.slice(start).map((b, i) => (
+              <option key={i} value={start + i}>
+                {new Date(parseTime(b?.t)).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </option>
+            ));
+          })()}
+        </select>
       </Card>
 
       <div className="grid lg:grid-cols-3 gap-6">
@@ -249,19 +274,19 @@ export default function RunMonitor({ runId }: { runId: string }) {
           <TableBody>
             <TableRow>
               <TableCell>Sharpe</TableCell>
-              <TableCell className="font-mono text-xs">{formatSigned(Number(last?.rolling?.sharpe ?? 0))}</TableCell>
+              <TableCell className="font-mono text-xs">{formatSigned(Number(viewBar?.rolling?.sharpe ?? 0))}</TableCell>
             </TableRow>
             <TableRow>
               <TableCell>Sortino</TableCell>
-              <TableCell className="font-mono text-xs">{formatSigned(Number(last?.rolling?.sortino ?? 0))}</TableCell>
+              <TableCell className="font-mono text-xs">{formatSigned(Number(viewBar?.rolling?.sortino ?? 0))}</TableCell>
             </TableRow>
             <TableRow>
               <TableCell>Realized Vol</TableCell>
-              <TableCell className="font-mono text-xs">{formatPct(Number(last?.rolling?.vol_realized ?? 0))}</TableCell>
+              <TableCell className="font-mono text-xs">{formatPct(Number(viewBar?.rolling?.vol_realized ?? 0))}</TableCell>
             </TableRow>
             <TableRow>
               <TableCell>Hit Rate</TableCell>
-              <TableCell className="font-mono text-xs">{formatPct(Number(last?.rolling?.hit_rate ?? 0))}</TableCell>
+              <TableCell className="font-mono text-xs">{formatPct(Number(viewBar?.rolling?.hit_rate ?? 0))}</TableCell>
             </TableRow>
           </TableBody>
         </Table>
@@ -270,15 +295,15 @@ export default function RunMonitor({ runId }: { runId: string }) {
       {/* Decision path and Orders */}
       <div className="grid lg:grid-cols-2 gap-6">
         <Card className="p-4 space-y-2">
-          <div className="font-medium">Decision Path (latest)</div>
-          {last?.risk?.applied && (
+          <div className="font-medium">Decision Path</div>
+          {viewBar?.risk?.applied && (
             <div className="text-xs text-muted-foreground">
-              Applied: {Array.isArray(last.risk.applied) ? last.risk.applied.join(", ") : String(last.risk.applied)}
+              Applied: {Array.isArray(viewBar.risk.applied) ? viewBar.risk.applied.join(", ") : String(viewBar.risk.applied)}
             </div>
           )}
-          {last?.risk?.flags && Array.isArray(last.risk.flags) && last.risk.flags.length > 0 && (
+          {viewBar?.risk?.flags && Array.isArray(viewBar.risk.flags) && viewBar.risk.flags.length > 0 && (
             <div className="text-xs text-red-500">
-              Flags: {last.risk.flags.join(", ")}
+              Flags: {viewBar.risk.flags.join(", ")}
             </div>
           )}
           <div className="max-h-80 overflow-auto">
@@ -308,7 +333,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
         </Card>
 
         <Card className="p-4 space-y-4">
-          <div className="font-medium">Orders & Fills (latest)</div>
+          <div className="font-medium">Orders & Fills</div>
           <div className="grid md:grid-cols-3 lg:grid-cols-4 gap-4">
             <div className="max-h-64 overflow-auto">
               <div className="text-sm font-medium mb-1">Intended</div>
@@ -343,13 +368,13 @@ export default function RunMonitor({ runId }: { runId: string }) {
                 </TableBody>
               </Table>
             </div>
-            {Array.isArray(last?.orders?.rejects) && last.orders.rejects.length > 0 && (
+            {Array.isArray(viewBar?.orders?.rejects) && viewBar.orders.rejects.length > 0 && (
               <div className="max-h-64 overflow-auto">
                 <div className="text-sm font-medium mb-1">Rejects</div>
                 <Table>
                   <TableHeader><TableRow><TableHead>Sym</TableHead><TableHead>Side</TableHead><TableHead>Qty</TableHead></TableRow></TableHeader>
                   <TableBody>
-                    {last.orders.rejects.slice(-15).map((o: any, i: number) => (
+                    {viewBar.orders.rejects.slice(-15).map((o: any, i: number) => (
                       <TableRow key={i}><TableCell className="font-mono text-xs">{o?.sym}</TableCell><TableCell className="text-xs">{o?.side}</TableCell><TableCell className="font-mono text-xs">{o?.qty}</TableCell></TableRow>
                     ))}
                   </TableBody>
@@ -357,20 +382,20 @@ export default function RunMonitor({ runId }: { runId: string }) {
               </div>
             )}
           </div>
-          {last?.costs_bps && (
-            <div className="text-xs text-muted-foreground">Costs: total {Number(last.costs_bps.total ?? 0).toFixed(2)} bps (commission {Number(last.costs_bps.commission ?? 0).toFixed(2)}, spread {Number(last.costs_bps.spread ?? 0).toFixed(2)}, impact {Number(last.costs_bps.impact ?? 0).toFixed(2)})</div>
+          {viewBar?.costs_bps && (
+            <div className="text-xs text-muted-foreground">Costs: total {Number(viewBar.costs_bps.total ?? 0).toFixed(2)} bps (commission {Number(viewBar.costs_bps.commission ?? 0).toFixed(2)}, spread {Number(viewBar.costs_bps.spread ?? 0).toFixed(2)}, impact {Number(viewBar.costs_bps.impact ?? 0).toFixed(2)})</div>
           )}
-          {last?.markouts_bps && (
-            <div className="text-xs text-muted-foreground">Markouts: 1b {Number(last.markouts_bps.m1 ?? 0).toFixed(2)} bps, 5b {Number(last.markouts_bps.m5 ?? 0).toFixed(2)} bps, 15b {Number(last.markouts_bps.m15 ?? 0).toFixed(2)} bps</div>
+          {viewBar?.markouts_bps && (
+            <div className="text-xs text-muted-foreground">Markouts: 1b {Number(viewBar.markouts_bps.m1 ?? 0).toFixed(2)} bps, 5b {Number(viewBar.markouts_bps.m5 ?? 0).toFixed(2)} bps, 15b {Number(viewBar.markouts_bps.m15 ?? 0).toFixed(2)} bps</div>
           )}
-          {last?.participation?.sym_pct && (
+          {viewBar?.participation?.sym_pct && (
             <div className="text-xs text-muted-foreground">
-              Participation: {Object.entries(last.participation.sym_pct).slice(0,3).map(([s,p]) => `${s} ${formatPct(Number(p)/100)}`).join(", ")}
+              Participation: {Object.entries(viewBar.participation.sym_pct).slice(0,3).map(([s,p]) => `${s} ${formatPct(Number(p)/100)}`).join(", ")}
             </div>
           )}
-          {last?.latency_ms && (
+          {viewBar?.latency_ms && (
             <div className="text-xs text-muted-foreground">
-              Latency: {Number(last.latency_ms.data_to_decision ?? 0).toFixed(0)}ms d→d, {Number(last.latency_ms.decision_to_send ?? 0).toFixed(0)}ms d→s{last.latency_ms.send_to_fill != null ? `, ${Number(last.latency_ms.send_to_fill).toFixed(0)}ms s→f` : ""}
+              Latency: {Number(viewBar.latency_ms.data_to_decision ?? 0).toFixed(0)}ms d→d, {Number(viewBar.latency_ms.decision_to_send ?? 0).toFixed(0)}ms d→s{viewBar.latency_ms.send_to_fill != null ? `, ${Number(viewBar.latency_ms.send_to_fill).toFixed(0)}ms s→f` : ""}
             </div>
           )}
         </Card>
@@ -390,9 +415,9 @@ export default function RunMonitor({ runId }: { runId: string }) {
             <TableBody>
               {events.slice(-100).map((e, i) => (
                 <TableRow key={i}>
-                  <TableCell className="text-xs">{e?.at ? new Date(Number(e.at)).toLocaleTimeString() : ""}</TableCell>
+                  <TableCell className="text-xs">{e?.at ? new Date(parseTime(e.at)).toLocaleTimeString() : ""}</TableCell>
                   <TableCell className="font-mono text-xs">{e?.event || e?.type || ""}</TableCell>
-                  <TableCell className="font-mono text-xs">{e?.details ? JSON.stringify(e.details) : ""}</TableCell>
+                  <TableCell className="font-mono text-xs">{e?.details && Object.keys(e.details).length ? JSON.stringify(e.details) : JSON.stringify(e)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -402,11 +427,11 @@ export default function RunMonitor({ runId }: { runId: string }) {
 
       <Card className="p-4 space-y-1">
         <div className="font-medium">Metadata</div>
-        <div className="text-xs font-mono">Model SHA: {last?.model?.git_sha || "-"}</div>
-        <div className="text-xs font-mono">Data Manifest: {last?.data?.manifest_hash || "-"}</div>
-        <div className="text-xs font-mono">Obs Schema: {last?.schema?.obs || "-"}</div>
-        {Array.isArray(last?.errors) && last.errors.length > 0 && (
-          <div className="text-xs text-red-500">Errors: {last.errors.join(", ")}</div>
+        <div className="text-xs font-mono">Model SHA: {viewBar?.model?.git_sha || "-"}</div>
+        <div className="text-xs font-mono">Data Manifest: {viewBar?.data?.manifest_hash || "-"}</div>
+        <div className="text-xs font-mono">Obs Schema: {viewBar?.schema?.obs || "-"}</div>
+        {Array.isArray(viewBar?.errors) && viewBar.errors.length > 0 && (
+          <div className="text-xs text-red-500">Errors: {viewBar.errors.join(", ")}</div>
         )}
       </Card>
 
