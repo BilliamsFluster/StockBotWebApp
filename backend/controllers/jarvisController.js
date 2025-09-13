@@ -40,6 +40,28 @@ export const handleJarvisPrompt = async (req, res) => {
   }
 };
 
+// Simplified Jarvis prompt that does not require Schwab credentials
+export const handleJarvisPromptLite = async (req, res) => {
+  const { prompt, model, format } = req.body;
+  try { log.info({ prompt, model, format }, "Jarvis prompt lite"); } catch {}
+
+  if (!prompt || !model || !format) {
+    return res.status(400).json({ error: "Missing required fields." });
+  }
+
+  try {
+    const response = await axios.post(`${STOCKBOT_URL}/api/jarvis/chat/ask`, {
+      prompt,
+      model,
+      format,
+    });
+    res.json({ response: response.data.response });
+  } catch (error) {
+    console.error("🔴 Error forwarding to Jarvis FastAPI:", error.message);
+    res.status(500).json({ error: "Failed to get response from Jarvis." });
+  }
+};
+
 // Start voice assistant (client-driven)
 export const startVoiceAssistant = async (req, res) => {
   const { model, format } = req.body;
