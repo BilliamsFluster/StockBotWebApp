@@ -5,9 +5,9 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
-import { buildUrl } from "@/api/client";
+import api, { buildUrl } from "@/api/client";
 import { formatPct, formatSigned } from "./lib/formats";
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, AreaChart, Area } from "recharts";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, ReferenceLine, ReferenceDot } from "recharts";
 
 type TelemetryBar = any;
 type TelemetryEvent = any;
@@ -19,12 +19,85 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const [jobLog, setJobLog] = useState<string | null>(null);
   const [audit, setAudit] = useState<any[]>([]);
   const [viewIndex, setViewIndex] = useState<number>(-1);
+  const [runStatus, setRunStatus] = useState<{ status?: string; type?: string } | null>(null);
+  const [updateMs, setUpdateMs] = useState<number>(1000);
+  const [showSeries, setShowSeries] = useState<{ pnl: boolean; dd: boolean; gross: boolean; slip: boolean; to: boolean }>({
+    pnl: true,
+    dd: true,
+    gross: true,
+    slip: true,
+    to: true,
+  });
+  // Track hover position (per-chart) so legends show hovered values
+  const [hoverT, setHoverT] = useState<{ pnl?: number; expo?: number; slip?: number }>({});
+  const [hoverPnl, setHoverPnl] = useState<{ x?: number; cum?: number; dd?: number }>({});
+  const [hoverExpo, setHoverExpo] = useState<{ x?: number; gross?: number }>({});
+  const [hoverSlip, setHoverSlip] = useState<{ x?: number; slip?: number; to?: number }>({});
   const esBarsRef = useRef<EventSource | null>(null);
   const esEventsRef = useRef<EventSource | null>(null);
+  const esStatusRef = useRef<EventSource | null>(null);
+  const statusPollRef = useRef<any>(null);
+  const barsBufRef = useRef<TelemetryBar[]>([]);
+  const eventsBufRef = useRef<TelemetryEvent[]>([]);
+  const lastRef = useRef<TelemetryBar | null>(null);
+  const telemFallbackRef = useRef<boolean>(false);
+  const eventsFallbackRef = useRef<boolean>(false);
+  const telemSeenRef = useRef<number>(0);
+  const eventsSeenRef = useRef<number>(0);
 
-  // Connect SSE for bars
+  // Subscribe to run status; close live streams when terminal
   useEffect(() => {
     if (!runId) return;
+    let alive = true;
+    (async () => {
+      try { const { data } = await api.get(`/stockbot/runs/${runId}`); if (alive) setRunStatus({ status: data?.status, type: data?.type }); } catch {}
+    })();
+    try { esStatusRef.current?.close(); } catch {}
+    if (statusPollRef.current) { clearInterval(statusPollRef.current); statusPollRef.current = null; }
+    try {
+      const url = buildUrl(`/api/stockbot/runs/${runId}/stream`);
+      const es = new EventSource(url, { withCredentials: true });
+      esStatusRef.current = es;
+      es.onmessage = (ev) => {
+        try {
+          const st = JSON.parse(ev.data || '{}');
+          setRunStatus({ status: st?.status, type: st?.type });
+          const s = String(st?.status || '').toUpperCase();
+          if (s === 'SUCCEEDED' || s === 'FAILED' || s === 'CANCELLED') {
+            try { esBarsRef.current?.close(); } catch {}
+            try { esEventsRef.current?.close(); } catch {}
+          }
+        } catch {}
+      };
+      es.onerror = () => {
+        try { es.close(); } catch {}
+        esStatusRef.current = null;
+        statusPollRef.current = setInterval(async () => {
+          try {
+            const { data } = await api.get(`/stockbot/runs/${runId}`);
+            setRunStatus({ status: data?.status, type: data?.type });
+            const s = String(data?.status || '').toUpperCase();
+            if (s === 'SUCCEEDED' || s === 'FAILED' || s === 'CANCELLED') {
+              try { esBarsRef.current?.close(); } catch {}
+              try { esEventsRef.current?.close(); } catch {}
+              clearInterval(statusPollRef.current); statusPollRef.current = null;
+            }
+          } catch {}
+        }, 4000);
+      };
+    } catch {}
+    return () => { alive = false; try { esStatusRef.current?.close(); } catch {}; if (statusPollRef.current) { clearInterval(statusPollRef.current); statusPollRef.current = null; } };
+  }, [runId]);
+
+  const isTerminal = (() => {
+    const s = (runStatus?.status || '').toUpperCase();
+    return s === 'SUCCEEDED' || s === 'FAILED' || s === 'CANCELLED';
+  })();
+
+  // Connect SSE for bars (buffered; disabled when terminal)
+  useEffect(() => {
+    if (!runId) return;
+    if (isTerminal) return;
     try { esBarsRef.current?.close(); } catch {}
     try { esEventsRef.current?.close(); } catch {}
     const u = buildUrl(`/api/stockbot/runs/${runId}/telemetry?from_start=true`);
@@ -33,8 +106,8 @@ export default function RunMonitor({ runId }: { runId: string }) {
     es.addEventListener("bar", (ev: any) => {
       try {
         const j = JSON.parse(ev.data);
-        setLast(j);
-        setBars((prev) => (prev.length > 2000 ? [...prev.slice(-1500), j] : [...prev, j]));
+        lastRef.current = j;
+        barsBufRef.current.push(j);
       } catch {}
     });
     // Fallback: some proxies strip event names, use default message handler
@@ -42,30 +115,140 @@ export default function RunMonitor({ runId }: { runId: string }) {
       try {
         const j = JSON.parse((ev as MessageEvent).data as any);
         if (j && (j.t || j.pnl || j.symbols)) {
-          setLast(j);
-          setBars((prev) => (prev.length > 2000 ? [...prev.slice(-1500), j] : [...prev, j]));
+          lastRef.current = j;
+          barsBufRef.current.push(j);
         }
       } catch {}
     };
     es.addEventListener("init", () => {});
-    es.onerror = () => { try { es.close(); } catch {}; };
+    es.onerror = () => { try { es.close(); } catch {}; telemFallbackRef.current = true; };
 
     const u2 = buildUrl(`/api/stockbot/runs/${runId}/events?from_start=true`);
     const es2 = new EventSource(u2, { withCredentials: true });
     esEventsRef.current = es2;
     es2.addEventListener("event", (ev: any) => {
-      try { setEvents((prev) => [...prev, JSON.parse(ev.data)]); } catch {}
+      try { eventsBufRef.current.push(JSON.parse(ev.data)); } catch {}
     });
     es2.onmessage = (ev) => {
       try {
         const j = JSON.parse((ev as MessageEvent).data as any);
-        if (j && (j.event || j.type)) setEvents((prev) => [...prev, j]);
+        if (j && (j.event || j.type)) eventsBufRef.current.push(j);
       } catch {}
     };
-    es2.onerror = () => { try { es2.close(); } catch {}; };
+    es2.onerror = () => { try { es2.close(); } catch {}; eventsFallbackRef.current = true; };
 
     return () => { try { es.close(); } catch {}; try { es2.close(); } catch {}; };
-  }, [runId]);
+  }, [runId, isTerminal]);
+
+  // Flush buffers at a controlled cadence
+  useEffect(() => {
+    if (!runId) return;
+    let t: any;
+    const flush = () => {
+      try {
+        const b = barsBufRef.current;
+        const e = eventsBufRef.current;
+        if (b.length) {
+          setBars((prev) => {
+            const merged = prev.concat(b);
+            barsBufRef.current = [];
+            return merged.length > 2000 ? merged.slice(-1500) : merged;
+          });
+          setLast(lastRef.current);
+        }
+        if (e.length) {
+          setEvents((prev) => {
+            const merged = prev.concat(e);
+            eventsBufRef.current = [];
+            return merged.length > 500 ? merged.slice(-400) : merged;
+          });
+        }
+      } finally {
+        t = setTimeout(flush, Math.max(200, updateMs));
+      }
+    };
+    t = setTimeout(flush, Math.max(200, updateMs));
+    return () => { if (t) clearTimeout(t); };
+  }, [runId, updateMs]);
+
+  // When the run is terminal, load the complete historical data once
+  useEffect(() => {
+    if (!runId) return;
+    if (!isTerminal) return;
+    (async () => {
+      try {
+        // Load full telemetry history
+        const telemUrl = buildUrl(`/api/stockbot/runs/${runId}/files/live_telemetry`);
+        const resp = await fetch(telemUrl, { credentials: 'include' });
+        if (resp.ok) {
+          const txt = await resp.text();
+          const lines = txt.split('\n').filter(Boolean);
+          const allBars: any[] = [];
+          for (const ln of lines) {
+            try { allBars.push(JSON.parse(ln)); } catch {}
+          }
+          if (allBars.length) {
+            setBars(allBars);
+            setLast(allBars[allBars.length - 1]);
+          }
+        }
+      } catch {}
+      try {
+        // Load full events history
+        const evUrl = buildUrl(`/api/stockbot/runs/${runId}/files/live_events`);
+        const respE = await fetch(evUrl, { credentials: 'include' });
+        if (respE.ok) {
+          const txt = await respE.text();
+          const lines = txt.split('\n').filter(Boolean);
+          const allEvents: any[] = [];
+          for (const ln of lines) {
+            try { allEvents.push(JSON.parse(ln)); } catch {}
+          }
+          if (allEvents.length) setEvents(allEvents);
+        }
+      } catch {}
+    })();
+  }, [runId, isTerminal]);
+
+  // Fallback polling when SSE fails: read last lines of telemetry/events files
+  useEffect(() => {
+    if (!runId) return;
+    let timer: any;
+    const poll = async () => {
+      try {
+        if (telemFallbackRef.current && !isTerminal) {
+          const u = buildUrl(`/api/stockbot/runs/${runId}/files/live_telemetry`);
+          const resp = await fetch(u, { credentials: 'include' });
+          if (resp.ok) {
+            const txt = await resp.text();
+            const lines = txt.split('\n').filter(Boolean);
+            const start = telemSeenRef.current;
+            for (let i = start; i < lines.length; i++) {
+              try { const j = JSON.parse(lines[i]); lastRef.current = j; barsBufRef.current.push(j); } catch {}
+            }
+            telemSeenRef.current = lines.length;
+          }
+        }
+        if (eventsFallbackRef.current && !isTerminal) {
+          const ue = buildUrl(`/api/stockbot/runs/${runId}/files/live_events`);
+          const respE = await fetch(ue, { credentials: 'include' });
+          if (respE.ok) {
+            const txt = await respE.text();
+            const lines = txt.split('\n').filter(Boolean);
+            const start = eventsSeenRef.current;
+            for (let i = start; i < lines.length; i++) {
+              try { const ev = JSON.parse(lines[i]); eventsBufRef.current.push(ev); } catch {}
+            }
+            eventsSeenRef.current = lines.length;
+          }
+        }
+      } finally {
+        timer = setTimeout(poll, Math.max(500, updateMs));
+      }
+    };
+    poll();
+    return () => { if (timer) clearTimeout(timer); };
+  }, [runId, isTerminal, updateMs]);
 
   // Periodically fetch audit log
   useEffect(() => {
@@ -91,7 +274,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
     return () => { if (timer) clearTimeout(timer); };
   }, [runId]);
 
-  // Derived series for charts
+  // Derived series for charts (cleaned, monotonic by time)
   const parseTime = (t: any): number => {
     if (t == null) return 0;
     if (typeof t === "number") return t;
@@ -99,22 +282,58 @@ export default function RunMonitor({ runId }: { runId: string }) {
     return Number.isNaN(parsed) ? Number(t) || 0 : parsed;
   };
 
-  const pnlSeries = useMemo(() => bars.map((b) => ({
-    t: parseTime(b?.t),
-    cum: Number(b?.pnl?.cum_pct ?? 0), // fraction (0.012 -> 1.2%)
-    dd: Number(b?.pnl?.dd_pct ?? 0),   // negative fraction (-0.006 -> -0.6%)
-  })), [bars]);
+  const cleanMonotonic = <T extends { t: number }>(arr: T[]): T[] => {
+    // sort ascending by t and drop non-finite/duplicates/backwards
+    const a = arr
+      .filter((p) => Number.isFinite(p.t))
+      .sort((x, y) => x.t - y.t);
+    const out: T[] = [];
+    let lastT = -Infinity;
+    for (const p of a) {
+      if (!Number.isFinite(p.t)) continue;
+      if (p.t <= lastT) continue;
+      out.push(p);
+      lastT = p.t;
+    }
+    return out;
+  };
 
-  const expoSeries = useMemo(() => bars.map((b) => ({
-    t: parseTime(b?.t),
-    gross: Number(b?.leverage?.gross ?? b?.gross_leverage ?? b?.info?.gross_leverage ?? 0),
-  })), [bars]);
+  const pnlSeries = useMemo(() => {
+    const raw = bars.map((b) => ({
+      t: parseTime(b?.t),
+      cum: Number(b?.pnl?.cum_pct ?? 0),
+      dd: Number(b?.pnl?.dd_pct ?? 0),
+    }));
+    // clamp extreme values to avoid axis blowups
+    for (const p of raw) {
+      if (!Number.isFinite(p.cum)) p.cum = 0;
+      if (!Number.isFinite(p.dd)) p.dd = 0;
+      if (p.dd > 1) p.dd = 1; if (p.dd < -1) p.dd = -1;
+    }
+    return cleanMonotonic(raw);
+  }, [bars]);
 
-  const slipTurnSeries = useMemo(() => bars.map((b) => ({
-    t: parseTime(b?.t),
-    slip: Number(b?.slippage_bps?.arrival ?? 0),   // bps
-    to: Number(b?.turnover?.bar_pct ?? 0),         // percent number (0..100)
-  })), [bars]);
+  const expoSeries = useMemo(() => {
+    const raw = bars.map((b) => ({
+      t: parseTime(b?.t),
+      gross: Number(b?.leverage?.gross ?? b?.gross_leverage ?? b?.info?.gross_leverage ?? 0),
+    }));
+    for (const p of raw) if (!Number.isFinite(p.gross)) p.gross = 0;
+    return cleanMonotonic(raw);
+  }, [bars]);
+
+  const slipTurnSeries = useMemo(() => {
+    const raw = bars.map((b) => ({
+      t: parseTime(b?.t),
+      slip: Number(b?.slippage_bps?.arrival ?? 0),
+      to: Number(b?.turnover?.bar_pct ?? 0),
+    }));
+    for (const p of raw) {
+      if (!Number.isFinite(p.slip)) p.slip = 0;
+      if (!Number.isFinite(p.to)) p.to = 0;
+    }
+    return cleanMonotonic(raw);
+  }, [bars]);
 
   // Axis domains with padding
   const domainOf = (vals: number[], padFrac = 0.05, forceZeroTop = false): [number, number] => {
@@ -142,6 +361,48 @@ export default function RunMonitor({ runId }: { runId: string }) {
   }, [pnlSeries]);
 
   const viewBar = useMemo(() => (viewIndex >= 0 && viewIndex < bars.length ? bars[viewIndex] : last), [viewIndex, bars, last]);
+  // Decimate series for readability (bumped density)
+  const decimate = <T,>(arr: T[], maxPoints = 3000): T[] => {
+    const n = arr.length; if (n <= maxPoints) return arr;
+    const step = Math.ceil(n / maxPoints); const out: T[] = [];
+    for (let i = 0; i < n; i += step) out.push(arr[i]);
+    if (out[out.length - 1] !== arr[n - 1]) out.push(arr[n - 1]);
+    return out;
+  };
+  const pnlD = useMemo(() => decimate(pnlSeries, 3000), [pnlSeries]);
+  const expoD = useMemo(() => decimate(expoSeries, 3000), [expoSeries]);
+  const slipD = useMemo(() => decimate(slipTurnSeries, 3000), [slipTurnSeries]);
+  // Nearest point helpers for legends at hovered x
+  const nearestIndex = (arr: Array<{ t: number }>, t?: number): number => {
+    if (!arr.length) return -1;
+    if (t == null || !Number.isFinite(t)) return arr.length - 1;
+    let lo = 0, hi = arr.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (arr[mid].t < t) lo = mid + 1; else hi = mid;
+    }
+    const i = lo;
+    const prev = Math.max(0, i - 1);
+    return Math.abs(arr[i].t - t) < Math.abs(arr[prev].t - t) ? i : prev;
+  };
+  const pnlLegend = useMemo(() => {
+    if (hoverPnl.x != null) return { cum: Number(hoverPnl.cum ?? 0), dd: Number(hoverPnl.dd ?? 0) };
+    const i = nearestIndex(pnlSeries, hoverT.pnl);
+    const p = i >= 0 ? pnlSeries[i] : undefined;
+    return { cum: Number(p?.cum ?? 0), dd: Number(p?.dd ?? 0) };
+  }, [pnlSeries, hoverT.pnl, hoverPnl]);
+  const expoLegend = useMemo(() => {
+    if (hoverExpo.x != null) return { gross: Number(hoverExpo.gross ?? 0) };
+    const i = nearestIndex(expoSeries, hoverT.expo);
+    const e = i >= 0 ? expoSeries[i] : undefined;
+    return { gross: Number(e?.gross ?? 0) };
+  }, [expoSeries, hoverT.expo, hoverExpo]);
+  const slipLegend = useMemo(() => {
+    if (hoverSlip.x != null) return { slip: Number(hoverSlip.slip ?? 0), to: Number(hoverSlip.to ?? 0) };
+    const i = nearestIndex(slipTurnSeries, hoverT.slip);
+    const s = i >= 0 ? slipTurnSeries[i] : undefined;
+    return { slip: Number(s?.slip ?? 0), to: Number(s?.to ?? 0) };
+  }, [slipTurnSeries, hoverT.slip, hoverSlip]);
 
   // Latest weights table (limit to top 8 by |capped|)
   const decisionRows = useMemo(() => {
@@ -230,22 +491,63 @@ export default function RunMonitor({ runId }: { runId: string }) {
             ));
           })()}
         </select>
+        <div className="flex items-center gap-2 ml-2">
+          <span className="text-xs text-muted-foreground">Update:</span>
+          <select
+            className="text-xs border rounded p-1"
+            value={updateMs}
+            onChange={(e) => setUpdateMs(Number(e.target.value))}
+          >
+            <option value={250}>High</option>
+            <option value={1000}>Normal</option>
+            <option value={3000}>Low</option>
+          </select>
+        </div>
       </Card>
 
       <div className="grid lg:grid-cols-3 gap-6">
         {/* Cum P&L + Drawdown */}
         <Card className="p-4 space-y-2 lg:col-span-1">
           <div className="font-medium">Cum P&L and Drawdown</div>
+          <div className="flex items-center gap-3 text-xs">
+            <span className="inline-flex items-center gap-1 cursor-pointer" onClick={() => setShowSeries(s=>({...s,pnl:!s.pnl}))}>
+              <span className="w-3 h-3 rounded" style={{background:'#2563eb'}} />
+              <span>PnL</span>
+              <span className="text-muted-foreground">{formatPct(pnlLegend.cum)}</span>
+            </span>
+            <span className="inline-flex items-center gap-1 cursor-pointer" onClick={() => setShowSeries(s=>({...s,dd:!s.dd}))}>
+              <span className="w-3 h-3 rounded" style={{background:'#ef4444'}} />
+              <span>DD</span>
+              <span className="text-muted-foreground">{formatPct(pnlLegend.dd)}</span>
+            </span>
+          </div>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={pnlSeries}>
+              <LineChart data={pnlD}
+                onMouseMove={(st:any)=>{
+                  if (st && st.activeLabel != null) {
+                    setHoverT(h=>({...h, pnl: Number(st.activeLabel)}));
+                    const ap = Array.isArray(st.activePayload) ? st.activePayload : [];
+                    const cum = ap.find((p:any)=>p?.dataKey==='cum')?.value;
+                    const dd  = ap.find((p:any)=>p?.dataKey==='dd')?.value;
+                    setHoverPnl({ x: Number(st.activeLabel), cum: Number(cum ?? 0), dd: Number(dd ?? 0) });
+                  }
+                }}
+                onMouseLeave={()=> { setHoverT(h=>({...h, pnl: undefined})); setHoverPnl({}); }}
+              >
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleString([], { hour12: false, month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })} />
                 <YAxis yAxisId="left" domain={pnlCumDomain as any} tickFormatter={(v) => formatPct(Number(v))} />
                 <YAxis yAxisId="right" orientation="right" domain={pnlDdDomain as any} tickFormatter={(v) => formatPct(Number(v))} />
-                <RTooltip formatter={(v: any, n: any) => n === 'dd' ? formatPct(Number(v)) : formatSigned(Number(v))} />
-                <Line yAxisId="left" type="monotone" dataKey="cum" stroke="#2563eb" dot={false} isAnimationActive={false} name="Cum P&L (%)" />
-                <Line yAxisId="right" type="monotone" dataKey="dd" stroke="#ef4444" dot={false} isAnimationActive={false} name="Drawdown" />
+                {hoverPnl.x != null && (
+                  <>
+                    <ReferenceLine x={hoverPnl.x} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
+                    {showSeries.pnl && (<ReferenceDot x={hoverPnl.x} yAxisId="left" y={hoverPnl.cum} r={5} fill="#2563eb" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
+                    {showSeries.dd && (<ReferenceDot x={hoverPnl.x} yAxisId="right" y={hoverPnl.dd} r={5} fill="#ef4444" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
+                  </>
+                )}
+                {showSeries.pnl && <Line yAxisId="left" type="monotone" dataKey="cum" stroke="#2563eb" strokeWidth={1.2} strokeOpacity={0.9} dot={false} isAnimationActive={false} name="Cum P&L (%)" />}
+                {showSeries.dd && <Line yAxisId="right" type="monotone" dataKey="dd" stroke="#ef4444" strokeWidth={1.2} strokeOpacity={0.9} dot={false} isAnimationActive={false} name="Drawdown" />}
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -254,14 +556,36 @@ export default function RunMonitor({ runId }: { runId: string }) {
         {/* Gross Exposure */}
         <Card className="p-4 space-y-2 lg:col-span-1">
           <div className="font-medium">Gross Exposure</div>
+          <div className="flex items-center gap-3 text-xs">
+            <span className="inline-flex items-center gap-1 cursor-pointer" onClick={() => setShowSeries(s=>({...s,gross:!s.gross}))}>
+              <span className="w-3 h-3 rounded" style={{background:'#16a34a'}} />
+              <span>Gross</span>
+              <span className="text-muted-foreground">{formatSigned(expoLegend.gross)}</span>
+            </span>
+          </div>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={expoSeries}>
+              <LineChart data={expoD}
+                onMouseMove={(st:any)=>{
+                  if (st && st.activeLabel != null) {
+                    setHoverT(h=>({...h, expo: Number(st.activeLabel)}));
+                    const ap = Array.isArray(st.activePayload) ? st.activePayload : [];
+                    const g = ap.find((p:any)=>p?.dataKey==='gross')?.value;
+                    setHoverExpo({ x: Number(st.activeLabel), gross: Number(g ?? 0) });
+                  }
+                }}
+                onMouseLeave={()=> { setHoverT(h=>({...h, expo: undefined})); setHoverExpo({}); }}
+              >
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleString([], { hour12: false, month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })} />
                 <YAxis domain={expoDomain as any} tickFormatter={(v) => formatSigned(Number(v))} />
-                <RTooltip formatter={(v: any) => formatSigned(Number(v))} />
-                <Line type="monotone" dataKey="gross" stroke="#16a34a" dot={false} isAnimationActive={false} name="Gross Lev" />
+                {hoverExpo.x != null && (
+                  <>
+                    <ReferenceLine x={hoverExpo.x} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
+                    {showSeries.gross && (<ReferenceDot x={hoverExpo.x} y={hoverExpo.gross} r={5} fill="#16a34a" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
+                  </>
+                )}
+                {showSeries.gross && <Line type="monotone" dataKey="gross" stroke="#16a34a" strokeWidth={1.2} strokeOpacity={0.9} dot={false} isAnimationActive={false} name="Gross Lev" />}
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -270,16 +594,45 @@ export default function RunMonitor({ runId }: { runId: string }) {
         {/* Slippage vs Turnover */}
         <Card className="p-4 space-y-2 lg:col-span-1">
           <div className="font-medium">Slippage and Turnover</div>
+          <div className="flex items-center gap-3 text-xs">
+            <span className="inline-flex items-center gap-1 cursor-pointer" onClick={() => setShowSeries(s=>({...s,slip:!s.slip}))}>
+              <span className="w-3 h-3 rounded" style={{background:'#a855f7'}} />
+              <span>Slip</span>
+              <span className="text-muted-foreground">{`${slipLegend.slip.toFixed(1)} bps`}</span>
+            </span>
+            <span className="inline-flex items-center gap-1 cursor-pointer" onClick={() => setShowSeries(s=>({...s,to:!s.to}))}>
+              <span className="w-3 h-3 rounded" style={{background:'#f59e0b'}} />
+              <span>Turnover</span>
+              <span className="text-muted-foreground">{formatPct(slipLegend.to/100)}</span>
+            </span>
+          </div>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={slipTurnSeries}>
+              <LineChart data={slipD}
+                onMouseMove={(st:any)=>{
+                  if (st && st.activeLabel != null) {
+                    setHoverT(h=>({...h, slip: Number(st.activeLabel)}));
+                    const ap = Array.isArray(st.activePayload) ? st.activePayload : [];
+                    const s = ap.find((p:any)=>p?.dataKey==='slip')?.value;
+                    const to = ap.find((p:any)=>p?.dataKey==='to')?.value;
+                    setHoverSlip({ x: Number(st.activeLabel), slip: Number(s ?? 0), to: Number(to ?? 0) });
+                  }
+                }}
+                onMouseLeave={()=> { setHoverT(h=>({...h, slip: undefined})); setHoverSlip({}); }}
+              >
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleString([], { hour12: false, month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })} />
                 <YAxis yAxisId="left" domain={slipDomain as any} tickFormatter={(v) => `${Number(v).toFixed(1)} bps`} />
                 <YAxis yAxisId="right" orientation="right" domain={toDomain as any} tickFormatter={(v) => formatPct(Number(v)/100)} />
-                <RTooltip labelFormatter={(l: any) => new Date(Number(l)).toLocaleString([], { hour12: false, month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })} />
-                <Line yAxisId="left" type="monotone" dataKey="slip" stroke="#a855f7" dot={false} isAnimationActive={false} name="Slippage (bps)" />
-                <Line yAxisId="right" type="monotone" dataKey="to" stroke="#f59e0b" dot={false} isAnimationActive={false} name="Turnover (%)" />
+                {hoverSlip.x != null && (
+                  <>
+                    <ReferenceLine x={hoverSlip.x} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
+                    {showSeries.slip && (<ReferenceDot x={hoverSlip.x} yAxisId="left" y={hoverSlip.slip} r={5} fill="#a855f7" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
+                    {showSeries.to && (<ReferenceDot x={hoverSlip.x} yAxisId="right" y={hoverSlip.to} r={5} fill="#f59e0b" stroke="#111827" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
+                  </>
+                )}
+                {showSeries.slip && <Line yAxisId="left" type="monotone" dataKey="slip" stroke="#a855f7" strokeWidth={1.2} strokeOpacity={0.85} dot={false} isAnimationActive={false} name="Slippage (bps)" />}
+                {showSeries.to && <Line yAxisId="right" type="monotone" dataKey="to" stroke="#f59e0b" strokeWidth={1.2} strokeOpacity={0.85} dot={false} isAnimationActive={false} name="Turnover (%)" />}
               </LineChart>
             </ResponsiveContainer>
           </div>
