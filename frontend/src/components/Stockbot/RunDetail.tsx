@@ -32,14 +32,16 @@ import {
   Tooltip as RechartsTooltip,
   CartesianGrid,
   ResponsiveContainer,
-  AreaChart,
-  Area,
-  BarChart,
-  Bar,
 } from "recharts";
 
-type EquityRow = { ts: number; equity: number };
-type DrawdownRow = { ts: number; dd: number };
+type EquityRow = {
+  ts: number;
+  equity: number;
+  dd?: number;
+  gross?: number;
+  slip?: number;
+  to?: number;
+};
 type TradeRow = {
   symbol?: string;
   side?: string;
@@ -60,7 +62,7 @@ export default function RunDetail() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [summary, setSummary] = useState<any | null>(null);
   const [equity, setEquity] = useState<EquityRow[]>([]);
-  const [drawdown, setDrawdown] = useState<DrawdownRow[]>([]);
+  const [activity, setActivity] = useState<Array<{ ts: number; gross?: number; slip?: number; to?: number }>>([]);
   const [trades, setTrades] = useState<TradeRow[]>([]);
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [rolling, setRolling] = useState<Array<{ ts: number; roll_sharpe_63?: number; roll_vol_63?: number; roll_maxdd_252?: number }>>([]);
@@ -72,7 +74,7 @@ export default function RunDetail() {
     setMetrics(null);
     setSummary(null);
     setEquity([]);
-    setDrawdown([]);
+    setActivity([]);
     setTrades([]);
     setOrders([]);
     setRolling([]);
@@ -154,22 +156,35 @@ export default function RunDetail() {
 
           if (kind === "equity") {
             const norm: EquityRow[] = rows
-              .map((r: any) => ({ ts: toEpoch(r.ts)!, equity: toNum(r.equity)! }))
+              .map((r: any) => ({
+                ts: toEpoch(r.ts)!,
+                equity: toNum(r.equity)!,
+                dd: toNum(r.dd ?? r.drawdown),
+                gross: toNum(r.gross ?? r.gross_exposure ?? r.gross_leverage),
+                slip: toNum(r.slippage ?? r.slippage_bps),
+                to: toNum(r.turnover ?? r.to),
+              }))
               .filter(r => r.ts != null && r.equity != null)
               .sort((a, b) => a.ts - b.ts);
-            nextEquity = norm;
 
             // Drawdown normalization to negative-down values in fraction
-            let dd = drawdownFromEquity(norm as any).map((d: any) => ({
-              ts: toEpoch(d.ts)!, dd: Number(d.dd),
-            })) as DrawdownRow[];
+            let dd = drawdownFromEquity(norm.map(({ ts, equity }) => ({ ts, equity })) as any).map((d: any) => ({
+              ts: toEpoch(d.ts)!,
+              dd: Number(d.dd),
+            }));
             dd = dd.filter(d => d.ts != null && Number.isFinite(d.dd));
             if (dd.length) {
               const maxAbs = Math.max(...dd.map(d => Math.abs(d.dd)));
               const scale = maxAbs > 1.5 ? 1 / 100 : 1; // if looks like percent
               dd = dd.map(d => ({ ts: d.ts, dd: -Math.abs(d.dd * scale) }));
+              for (let i = 0; i < norm.length && i < dd.length; i++) norm[i].dd = dd[i].dd;
             }
-            setDrawdown(dd);
+
+            nextEquity = norm;
+            const act = norm
+              .map(r => ({ ts: r.ts, gross: r.gross, slip: r.slip, to: r.to }))
+              .filter(a => Number.isFinite(a.gross) || Number.isFinite(a.slip) || Number.isFinite(a.to));
+            setActivity(act);
           } else if (kind === "trades") {
             nextTrades = rows.map((r: any) => ({
               symbol: r.symbol,
@@ -200,13 +215,24 @@ export default function RunDetail() {
             const header = Object.keys(rows?.[0] ?? {}).map(s => s.toLowerCase());
             if (header.includes("equity") && header.includes("ts")) {
               const norm: EquityRow[] = rows
-                .map((r: any) => ({ ts: toEpoch(r.ts)!, equity: toNum(r.equity)! }))
+                .map((r: any) => ({
+                  ts: toEpoch(r.ts)!,
+                  equity: toNum(r.equity)!,
+                  dd: toNum(r.dd ?? r.drawdown),
+                  gross: toNum(r.gross ?? r.gross_exposure ?? r.gross_leverage),
+                  slip: toNum(r.slippage ?? r.slippage_bps),
+                  to: toNum(r.turnover ?? r.to),
+                }))
                 .filter(r => r.ts != null && r.equity != null)
                 .sort((a, b) => a.ts - b.ts);
-              nextEquity = norm;
-              let dd = drawdownFromEquity(norm as any).map((d: any) => ({ ts: toEpoch(d.ts)!, dd: Number(d.dd) })) as DrawdownRow[];
+              let dd = drawdownFromEquity(norm.map(({ ts, equity }) => ({ ts, equity })) as any).map((d: any) => ({ ts: toEpoch(d.ts)!, dd: Number(d.dd) }));
               dd = dd.filter((d) => d.ts != null && Number.isFinite(d.dd)).map(d => ({ ts: d.ts, dd: -Math.abs(d.dd) }));
-              setDrawdown(dd);
+              for (let i = 0; i < norm.length && i < dd.length; i++) norm[i].dd = dd[i].dd;
+              nextEquity = norm;
+              const act = norm
+                .map(r => ({ ts: r.ts, gross: r.gross, slip: r.slip, to: r.to }))
+                .filter(a => Number.isFinite(a.gross) || Number.isFinite(a.slip) || Number.isFinite(a.to));
+              setActivity(act);
             } else if (header.includes("net_pnl") && header.includes("symbol")) {
               nextTrades = rows.map((r: any) => ({
                 symbol: r.symbol, side: r.side, qty: toNum(r.qty),
@@ -285,14 +311,14 @@ export default function RunDetail() {
   }, [equity]);
 
   const ddDomain = useMemo<[number, number]>(() => {
-    if (!drawdown.length) return [-1, 0];
+    if (!equity.length) return [-1, 0];
     let min = 0;
-    for (const d of drawdown) {
-      if (Number.isFinite(d.dd)) min = Math.min(min, d.dd);
+    for (const d of equity) {
+      if (Number.isFinite(d.dd)) min = Math.min(min, Number(d.dd));
     }
     const pad = Math.max(0.01, Math.abs(min) * 0.05);
     return [min - pad, 0];
-  }, [drawdown]);
+  }, [equity]);
 
   // Scroll capture to keep wheel on inner tables
   const stopWheelPropagation = (e: React.WheelEvent<HTMLDivElement>) => {
@@ -387,37 +413,44 @@ export default function RunDetail() {
                   </Card>
                 )}
 
-                {/* Equity curve */}
+                {/* Performance chart */}
                 <Card className="p-4 space-y-2">
-                  <TooltipLabel className="font-semibold" tooltip="Portfolio equity over time">Equity Curve</TooltipLabel>
+                  <TooltipLabel className="font-semibold" tooltip="Equity and drawdown over time">Performance</TooltipLabel>
                   <div className="h-56">
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={equity}>
+                      <LineChart data={equity} syncId="runSync">
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="ts" tickFormatter={(v: any) => new Date(Number(v)).toLocaleDateString()} />
-                        <YAxis domain={yDomain as any} tickFormatter={(v: any) => formatUSDShort(Number(v))} />
-                        <RechartsTooltip formatter={(v: any) => formatUSD(Number(v))} labelFormatter={(l) => new Date(Number(l)).toLocaleString()} />
-                        <Line type="monotone" dataKey="equity" stroke="#2563eb" dot={false} isAnimationActive={false} />
+                        <YAxis yAxisId="left" domain={yDomain as any} tickFormatter={(v: any) => formatUSDShort(Number(v))} />
+                        <YAxis yAxisId="right" orientation="right" domain={ddDomain as any} tickFormatter={(v: any) => formatPct(Number(v))} />
+                        <RechartsTooltip content={<RunTooltip />} />
+                        <Line yAxisId="left" type="monotone" dataKey="equity" stroke="#2563eb" dot={false} isAnimationActive={false} name="Equity" />
+                        <Line yAxisId="right" type="monotone" dataKey="dd" stroke="#ef4444" dot={false} isAnimationActive={false} name="Drawdown" />
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
                 </Card>
 
-                {/* Drawdown */}
-                <Card className="p-4 space-y-2">
-                  <TooltipLabel className="font-semibold" tooltip="Drawdown from peak (negative values)">Drawdown</TooltipLabel>
-                  <div className="h-56">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={drawdown}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="ts" tickFormatter={(v: any) => new Date(Number(v)).toLocaleDateString()} />
-                        <YAxis domain={ddDomain as any} tickFormatter={(v: any) => formatPct(Number(v))} />
-                        <RechartsTooltip formatter={(v: any) => formatPct(Number(v))} labelFormatter={(l) => new Date(Number(l)).toLocaleString()} />
-                        <Area type="monotone" dataKey="dd" stroke="#ef4444" fill="#fecaca" isAnimationActive={false} />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  </div>
-                </Card>
+                {/* Activity metrics */}
+                {activity.length > 0 && (
+                  <Card className="p-4 space-y-2">
+                    <TooltipLabel className="font-semibold" tooltip="Gross exposure, slippage and turnover">Trading Activity</TooltipLabel>
+                    <div className="h-56">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={activity} syncId="runSync">
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="ts" tickFormatter={(v: any) => new Date(Number(v)).toLocaleDateString()} />
+                          <YAxis yAxisId="left" tickFormatter={(v: any) => formatSigned(Number(v))} />
+                          <YAxis yAxisId="right" orientation="right" tickFormatter={(v: any) => formatSigned(Number(v))} />
+                          <RechartsTooltip content={<RunTooltip />} />
+                          <Line yAxisId="left" type="monotone" dataKey="gross" stroke="#16a34a" dot={false} isAnimationActive={false} name="Gross" />
+                          <Line yAxisId="left" type="monotone" dataKey="to" stroke="#8b5cf6" dot={false} isAnimationActive={false} name="Turnover" />
+                          <Line yAxisId="right" type="monotone" dataKey="slip" stroke="#f97316" dot={false} isAnimationActive={false} name="Slippage" />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </Card>
+                )}
 
                 {/* Rolling metrics */}
                 {rolling.length > 0 && (
@@ -425,12 +458,12 @@ export default function RunDetail() {
                     <TooltipLabel className="font-semibold" tooltip="Rolling Sharpe, Volatility and Max Drawdown">Rolling Metrics</TooltipLabel>
                     <div className="h-56">
                       <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={rolling}>
+                        <LineChart data={rolling} syncId="runSync">
                           <CartesianGrid strokeDasharray="3 3" />
                           <XAxis dataKey="ts" tickFormatter={(v: any) => new Date(Number(v)).toLocaleDateString()} />
                           <YAxis yAxisId="left" tickFormatter={(v: any) => formatSigned(Number(v))} />
                           <YAxis yAxisId="right" orientation="right" tickFormatter={(v: any) => formatPct(Number(v))} />
-                          <RechartsTooltip formatter={(v: any, name: any) => name.includes("vol") || name.includes("maxdd") ? formatPct(Number(v)) : formatSigned(Number(v))} />
+                          <RechartsTooltip content={<RunTooltip />} />
                           <Line yAxisId="left" type="monotone" dataKey="roll_sharpe_63" stroke="#2563eb" dot={false} isAnimationActive={false} name="Sharpe(63)" />
                           <Line yAxisId="right" type="monotone" dataKey="roll_vol_63" stroke="#16a34a" dot={false} isAnimationActive={false} name="Vol(63)" />
                           <Line yAxisId="right" type="monotone" dataKey="roll_maxdd_252" stroke="#ef4444" dot={false} isAnimationActive={false} name="MaxDD(252)" />
@@ -529,6 +562,35 @@ export default function RunDetail() {
         </Card>
       </div>
     </TooltipProvider>
+  );
+}
+
+function RunTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  const ts = Number(label);
+  const fields: Record<string, { label: string; fmt: (v: number) => string }> = {
+    equity: { label: "Equity", fmt: formatUSD },
+    dd: { label: "Drawdown", fmt: formatPct },
+    gross: { label: "Gross Exp", fmt: formatSigned },
+    slip: { label: "Slippage", fmt: (v: number) => `${formatSigned(v)}bp` },
+    to: { label: "Turnover", fmt: formatPct },
+    roll_sharpe_63: { label: "Sharpe(63)", fmt: formatSigned },
+    roll_vol_63: { label: "Vol(63)", fmt: formatPct },
+    roll_maxdd_252: { label: "MaxDD(252)", fmt: formatPct },
+  };
+  return (
+    <div className="rounded bg-background/90 p-2 shadow border text-xs">
+      <div className="font-medium mb-1">{new Date(ts).toLocaleString()}</div>
+      {payload.map((p: any) => {
+        const meta = fields[p.dataKey] || { label: p.dataKey, fmt: formatSigned };
+        return (
+          <div key={p.dataKey} className="flex gap-1">
+            <span>{meta.label}:</span>
+            <span className="font-mono">{meta.fmt(Number(p.value))}</span>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
