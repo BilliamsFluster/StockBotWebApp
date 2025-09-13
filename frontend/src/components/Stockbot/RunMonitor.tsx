@@ -346,9 +346,30 @@ export default function RunMonitor({ runId }: { runId: string }) {
 
 
   const buildRunPrompt = async (): Promise<string> => {
-    const head = `You are Jarvis, a concise quant mentor. Analyze this RL training run and give 6-10 actionable insights. Prefer explicit metrics provided under ANCHOR METRICS over any inferred numbers from CSV.
-For recommendations, inspect CURRENT TRAINING SETTINGS (config + payload). When suggesting changes, include a short table with: parameter | current | recommended | rationale. Be specific about values (e.g., max_step_change 0.08 -> 0.05).
-Call out overfitting, regime shifts, slippage spikes, poor hit-rate, and risk/turnover issues. Keep it clear and bullet-style, no fluff.`;
+    const head = `You are Jarvis, a concise quant mentor. Analyze this RL training run and produce a short, practical review for a dashboard.
+
+Output format (GitHub-flavored markdown):
+# Strategy Review
+## Summary
+- 1–2 sentences: overall status (healthy/caution/blockers) and the single most impactful change to try next.
+
+## Critical Alerts
+- Bulleted list calling out breaches (turnover, drawdown, leverage, data gaps) with observed value vs. typical limit.
+
+## Key Metrics
+| Metric | Value |
+|---|---|
+
+## Next Run Checklist
+- [ ] Concrete tweaks with exact numbers: parameter -> new_value (rationale)
+
+## Data Notes
+- Any data quality or coverage issues affecting conclusions.
+
+Rules:
+- Prefer explicit numbers from ANCHOR METRICS over CSV inference. If a metric is missing, write 'n/a' and do not invent values.
+- Keep it crisp (~120–200 words excluding tables). Short sentences. No fluff.
+- Use GFM tables and checkboxes only; no code fences.`;
     const meta = `Run meta: id=${runId}, type=${runStatus?.type || ''}, status=${runStatus?.status || ''}`;
         // Discover which artifacts actually exist to avoid 404 noise during training
     let artMap: any = {};
@@ -898,12 +919,13 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
         ) : aiError ? (
           <div className="text-xs text-red-500">{aiError}</div>
         ) : aiText ? (
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            className="prose prose-sm max-w-none"
-          >
-            {aiText}
-          </ReactMarkdown>
+          <div className="max-h-80 overflow-auto min-w-0">
+            <div className="prose prose-sm md:prose dark:prose-invert max-w-none">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {aiText}
+              </ReactMarkdown>
+            </div>
+          </div>
         ) : (
           <div className="text-xs text-muted-foreground">No insights yet.</div>
         )}
