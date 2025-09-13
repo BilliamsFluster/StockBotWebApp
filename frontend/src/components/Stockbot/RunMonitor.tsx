@@ -155,8 +155,29 @@ export default function RunMonitor({ runId }: { runId: string }) {
       <Card className="p-3 flex flex-wrap items-center gap-3">
         <div className="text-sm">Run: <span className="font-mono">{runId}</span></div>
         <div className="flex-1" />
+        {last?.policy?.entropy != null && (
+          <Badge variant="outline">Entropy: {Number(last.policy.entropy).toFixed(2)}</Badge>
+        )}
+        {last?.policy?.value_pred != null && (
+          <Badge variant="outline">Value: {Number(last.policy.value_pred).toFixed(2)}</Badge>
+        )}
+        {last?.regime?.state != null && (
+          <Badge variant="outline">Regime: {String(last.regime.state)}</Badge>
+        )}
+        {last?.regime?.scaler != null && (
+          <Badge variant="outline">Mult: {Number(last.regime.scaler).toFixed(2)}x</Badge>
+        )}
         <Badge variant="outline">Canary stage: {last?.canary?.stage ?? 0}</Badge>
         <Badge variant="outline">Deployable: {formatPct(Number(last?.canary?.deployable_capital_pct ?? 1))}</Badge>
+        {last?.canary?.gates &&
+          Object.entries(last.canary.gates).map(([k, v]) => (
+            <Badge key={k} variant={v ? "outline" : "destructive"}>
+              {k}
+            </Badge>
+          ))}
+        {last?.canary?.action && last.canary.action !== "hold" && (
+          <Badge variant="secondary">{last.canary.action}</Badge>
+        )}
         <Badge variant="outline">Heartbeat: {(last?.health?.heartbeat_ms ?? 0)} ms</Badge>
         <Badge variant="outline">Status: {last?.health?.status || "OK"}</Badge>
       </Card>
@@ -215,10 +236,51 @@ export default function RunMonitor({ runId }: { runId: string }) {
         </Card>
       </div>
 
+      {/* Rolling performance metrics */}
+      <Card className="p-4 space-y-2">
+        <div className="font-medium">Rolling Metrics</div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Metric</TableHead>
+              <TableHead>Value</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow>
+              <TableCell>Sharpe</TableCell>
+              <TableCell className="font-mono text-xs">{formatSigned(Number(last?.rolling?.sharpe ?? 0))}</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell>Sortino</TableCell>
+              <TableCell className="font-mono text-xs">{formatSigned(Number(last?.rolling?.sortino ?? 0))}</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell>Realized Vol</TableCell>
+              <TableCell className="font-mono text-xs">{formatPct(Number(last?.rolling?.vol_realized ?? 0))}</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell>Hit Rate</TableCell>
+              <TableCell className="font-mono text-xs">{formatPct(Number(last?.rolling?.hit_rate ?? 0))}</TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </Card>
+
       {/* Decision path and Orders */}
       <div className="grid lg:grid-cols-2 gap-6">
         <Card className="p-4 space-y-2">
           <div className="font-medium">Decision Path (latest)</div>
+          {last?.risk?.applied && (
+            <div className="text-xs text-muted-foreground">
+              Applied: {Array.isArray(last.risk.applied) ? last.risk.applied.join(", ") : String(last.risk.applied)}
+            </div>
+          )}
+          {last?.risk?.flags && Array.isArray(last.risk.flags) && last.risk.flags.length > 0 && (
+            <div className="text-xs text-red-500">
+              Flags: {last.risk.flags.join(", ")}
+            </div>
+          )}
           <div className="max-h-80 overflow-auto">
             <Table>
               <TableHeader>
@@ -247,7 +309,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
 
         <Card className="p-4 space-y-4">
           <div className="font-medium">Orders & Fills (latest)</div>
-          <div className="grid md:grid-cols-3 gap-4">
+          <div className="grid md:grid-cols-3 lg:grid-cols-4 gap-4">
             <div className="max-h-64 overflow-auto">
               <div className="text-sm font-medium mb-1">Intended</div>
               <Table>
@@ -281,9 +343,35 @@ export default function RunMonitor({ runId }: { runId: string }) {
                 </TableBody>
               </Table>
             </div>
+            {Array.isArray(last?.orders?.rejects) && last.orders.rejects.length > 0 && (
+              <div className="max-h-64 overflow-auto">
+                <div className="text-sm font-medium mb-1">Rejects</div>
+                <Table>
+                  <TableHeader><TableRow><TableHead>Sym</TableHead><TableHead>Side</TableHead><TableHead>Qty</TableHead></TableRow></TableHeader>
+                  <TableBody>
+                    {last.orders.rejects.slice(-15).map((o: any, i: number) => (
+                      <TableRow key={i}><TableCell className="font-mono text-xs">{o?.sym}</TableCell><TableCell className="text-xs">{o?.side}</TableCell><TableCell className="font-mono text-xs">{o?.qty}</TableCell></TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
           </div>
           {last?.costs_bps && (
             <div className="text-xs text-muted-foreground">Costs: total {Number(last.costs_bps.total ?? 0).toFixed(2)} bps (commission {Number(last.costs_bps.commission ?? 0).toFixed(2)}, spread {Number(last.costs_bps.spread ?? 0).toFixed(2)}, impact {Number(last.costs_bps.impact ?? 0).toFixed(2)})</div>
+          )}
+          {last?.markouts_bps && (
+            <div className="text-xs text-muted-foreground">Markouts: 1b {Number(last.markouts_bps.m1 ?? 0).toFixed(2)} bps, 5b {Number(last.markouts_bps.m5 ?? 0).toFixed(2)} bps, 15b {Number(last.markouts_bps.m15 ?? 0).toFixed(2)} bps</div>
+          )}
+          {last?.participation?.sym_pct && (
+            <div className="text-xs text-muted-foreground">
+              Participation: {Object.entries(last.participation.sym_pct).slice(0,3).map(([s,p]) => `${s} ${formatPct(Number(p)/100)}`).join(", ")}
+            </div>
+          )}
+          {last?.latency_ms && (
+            <div className="text-xs text-muted-foreground">
+              Latency: {Number(last.latency_ms.data_to_decision ?? 0).toFixed(0)}ms d→d, {Number(last.latency_ms.decision_to_send ?? 0).toFixed(0)}ms d→s{last.latency_ms.send_to_fill != null ? `, ${Number(last.latency_ms.send_to_fill).toFixed(0)}ms s→f` : ""}
+            </div>
           )}
         </Card>
       </div>
@@ -310,6 +398,16 @@ export default function RunMonitor({ runId }: { runId: string }) {
             </TableBody>
           </Table>
         </div>
+      </Card>
+
+      <Card className="p-4 space-y-1">
+        <div className="font-medium">Metadata</div>
+        <div className="text-xs font-mono">Model SHA: {last?.model?.git_sha || "-"}</div>
+        <div className="text-xs font-mono">Data Manifest: {last?.data?.manifest_hash || "-"}</div>
+        <div className="text-xs font-mono">Obs Schema: {last?.schema?.obs || "-"}</div>
+        {Array.isArray(last?.errors) && last.errors.length > 0 && (
+          <div className="text-xs text-red-500">Errors: {last.errors.join(", ")}</div>
+        )}
       </Card>
 
       {/* Downloads */}
