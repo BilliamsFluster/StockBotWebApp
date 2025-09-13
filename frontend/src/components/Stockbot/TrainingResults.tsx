@@ -449,20 +449,50 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
       title === "Gradient Norm" ? "Global L2 norm of gradients; useful for spotting exploding/vanishing gradients." :
       (tag ? `Scalar: ${tag}` : undefined);
 
+    const data = (tag && series[tag]) || [];
+    const [hover, setHover] = useState<{ step: number; value: number; time: number } | null>(null);
+
+    useEffect(() => {
+      if (data.length) {
+        const last = data[data.length - 1];
+        setHover({ step: last.step, value: last.value, time: last.wall_time });
+      }
+    }, [data]);
+
+    const valClass = hover && hover.value > 0 ? "text-green-600" : hover && hover.value < 0 ? "text-red-600" : "";
+
     return (
       <Card className="p-4 space-y-2">
         <TooltipLabel className="font-semibold" tooltip={tip || title}>{title}</TooltipLabel>
         <div className="h-56">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={(tag && series[tag]) || []}>
+            <LineChart
+              data={data}
+              onMouseMove={(st: any) => {
+                const p = st?.activePayload?.[0]?.payload;
+                if (p) setHover({ step: p.step, value: p.value, time: p.wall_time });
+              }}
+              onMouseLeave={() => {
+                if (data.length) {
+                  const last = data[data.length - 1];
+                  setHover({ step: last.step, value: last.value, time: last.wall_time });
+                }
+              }}
+            >
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="step" tickFormatter={fmtStep} />
               <YAxis allowDecimals tickFormatter={(v: any) => String(v)} />
-              <Tooltip labelFormatter={(l) => `step ${l}`} formatter={(v: any) => fmtVal(Number(v))} />
               <Line type="monotone" dataKey="value" stroke={color || "#8884d8"} dot={false} isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>
+        {hover && (
+          <div className="text-xs font-mono flex justify-between">
+            <span>step: {hover.step}</span>
+            <span>time: {hover.time ? new Date(hover.time * 1000).toLocaleTimeString() : ""}</span>
+            <span className={valClass}>val: {fmtVal(Number(hover.value))}</span>
+          </div>
+        )}
         {!tag && <div className="text-xs text-muted-foreground">Tag not found for this run.</div>}
       </Card>
     );

@@ -800,6 +800,7 @@ SAFE_NAME_MAP = {
     "live_telemetry": "live_telemetry.jsonl",
     "live_events": "live_events.jsonl",
     "live_rollups": "live_rollups.jsonl",
+    "live_audit": "live_audit.jsonl",
 }
 
 def get_artifact_file(run_id: str, name: str):

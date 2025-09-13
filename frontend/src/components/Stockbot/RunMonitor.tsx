@@ -17,6 +17,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const [bars, setBars] = useState<TelemetryBar[]>([]);
   const [events, setEvents] = useState<TelemetryEvent[]>([]);
   const [jobLog, setJobLog] = useState<string | null>(null);
+  const [audit, setAudit] = useState<any[]>([]);
   const [viewIndex, setViewIndex] = useState<number>(-1);
   const esBarsRef = useRef<EventSource | null>(null);
   const esEventsRef = useRef<EventSource | null>(null);
@@ -64,6 +65,30 @@ export default function RunMonitor({ runId }: { runId: string }) {
     es2.onerror = () => { try { es2.close(); } catch {}; };
 
     return () => { try { es.close(); } catch {}; try { es2.close(); } catch {}; };
+  }, [runId]);
+
+  // Periodically fetch audit log
+  useEffect(() => {
+    if (!runId) return;
+    let timer: any;
+    const load = async () => {
+      try {
+        const u = buildUrl(`/api/stockbot/runs/${runId}/files/live_audit`);
+        const resp = await fetch(u, { credentials: 'include' });
+        const txt = await resp.text();
+        const lines = txt
+          .split('\n')
+          .filter(Boolean)
+          .map((ln) => {
+            try { return JSON.parse(ln); } catch { return null; }
+          })
+          .filter(Boolean);
+        setAudit(lines.slice(-20));
+      } catch {}
+      timer = setTimeout(load, 5000);
+    };
+    load();
+    return () => { if (timer) clearTimeout(timer); };
   }, [runId]);
 
   // Derived series for charts
@@ -425,6 +450,34 @@ export default function RunMonitor({ runId }: { runId: string }) {
         </div>
       </Card>
 
+      <Card className="p-4 space-y-2">
+        <div className="font-medium">Audit Log</div>
+        <div className="max-h-80 overflow-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Time</TableHead>
+                <TableHead>Stage</TableHead>
+                <TableHead>Halted</TableHead>
+                <TableHead>Sharpe</TableHead>
+                <TableHead>Hitrate</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {audit.map((a, i) => (
+                <TableRow key={i}>
+                  <TableCell className="text-xs">{a?.ts ? new Date(a.ts * 1000).toLocaleTimeString() : ""}</TableCell>
+                  <TableCell className="font-mono text-xs">{a?.stage ?? ""}</TableCell>
+                  <TableCell className="text-xs">{String(a?.halted ?? false)}</TableCell>
+                  <TableCell className="text-xs">{a?.sharpe != null ? Number(a.sharpe).toFixed(2) : ""}</TableCell>
+                  <TableCell className="text-xs">{a?.hitrate != null ? Number(a.hitrate).toFixed(2) : ""}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </Card>
+
       <Card className="p-4 space-y-1">
         <div className="font-medium">Metadata</div>
         <div className="text-xs font-mono">Model SHA: {viewBar?.model?.git_sha || "-"}</div>
@@ -443,6 +496,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
           <a className="underline" href={buildUrl(`/api/stockbot/runs/${runId}/files/live_telemetry`)} target="_blank">live_telemetry.jsonl</a>
           <a className="underline" href={buildUrl(`/api/stockbot/runs/${runId}/files/live_events`)} target="_blank">live_events.jsonl</a>
           <a className="underline" href={buildUrl(`/api/stockbot/runs/${runId}/files/live_rollups`)} target="_blank">live_rollups.jsonl</a>
+          <a className="underline" href={buildUrl(`/api/stockbot/runs/${runId}/files/live_audit`)} target="_blank">live_audit.jsonl</a>
         </div>
         <div>
           <Button size="sm" className="mt-2" onClick={loadJobLog}>Load job.log</Button>
