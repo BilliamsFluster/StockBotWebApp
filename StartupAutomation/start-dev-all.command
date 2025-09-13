@@ -1,39 +1,29 @@
 #!/bin/bash
-set -e
 
 # Determine root directory (one level up from this script)
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)/"
 
-start_backend() {
-  cd "$ROOT/backend" || { echo "⚠️  Could not cd into \"$ROOT/backend\""; return; }
-  if [ ! -d node_modules ]; then
-    echo "📦 Installing backend dependencies..."
-    npm install
-  fi
-  echo "🚀 Starting backend..."
-  npm run dev &
-}
+# ---------- Backend ----------
+if [ -d "${ROOT}backend" ]; then
+  osascript -e "tell application \"Terminal\" to do script \"cd '${ROOT}backend'; npm run dev\"" &>/dev/null \
+    || echo "⚠️  Could not start backend"
+else
+  echo "⚠️  Could not cd into \"${ROOT}backend\""
+fi
 
-start_frontend() {
-  cd "$ROOT/frontend" || { echo "⚠️  Could not cd into \"$ROOT/frontend\""; return; }
-  if [ ! -d node_modules ]; then
-    echo "📦 Installing frontend dependencies..."
-    npm install
-  fi
-  echo "🚀 Starting frontend..."
-  npm run dev &
-}
+# ---------- Frontend ----------
+if [ -d "${ROOT}frontend" ]; then
+  osascript -e "tell application \"Terminal\" to do script \"cd '${ROOT}frontend'; npm run dev\"" &>/dev/null \
+    || echo "⚠️  Could not start frontend"
+else
+  echo "⚠️  Could not cd into \"${ROOT}frontend\""
+fi
 
-start_stockbot() {
-  cd "$ROOT/stockbot" || { echo "⚠️  Could not cd into \"$ROOT/stockbot\""; return; }
-  echo "📦 Setting up stockbot virtual environment..."
-  ./commands/setup_venv.command
-  echo "🚀 Starting stockbot..."
-  ./commands/run_dev.command &
-}
+# ---------- StockBot ----------
+if [ -d "${ROOT}stockbot" ]; then
+  osascript -e "tell application \"Terminal\" to do script \"cd '${ROOT}stockbot'; ./commands/run_dev.command\"" &>/dev/null \
+    || echo "⚠️  Could not start StockBot"
+else
+  echo "⚠️  Could not cd into \"${ROOT}stockbot\""
+fi
 
-start_backend
-start_frontend
-start_stockbot
-
-wait
