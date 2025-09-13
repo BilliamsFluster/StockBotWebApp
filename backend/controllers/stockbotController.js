@@ -71,15 +71,21 @@ function errMsg(err) {
   return err instanceof Error ? err.message : "Unknown error";
 }
 
+// Ensure we never send circular structures to res.json
+function safeErrorBody(err, fallbackStatus = 500) {
+  const status = (axios.isAxiosError(err) && err.response?.status) ? err.response.status : fallbackStatus;
+  const msg = errMsg(err);
+  return { status, body: { error: msg } };
+}
+
 /** POST /api/stockbot/train */
 export async function startTrainProxy(req, res) {
   try {
     const { data } = await axios.post(`${STOCKBOT_URL}/api/stockbot/train`, req.body);
     return res.json(data);
   } catch (e) {
-    const status = e.response?.status || 500;
-    const body = e.response?.data || { error: e.message || 'Unknown error' };
-    return res.status(status).json(body);   // <- forward real detail
+    const { status, body } = safeErrorBody(e, 500);
+    return res.status(status).json(body);
   }
 }
 
@@ -138,8 +144,7 @@ export async function deleteRunProxy(req, res) {
     }
     return res.json(data);
   } catch (e) {
-    const status = e.response?.status || 500;
-    const body = e.response?.data || { error: errMsg(e) };
+    const { status, body } = safeErrorBody(e, 500);
     return res.status(status).json(body);
   }
 }
@@ -191,8 +196,7 @@ export async function getRunArtifactFileProxy(req, res) {
         } catch {}
       }
     } catch {}
-    const status = e?.response?.status || 404;
-    const body = e?.response?.data || { error: errMsg(e) };
+    const { status, body } = safeErrorBody(e, 404);
     return res.status(status).json(body);
   }
 }
@@ -214,6 +218,35 @@ export async function getRunBundleProxy(req, res) {
     return res.status(400).json({ error: errMsg(e) });
   }
 }
+
+/** GET /api/stockbot/runs/:id/telemetry -> SSE passthrough */
+export async function streamRunTelemetryProxy(req, res) {
+  try {
+    const url = `${STOCKBOT_URL}/api/stockbot/runs/${encodeURIComponent(req.params.id)}/telemetry`;
+    const resp = await axios.get(url, { responseType: "stream", params: req.query });
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    resp.data.pipe(res);
+  } catch (e) {
+    res.status(400).json({ error: errMsg(e) });
+  }
+}
+
+/** GET /api/stockbot/runs/:id/events -> SSE passthrough */
+export async function streamRunEventsProxy(req, res) {
+  try {
+    const url = `${STOCKBOT_URL}/api/stockbot/runs/${encodeURIComponent(req.params.id)}/events`;
+    const resp = await axios.get(url, { responseType: "stream", params: req.query });
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    resp.data.pipe(res);
+  } catch (e) {
+    res.status(400).json({ error: errMsg(e) });
+  }
+}
+
 
 /** GET /api/stockbot/runs/:id/stream -> SSE passthrough */
 export async function streamRunStatusProxy(req, res) {
