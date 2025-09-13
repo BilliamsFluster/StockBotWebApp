@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import api, { buildUrl } from "@/api/client";
 import { formatPct, formatSigned } from "./lib/formats";
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, ReferenceLine, ReferenceDot } from "recharts";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, ReferenceLine, ReferenceDot, Tooltip } from "recharts";
 
 type TelemetryBar = any;
 type TelemetryEvent = any;
@@ -28,11 +28,8 @@ export default function RunMonitor({ runId }: { runId: string }) {
     slip: true,
     to: true,
   });
-  // Track hover position (per-chart) so legends show hovered values
-  const [hoverT, setHoverT] = useState<{ pnl?: number; expo?: number; slip?: number }>({});
-  const [hoverPnl, setHoverPnl] = useState<{ x?: number; cum?: number; dd?: number }>({});
-  const [hoverExpo, setHoverExpo] = useState<{ x?: number; gross?: number }>({});
-  const [hoverSlip, setHoverSlip] = useState<{ x?: number; slip?: number; to?: number }>({});
+  // Single shared hover timestamp (ms since epoch) used to sync all legends and details
+  const [hoverTs, setHoverTs] = useState<number | null>(null);
   const esBarsRef = useRef<EventSource | null>(null);
   const esEventsRef = useRef<EventSource | null>(null);
   const esStatusRef = useRef<EventSource | null>(null);
@@ -351,16 +348,34 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const expoDomain   = useMemo(() => domainOf(expoSeries.map(d => d.gross), 0.05), [expoSeries]);
   const slipDomain   = useMemo(() => domainOf(slipTurnSeries.map(d => d.slip), 0.15), [slipTurnSeries]);
   const toDomain     = useMemo(() => domainOf(slipTurnSeries.map(d => d.to), 0.15), [slipTurnSeries]);
+  // Use a shared time domain across all charts to ensure sync
   const tMin = useMemo(() => {
-    const arr = pnlSeries.map(d => d.t).filter((x) => Number.isFinite(x));
+    const arr = ([] as number[])
+      .concat(pnlSeries.map(d => d.t))
+      .concat(expoSeries.map(d => d.t))
+      .concat(slipTurnSeries.map(d => d.t))
+      .filter((x) => Number.isFinite(x));
     return arr.length ? Math.min(...arr) : 0;
-  }, [pnlSeries]);
+  }, [pnlSeries, expoSeries, slipTurnSeries]);
   const tMax = useMemo(() => {
-    const arr = pnlSeries.map(d => d.t).filter((x) => Number.isFinite(x));
+    const arr = ([] as number[])
+      .concat(pnlSeries.map(d => d.t))
+      .concat(expoSeries.map(d => d.t))
+      .concat(slipTurnSeries.map(d => d.t))
+      .filter((x) => Number.isFinite(x));
     return arr.length ? Math.max(...arr) : 1;
-  }, [pnlSeries]);
+  }, [pnlSeries, expoSeries, slipTurnSeries]);
 
-  const viewBar = useMemo(() => (viewIndex >= 0 && viewIndex < bars.length ? bars[viewIndex] : last), [viewIndex, bars, last]);
+  const barsT = useMemo(() => bars.map((b) => parseTime(b?.t)), [bars]);
+  const viewBar = useMemo(() => {
+    if (viewIndex >= 0 && viewIndex < bars.length) return bars[viewIndex];
+    if (hoverTs != null) {
+      const objs = barsT.map((t) => ({ t }));
+      const i = nearestIndex(objs, hoverTs);
+      return i >= 0 ? bars[i] : last;
+    }
+    return last;
+  }, [viewIndex, bars, last, hoverTs, barsT]);
   // Decimate series for readability (bumped density)
   const decimate = <T,>(arr: T[], maxPoints = 3000): T[] => {
     const n = arr.length; if (n <= maxPoints) return arr;
@@ -373,7 +388,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const expoD = useMemo(() => decimate(expoSeries, 3000), [expoSeries]);
   const slipD = useMemo(() => decimate(slipTurnSeries, 3000), [slipTurnSeries]);
   // Nearest point helpers for legends at hovered x
-  const nearestIndex = (arr: Array<{ t: number }>, t?: number): number => {
+  function nearestIndex(arr: Array<{ t: number }>, t?: number): number {
     if (!arr.length) return -1;
     if (t == null || !Number.isFinite(t)) return arr.length - 1;
     let lo = 0, hi = arr.length - 1;
@@ -384,25 +399,41 @@ export default function RunMonitor({ runId }: { runId: string }) {
     const i = lo;
     const prev = Math.max(0, i - 1);
     return Math.abs(arr[i].t - t) < Math.abs(arr[prev].t - t) ? i : prev;
-  };
+  }
   const pnlLegend = useMemo(() => {
-    if (hoverPnl.x != null) return { cum: Number(hoverPnl.cum ?? 0), dd: Number(hoverPnl.dd ?? 0) };
-    const i = nearestIndex(pnlSeries, hoverT.pnl);
+    const i = nearestIndex(pnlSeries, hoverTs == null ? undefined : hoverTs);
     const p = i >= 0 ? pnlSeries[i] : undefined;
     return { cum: Number(p?.cum ?? 0), dd: Number(p?.dd ?? 0) };
-  }, [pnlSeries, hoverT.pnl, hoverPnl]);
+  }, [pnlSeries, hoverTs]);
   const expoLegend = useMemo(() => {
-    if (hoverExpo.x != null) return { gross: Number(hoverExpo.gross ?? 0) };
-    const i = nearestIndex(expoSeries, hoverT.expo);
+    const i = nearestIndex(expoSeries, hoverTs == null ? undefined : hoverTs);
     const e = i >= 0 ? expoSeries[i] : undefined;
     return { gross: Number(e?.gross ?? 0) };
-  }, [expoSeries, hoverT.expo, hoverExpo]);
+  }, [expoSeries, hoverTs]);
   const slipLegend = useMemo(() => {
-    if (hoverSlip.x != null) return { slip: Number(hoverSlip.slip ?? 0), to: Number(hoverSlip.to ?? 0) };
-    const i = nearestIndex(slipTurnSeries, hoverT.slip);
+    const i = nearestIndex(slipTurnSeries, hoverTs == null ? undefined : hoverTs);
     const s = i >= 0 ? slipTurnSeries[i] : undefined;
     return { slip: Number(s?.slip ?? 0), to: Number(s?.to ?? 0) };
-  }, [slipTurnSeries, hoverT.slip, hoverSlip]);
+  }, [slipTurnSeries, hoverTs]);
+
+  // Hover points for reference markers
+  const hoverPNLPt = useMemo(() => {
+    if (hoverTs == null) return null as null | { t: number; cum: number; dd: number };
+    const i = nearestIndex(pnlSeries, hoverTs);
+    return i >= 0 ? pnlSeries[i] : null;
+  }, [pnlSeries, hoverTs]);
+  const hoverExpoPt = useMemo(() => {
+    if (hoverTs == null) return null as null | { t: number; gross: number };
+    const i = nearestIndex(expoSeries, hoverTs);
+    return i >= 0 ? expoSeries[i] : null;
+  }, [expoSeries, hoverTs]);
+  const hoverSlipPt = useMemo(() => {
+    if (hoverTs == null) return null as null | { t: number; slip: number; to: number };
+    const i = nearestIndex(slipTurnSeries, hoverTs);
+    return i >= 0 ? slipTurnSeries[i] : null;
+  }, [slipTurnSeries, hoverTs]);
+
+  // (Tooltip UI intentionally hidden via Tooltip content={() => null})
 
   // Latest weights table (limit to top 8 by |capped|)
   const decisionRows = useMemo(() => {
@@ -523,27 +554,20 @@ export default function RunMonitor({ runId }: { runId: string }) {
           </div>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={pnlD}
-                onMouseMove={(st:any)=>{
-                  if (st && st.activeLabel != null) {
-                    setHoverT(h=>({...h, pnl: Number(st.activeLabel)}));
-                    const ap = Array.isArray(st.activePayload) ? st.activePayload : [];
-                    const cum = ap.find((p:any)=>p?.dataKey==='cum')?.value;
-                    const dd  = ap.find((p:any)=>p?.dataKey==='dd')?.value;
-                    setHoverPnl({ x: Number(st.activeLabel), cum: Number(cum ?? 0), dd: Number(dd ?? 0) });
-                  }
-                }}
-                onMouseLeave={()=> { setHoverT(h=>({...h, pnl: undefined})); setHoverPnl({}); }}
+              <LineChart data={pnlD} syncId="runSync"
+                onMouseMove={(st:any)=>{ if (st && st.activeLabel != null) setHoverTs(Number(st.activeLabel)); }}
+                onMouseLeave={()=> { setHoverTs(null); }}
               >
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleString([], { hour12: false, month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })} />
+                <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleDateString([], { year: '2-digit', month: 'short', day: '2-digit' })} />
                 <YAxis yAxisId="left" domain={pnlCumDomain as any} tickFormatter={(v) => formatPct(Number(v))} />
                 <YAxis yAxisId="right" orientation="right" domain={pnlDdDomain as any} tickFormatter={(v) => formatPct(Number(v))} />
-                {hoverPnl.x != null && (
+                <Tooltip content={() => null} wrapperStyle={{ display: 'none' }} cursor={false} />
+                {hoverTs != null && hoverPNLPt && (
                   <>
-                    <ReferenceLine x={hoverPnl.x} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
-                    {showSeries.pnl && (<ReferenceDot x={hoverPnl.x} yAxisId="left" y={hoverPnl.cum} r={5} fill="#2563eb" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
-                    {showSeries.dd && (<ReferenceDot x={hoverPnl.x} yAxisId="right" y={hoverPnl.dd} r={5} fill="#ef4444" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
+                    <ReferenceLine x={hoverTs} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
+                    {showSeries.pnl && (<ReferenceDot x={hoverTs} yAxisId="left" y={hoverPNLPt.cum} r={5} fill="#2563eb" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
+                    {showSeries.dd && (<ReferenceDot x={hoverTs} yAxisId="right" y={hoverPNLPt.dd} r={5} fill="#ef4444" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
                   </>
                 )}
                 {showSeries.pnl && <Line yAxisId="left" type="monotone" dataKey="cum" stroke="#2563eb" strokeWidth={1.2} strokeOpacity={0.9} dot={false} isAnimationActive={false} name="Cum P&L (%)" />}
@@ -565,24 +589,18 @@ export default function RunMonitor({ runId }: { runId: string }) {
           </div>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={expoD}
-                onMouseMove={(st:any)=>{
-                  if (st && st.activeLabel != null) {
-                    setHoverT(h=>({...h, expo: Number(st.activeLabel)}));
-                    const ap = Array.isArray(st.activePayload) ? st.activePayload : [];
-                    const g = ap.find((p:any)=>p?.dataKey==='gross')?.value;
-                    setHoverExpo({ x: Number(st.activeLabel), gross: Number(g ?? 0) });
-                  }
-                }}
-                onMouseLeave={()=> { setHoverT(h=>({...h, expo: undefined})); setHoverExpo({}); }}
+              <LineChart data={expoD} syncId="runSync"
+                onMouseMove={(st:any)=>{ if (st && st.activeLabel != null) setHoverTs(Number(st.activeLabel)); }}
+                onMouseLeave={()=> { setHoverTs(null); }}
               >
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleString([], { hour12: false, month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })} />
+                <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleDateString([], { year: '2-digit', month: 'short', day: '2-digit' })} />
                 <YAxis domain={expoDomain as any} tickFormatter={(v) => formatSigned(Number(v))} />
-                {hoverExpo.x != null && (
+                <Tooltip content={() => null} wrapperStyle={{ display: 'none' }} cursor={false} />
+                {hoverTs != null && hoverExpoPt && (
                   <>
-                    <ReferenceLine x={hoverExpo.x} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
-                    {showSeries.gross && (<ReferenceDot x={hoverExpo.x} y={hoverExpo.gross} r={5} fill="#16a34a" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
+                    <ReferenceLine x={hoverTs} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
+                    {showSeries.gross && (<ReferenceDot x={hoverTs} y={hoverExpoPt.gross} r={5} fill="#16a34a" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
                   </>
                 )}
                 {showSeries.gross && <Line type="monotone" dataKey="gross" stroke="#16a34a" strokeWidth={1.2} strokeOpacity={0.9} dot={false} isAnimationActive={false} name="Gross Lev" />}
@@ -608,27 +626,20 @@ export default function RunMonitor({ runId }: { runId: string }) {
           </div>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={slipD}
-                onMouseMove={(st:any)=>{
-                  if (st && st.activeLabel != null) {
-                    setHoverT(h=>({...h, slip: Number(st.activeLabel)}));
-                    const ap = Array.isArray(st.activePayload) ? st.activePayload : [];
-                    const s = ap.find((p:any)=>p?.dataKey==='slip')?.value;
-                    const to = ap.find((p:any)=>p?.dataKey==='to')?.value;
-                    setHoverSlip({ x: Number(st.activeLabel), slip: Number(s ?? 0), to: Number(to ?? 0) });
-                  }
-                }}
-                onMouseLeave={()=> { setHoverT(h=>({...h, slip: undefined})); setHoverSlip({}); }}
+              <LineChart data={slipD} syncId="runSync"
+                onMouseMove={(st:any)=>{ if (st && st.activeLabel != null) setHoverTs(Number(st.activeLabel)); }}
+                onMouseLeave={()=> { setHoverTs(null); }}
               >
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleString([], { hour12: false, month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })} />
+                <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleDateString([], { year: '2-digit', month: 'short', day: '2-digit' })} />
                 <YAxis yAxisId="left" domain={slipDomain as any} tickFormatter={(v) => `${Number(v).toFixed(1)} bps`} />
                 <YAxis yAxisId="right" orientation="right" domain={toDomain as any} tickFormatter={(v) => formatPct(Number(v)/100)} />
-                {hoverSlip.x != null && (
+                <Tooltip content={() => null} wrapperStyle={{ display: 'none' }} cursor={false} />
+                {hoverTs != null && hoverSlipPt && (
                   <>
-                    <ReferenceLine x={hoverSlip.x} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
-                    {showSeries.slip && (<ReferenceDot x={hoverSlip.x} yAxisId="left" y={hoverSlip.slip} r={5} fill="#a855f7" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
-                    {showSeries.to && (<ReferenceDot x={hoverSlip.x} yAxisId="right" y={hoverSlip.to} r={5} fill="#f59e0b" stroke="#111827" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
+                    <ReferenceLine x={hoverTs} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
+                    {showSeries.slip && (<ReferenceDot x={hoverTs} yAxisId="left" y={hoverSlipPt.slip} r={5} fill="#a855f7" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
+                    {showSeries.to && (<ReferenceDot x={hoverTs} yAxisId="right" y={hoverSlipPt.to} r={5} fill="#f59e0b" stroke="#111827" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
                   </>
                 )}
                 {showSeries.slip && <Line yAxisId="left" type="monotone" dataKey="slip" stroke="#a855f7" strokeWidth={1.2} strokeOpacity={0.85} dot={false} isAnimationActive={false} name="Slippage (bps)" />}
