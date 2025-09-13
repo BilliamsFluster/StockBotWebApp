@@ -346,12 +346,14 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const aiHtml = useMemo(() => {
     let s = String(aiText ?? '');
     s = s.replace(/\r\n/g, '\n');
-    s = s.replace(/`r?`n/g, '\n');
+    s = s.replace(/\r?\n/g, '\n');
     return s.replace(/\n/g, '<br/>');
   }, [aiText]);
 
   const buildRunPrompt = async (): Promise<string> => {
-    const head = `You are Jarvis, a concise quant mentor. Analyze this RL training run and give 6-10 actionable insights. Prefer explicit metrics provided under ANCHOR METRICS over any inferred numbers from CSV. Be specific, use numbers from the data, call out issues (overfitting, regime shifts, slippage spikes, poor hit-rate), and suggest improvements. Keep it clear and bullet-style, no fluff.`;
+    const head = `You are Jarvis, a concise quant mentor. Analyze this RL training run and give 6-10 actionable insights. Prefer explicit metrics provided under ANCHOR METRICS over any inferred numbers from CSV.
+For recommendations, inspect CURRENT TRAINING SETTINGS (config + payload). When suggesting changes, include a short table with: parameter | current | recommended | rationale. Be specific about values (e.g., max_step_change 0.08 -> 0.05).
+Call out overfitting, regime shifts, slippage spikes, poor hit-rate, and risk/turnover issues. Keep it clear and bullet-style, no fluff.`;
     const meta = `Run meta: id=${runId}, type=${runStatus?.type || ''}, status=${runStatus?.status || ''}`;
         // Discover which artifacts actually exist to avoid 404 noise during training
     let artMap: any = {};
@@ -362,7 +364,9 @@ export default function RunMonitor({ runId }: { runId: string }) {
     } catch {}
 
     const mjson = artMap?.metrics ? await fetchArtifactJson('metrics') : null;
-const anchors = mjson ? [
+    const configYaml = artMap?.config ? await fetchArtifactText('config', 6000) : '';
+    const payloadTxt = artMap?.payload ? await fetchArtifactText('payload', 6000) : '';
+    const anchors = mjson ? [
       '--- ANCHOR METRICS (ground truth) ---',
       `total_return: ${mjson.total_return ?? 'n/a'}`,
       `sharpe: ${mjson.sharpe ?? 'n/a'}`,
@@ -379,7 +383,13 @@ const anchors = mjson ? [
     const trades = artMap?.trades ? await fetchArtifactText('trades', 3000) : '';
     const tail = `Output: concise markdown with short bullets and, if useful, a tiny checklist for next run tweaks (risk, turnover, data).
 Data follows as labeled JSON/CSV snippets (trimmed).`;
-    return [head, meta, anchors,
+    const settings = [
+      '--- CURRENT TRAINING SETTINGS ---',
+      configYaml ? '--- config.snapshot.yaml ---\n' + configYaml : '',
+      payloadTxt ? '--- payload.json ---\n' + payloadTxt : '',
+    ].filter(Boolean).join('\n');
+
+    return [head, meta, anchors, settings,
       '--- summary.json ---', summary || '(missing)',
       '--- metrics.json ---', metrics || '(missing)',
       '--- equity.csv ---', equity || '(missing)',
