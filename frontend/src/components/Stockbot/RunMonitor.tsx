@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -342,13 +344,6 @@ export default function RunMonitor({ runId }: { runId: string }) {
     }
   };
 
-  // Prepare AI text for rendering
-  const aiHtml = useMemo(() => {
-    let s = String(aiText ?? '');
-    s = s.replace(/\r\n/g, '\n');
-    s = s.replace(/\r?\n/g, '\n');
-    return s.replace(/\n/g, '<br/>');
-  }, [aiText]);
 
   const buildRunPrompt = async (): Promise<string> => {
     const head = `You are Jarvis, a concise quant mentor. Analyze this RL training run and give 6-10 actionable insights. Prefer explicit metrics provided under ANCHOR METRICS over any inferred numbers from CSV.
@@ -903,7 +898,12 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
         ) : aiError ? (
           <div className="text-xs text-red-500">{aiError}</div>
         ) : aiText ? (
-          <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: aiHtml }} />
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            className="prose prose-sm max-w-none"
+          >
+            {aiText}
+          </ReactMarkdown>
         ) : (
           <div className="text-xs text-muted-foreground">No insights yet.</div>
         )}
