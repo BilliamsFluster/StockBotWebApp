@@ -215,6 +215,35 @@ export async function getRunBundleProxy(req, res) {
   }
 }
 
+/** GET /api/stockbot/runs/:id/telemetry -> SSE passthrough */
+export async function streamRunTelemetryProxy(req, res) {
+  try {
+    const url = `${STOCKBOT_URL}/api/stockbot/runs/${encodeURIComponent(req.params.id)}/telemetry`;
+    const resp = await axios.get(url, { responseType: "stream", params: req.query });
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    resp.data.pipe(res);
+  } catch (e) {
+    res.status(400).json({ error: errMsg(e) });
+  }
+}
+
+/** GET /api/stockbot/runs/:id/events -> SSE passthrough */
+export async function streamRunEventsProxy(req, res) {
+  try {
+    const url = `${STOCKBOT_URL}/api/stockbot/runs/${encodeURIComponent(req.params.id)}/events`;
+    const resp = await axios.get(url, { responseType: "stream", params: req.query });
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    resp.data.pipe(res);
+  } catch (e) {
+    res.status(400).json({ error: errMsg(e) });
+  }
+}
+
+
 /** GET /api/stockbot/runs/:id/stream -> SSE passthrough */
 export async function streamRunStatusProxy(req, res) {
   try {

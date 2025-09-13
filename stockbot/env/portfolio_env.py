@@ -21,6 +21,10 @@ from stockbot.strategy import (
     regime_exposure_multiplier,
 )
 import pandas as pd
+try:
+    from stockbot.execution.live_guardrails import LiveGuardrails
+except Exception:
+    LiveGuardrails = None  # type: ignore
 class PortfolioTradingEnv(gym.Env):
     """
     Multi-asset portfolio env with target-weights actions (continuous).
@@ -162,6 +166,8 @@ class PortfolioTradingEnv(gym.Env):
         )
         self.sizing_trace: List[Dict] = []
         self.risk_events: List[Dict] = []
+        self.guardrails = LiveGuardrails() if LiveGuardrails else None
+        self._canary_prev_stage = 0
 
     # ---------- helpers ----------
     def _ohlc(self, sym: str, i: int):
@@ -297,6 +303,9 @@ class PortfolioTradingEnv(gym.Env):
         )
         self.sizing_trace.clear()
         self.risk_events.clear()
+        if LiveGuardrails:
+            self.guardrails = LiveGuardrails()
+            self._canary_prev_stage = 0
 
         return self._obs(self._i), {"i": self._i, "config": asdict(self.cfg)}
 
@@ -336,6 +345,8 @@ class PortfolioTradingEnv(gym.Env):
         gamma_t = 1.0
         if self._gamma_seq is not None and self._regime_scaler is not None:
             gamma_t = regime_exposure_multiplier(self._gamma_seq[self._i], self._regime_scaler)
+        # capture weights along the decision path
+        w_raw = target_w.copy()
         target_w, trace = apply_sizing_layers(target_w, gamma_t, self._ret_hist, self.sizing_cfg)
         self.risk_state.realized_vol_ewma = trace["realized_vol"]
         target_w, events, self.risk_state = apply_caps_and_guards(
@@ -368,6 +379,9 @@ class PortfolioTradingEnv(gym.Env):
 
         fills: List[Fill] = []
         total_cost = 0.0
+        total_notional = 0.0
+        arrival_slippages: list[float] = []
+        part_map: Dict[str, float] = {}
         ts_trade = self.src.index[self._i]
         for j, o in enumerate(orders):
             sym = self.syms[o["symbol_idx"]]
@@ -406,6 +420,13 @@ class PortfolioTradingEnv(gym.Env):
                 }
             )
             total_cost += float(br["commission"] + br["fees"] + br["spread"] + br["impact"])
+            total_notional += abs(float(o["qty"]) * float(o["planned_price"]))
+            try:
+                arr_bps = (float(rc["realized_price"]) - float(o["planned_price"])) / max(1e-9, float(o["planned_price"])) * 10000.0
+                arrival_slippages.append(arr_bps)
+            except Exception:
+                pass
+            part_map[sym] = float(o["participation"]) * 100.0
 
         if fills:
             self.port.apply_fills(fills)
@@ -494,10 +515,117 @@ class PortfolioTradingEnv(gym.Env):
         if terminated or truncated:
             self._dump_episode_artifacts()
 
+        # risk overlays applied markers
+        risk_applied = []
+        try:
+            if abs(gamma_t - 1.0) > 1e-6:
+                risk_applied.append("regime")
+            if abs(float(trace.get("f_kelly", 1.0)) - 1.0) > 1e-6:
+                risk_applied.append("kelly")
+            if abs(float(trace.get("vol_scale", 1.0)) - 1.0) > 1e-6:
+                risk_applied.append("vol_target")
+            for ev in events:
+                et = str(ev.get("type", "")).lower()
+                if et == "per_name_cap":
+                    risk_applied.append("per_name_cap")
+                if et == "gross_leverage_cap":
+                    risk_applied.append("gross_cap")
+                if et == "daily_dd_halt":
+                    risk_applied.append("daily_loss_limit")
+        except Exception:
+            pass
+
+        # Aggregate costs and slippage
+        cost_bps_total = (total_cost / max(1e-9, total_notional)) * 10000.0 if total_notional > 0 else 0.0
+        try:
+            import numpy as _np
+            slip_arrival = float(_np.mean(arrival_slippages)) if arrival_slippages else 0.0
+        except Exception:
+            slip_arrival = 0.0
+
+        # Post-trade markouts at 1/5/15 bars (mean across orders)
+        def _markout_bps(offset_bars: int) -> float:
+            try:
+                idx = min(len(self.src.index) - 1, (self._i) - 1 + offset_bars)
+                arr: list[float] = []
+                for o in orders:
+                    sym = self.syms[o["symbol_idx"]]
+                    p_ref = float(o["planned_price"]) if float(o["planned_price"]) != 0 else 1e-9
+                    p_close = float(self._prices(idx)[sym])
+                    arr.append((p_close - p_ref) / p_ref * 10000.0)
+                return float(_np.mean(arr)) if arr else 0.0
+            except Exception:
+                return 0.0
+        markouts = {"m1": _markout_bps(1), "m5": _markout_bps(5), "m15": _markout_bps(15)}
+
+        # Build orders intended/sent lists for telemetry consumers
+        orders_intended = []
+        orders_sent = []
+        for o in orders:
+            sym = self.syms[o["symbol_idx"]]
+            qty_int = float(o.get("qty_intended", o["qty"])) if isinstance(o, dict) else float(o["qty"])  # type: ignore[index]
+            orders_intended.append({
+                "sym": sym,
+                "side": o["side"],
+                "qty": qty_int,
+                "target_w": float(target_w[o["symbol_idx"]]),
+                "reason": "rebalance",
+            })
+            orders_sent.append({
+                "sym": sym,
+                "side": o["side"],
+                "qty": float(o["qty"]),
+                "type": self.fill_policy,
+                "limit": None,
+            })
+
+        # Canary gating (best-effort for backtest)
+        canary_info = {
+            "stage": 0,
+            "deployable_capital_pct": 1.0,
+            "gates": {
+                "slippage_ok": True,
+                "hit_rate_ok": True,
+                "vol_ok": True,
+                "heartbeat_ok": True,
+                "drawdown_ok": True,
+                "reject_rate_ok": True,
+            },
+            "action": "hold",
+            "reason": None,
+            "last_promotion_at": None,
+        }
+        try:
+            if self.guardrails is not None:
+                last_ts = int(self.src.index[self._i - 1].timestamp())
+                now_ts = int(self.src.index[self._i].timestamp())
+                metrics = {
+                    "sharpe": 0.0,
+                    "hitrate": 0.0,
+                    "slippage_bps": abs(slip_arrival),
+                    "max_daily_dd_pct": abs(dd_after) * 100.0,
+                }
+                deploy = self.guardrails.record(metrics, last_bar_ts=last_ts, now_ts=now_ts, broker_ok=True)
+                stage_idx = int(self.guardrails.state.stage_idx)
+                canary_info["stage"] = stage_idx
+                canary_info["deployable_capital_pct"] = float(deploy)
+                if stage_idx > self._canary_prev_stage:
+                    self.risk_events.append({"ts": now_ts, "type": "PROMOTION"})
+                if self.guardrails.state.halted:
+                    self.risk_events.append({"ts": now_ts, "type": "HALT"})
+                self._canary_prev_stage = stage_idx
+        except Exception:
+            pass
+
         info = {
             "equity": eq_close_t,
             "drawdown": dd_after,
             "weights": self._last_weights.copy(),
+            # expose full decision path when available
+            "weights_raw": w_raw.copy(),
+            "weights_regime": (w_raw * float(gamma_t)),
+            "weights_kelly_vol": (w_raw * float(trace.get("f_kelly", 1.0)) * float(trace.get("vol_scale", 1.0)) * float(gamma_t)),
+            "weights_capped": self._last_weights.copy(),
             "r_base": float(r_base),
             "pen_turnover": float(pen_to),
             "pen_drawdown": float(pen_dd),
@@ -508,6 +636,18 @@ class PortfolioTradingEnv(gym.Env):
             "edge_net": float(eq_close_t - eq_prev_close),
             "gross_leverage": float(gross),
             "net_leverage": float(net),
+            "risk_applied": risk_applied,
+            "risk_events": [e.get("type") for e in events],
+            # costs & execution
+            "bar_costs_bps": {
+                "total": float(cost_bps_total),
+            },
+            "slippage_bps": {"arrival": float(slip_arrival)},
+            "markouts_bps": markouts,
+            "orders_intended": orders_intended,
+            "orders_sent": orders_sent,
+            "participation_pct": part_map,
+            "canary": canary_info,
         }
         return self._obs(self._i), float(r), bool(terminated), bool(truncated), info
 

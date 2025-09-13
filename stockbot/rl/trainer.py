@@ -14,6 +14,7 @@ from stable_baselines3.common.logger import configure
 
 from stockbot.env.config import EnvConfig, EpisodeConfig
 from .callbacks import RLDiagCallback, wrap_optimizer_for_grad_logging
+from .telemetry_callback import TelemetryCallback
 from .metrics import calmar, max_drawdown, sharpe, sortino, total_return, turnover
 from .train_utils import make_vec_env
 from .utils import Split, make_env, episode_rollout
@@ -200,7 +201,8 @@ class PPOTrainer:
             verbose=1,
         )
 
-        self.callbacks = CallbackList([eval_cb, diag_cb])
+        telem_cb = TelemetryCallback()
+        self.callbacks = CallbackList([eval_cb, diag_cb, telem_cb])
 
     # ------------------------------------------------------------------
     # Public API

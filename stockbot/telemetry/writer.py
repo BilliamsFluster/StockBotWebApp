@@ -41,6 +41,16 @@ class TelemetryWriter:
         self.telemetry_path = _path_from_env("STOCKBOT_TELEMETRY_PATH")
         self.event_path = _path_from_env("STOCKBOT_EVENT_PATH")
         self.rollup_path = _path_from_env("STOCKBOT_ROLLUP_PATH")
+        # ensure files exist so proxies can stream immediately
+        try:
+            if self.telemetry_path and not self.telemetry_path.exists():
+                self.telemetry_path.touch()
+            if self.event_path and not self.event_path.exists():
+                self.event_path.touch()
+            if self.rollup_path and not self.rollup_path.exists():
+                self.rollup_path.touch()
+        except Exception:
+            pass
 
     def _append(self, path: Optional[Path], obj: Dict[str, Any]) -> None:
         if path is None:
@@ -95,4 +105,3 @@ def _json_default(o: Any):
         except Exception:
             return str(o)
     return str(o)
-
