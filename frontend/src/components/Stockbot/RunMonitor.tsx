@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import api, { buildUrl } from "@/api/client";
-import { askJarvis } from "@/api/jarvisApi";
+import { askJarvisLite } from "@/api/jarvisApi";
 import { formatPct, formatSigned } from "./lib/formats";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, ReferenceLine, ReferenceDot, Tooltip } from "recharts";
 
@@ -324,7 +324,7 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
     setAiError(null);
     try {
       const prompt = await buildRunPrompt();
-      const { response } = await askJarvis(prompt, { preferences: { model: 'llama3:8b', format: 'markdown' } } as any);
+      const { response } = await askJarvisLite(prompt, { preferences: { model: 'llama3:8b', format: 'markdown' } } as any);
       setAiText(String(response || ''));
     } catch (e: any) {
       setAiError(e?.message || 'Failed to get AI insights');
