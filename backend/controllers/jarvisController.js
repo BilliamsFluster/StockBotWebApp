@@ -30,6 +30,7 @@ export const handleJarvisPrompt = async (req, res) => {
       prompt,
       model,
       format,
+      use_memory: req.body?.use_memory,
       access_token: accessToken,
     });
 
@@ -54,6 +55,7 @@ export const handleJarvisPromptLite = async (req, res) => {
       prompt,
       model,
       format,
+      use_memory: req.body?.use_memory,
     });
     res.json({ response: response.data.response });
   } catch (error) {

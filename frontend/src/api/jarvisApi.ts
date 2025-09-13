@@ -26,18 +26,26 @@ export async function planPageEdit(goal: string): Promise<{ actions: DomAction[]
 }
 
 // Submit text prompt to Jarvis
-export const askJarvis = async (prompt: string, user: User) => {
-  const model = user?.preferences?.model || 'llama3';
-  const format = user?.preferences?.format || 'markdown';
-  const { data } = await api.post('/jarvis/ask', { prompt, model, format });
+export const askJarvis = async (
+  prompt: string,
+  user: User,
+  opts?: { use_memory?: boolean; model?: string; format?: string }
+) => {
+  const model = opts?.model || user?.preferences?.model || 'llama3';
+  const format = opts?.format || user?.preferences?.format || 'markdown';
+  const { data } = await api.post('/jarvis/ask', { prompt, model, format, use_memory: opts?.use_memory });
   return data;
 };
 
 // Lite prompt endpoint that does not require brokerage credentials
-export const askJarvisLite = async (prompt: string, user: User) => {
-  const model = user?.preferences?.model || 'llama3';
-  const format = user?.preferences?.format || 'markdown';
-  const { data } = await api.post('/jarvis/ask-lite', { prompt, model, format });
+export const askJarvisLite = async (
+  prompt: string,
+  user: User,
+  opts?: { use_memory?: boolean; model?: string; format?: string }
+) => {
+  const model = opts?.model || user?.preferences?.model || 'llama3';
+  const format = opts?.format || user?.preferences?.format || 'markdown';
+  const { data } = await api.post('/jarvis/ask-lite', { prompt, model, format, use_memory: opts?.use_memory });
   return data;
 };
 

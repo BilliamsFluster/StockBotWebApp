@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import api, { buildUrl } from "@/api/client";
-import { askJarvisLite } from "@/api/jarvisApi";
+import { askJarvisLite, fetchAvailableModels } from "@/api/jarvisApi";
 import { formatPct, formatSigned } from "./lib/formats";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, ReferenceLine, ReferenceDot, Tooltip } from "recharts";
 
@@ -42,12 +42,25 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const eventsFallbackRef = useRef<boolean>(false);
   const telemSeenRef = useRef<number>(0);
   const eventsSeenRef = useRef<number>(0);
+  // Audit polling controls
+  const auditTimerRef = useRef<any>(null);
+  const auditAbortRef = useRef<AbortController | null>(null);
   // AI insights state
   const [aiText, setAiText] = useState<string>("");
   const [aiLoading, setAiLoading] = useState<boolean>(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const aiInitSentRef = useRef<boolean>(false);
   const aiFinalSentRef = useRef<boolean>(false);
+  const [aiUseMemory, setAiUseMemory] = useState<boolean>(false);
+  const [aiModels, setAiModels] = useState<string[]>([]);
+  const [aiModel, setAiModel] = useState<string>("");
+
+  // Load available local Ollama models for selection
+  useEffect(() => {
+    (async () => {
+      try { const models = await fetchAvailableModels(); setAiModels(models || []); } catch {}
+    })();
+  }, []);
 
   // Subscribe to run status; close live streams when terminal
   useEffect(() => {
@@ -254,29 +267,47 @@ export default function RunMonitor({ runId }: { runId: string }) {
     return () => { if (timer) clearTimeout(timer); };
   }, [runId, isTerminal, updateMs]);
 
-  // Periodically fetch audit log
+  // Periodically fetch audit log (paused when terminal)
   useEffect(() => {
     if (!runId) return;
-    let timer: any;
+    let active = true;
+
+    // Clear any previous timer/requests
+    if (auditTimerRef.current) { try { clearTimeout(auditTimerRef.current); } catch {} auditTimerRef.current = null; }
+    if (auditAbortRef.current) { try { auditAbortRef.current.abort(); } catch {} auditAbortRef.current = null; }
+
     const load = async () => {
+      if (!active) return;
+      if (isTerminal) return; // stop polling once run is terminal
+      const ctrl = new AbortController();
+      auditAbortRef.current = ctrl;
       try {
         const u = buildUrl(`/api/stockbot/runs/${runId}/files/live_audit`);
-        const resp = await fetch(u, { credentials: 'include' });
+        const resp = await fetch(u, { credentials: 'include', signal: ctrl.signal });
         const txt = await resp.text();
         const lines = txt
           .split('\n')
           .filter(Boolean)
-          .map((ln) => {
-            try { return JSON.parse(ln); } catch { return null; }
-          })
+          .map((ln) => { try { return JSON.parse(ln); } catch { return null; } })
           .filter(Boolean);
         setAudit(lines.slice(-20));
-      } catch {}
-      timer = setTimeout(load, 5000);
+      } catch {
+        // ignore fetch/abort errors
+      } finally {
+        auditAbortRef.current = null;
+        if (active && !isTerminal) {
+          auditTimerRef.current = setTimeout(load, 5000);
+        }
+      }
     };
     load();
-    return () => { if (timer) clearTimeout(timer); };
-  }, [runId]);
+
+    return () => {
+      active = false;
+      if (auditTimerRef.current) { try { clearTimeout(auditTimerRef.current); } catch {} auditTimerRef.current = null; }
+      if (auditAbortRef.current) { try { auditAbortRef.current.abort(); } catch {} auditAbortRef.current = null; }
+    };
+  }, [runId, isTerminal]);
 
   // -------- AI Insights --------
   const fetchArtifactText = async (name: string, maxChars = 6000): Promise<string> => {
@@ -297,18 +328,58 @@ export default function RunMonitor({ runId }: { runId: string }) {
     }
   };
 
+  const fetchArtifactJson = async (name: string): Promise<any> => {
+    try {
+      const u = buildUrl(`/api/stockbot/runs/${runId}/files/${encodeURIComponent(name)}`);
+      const resp = await fetch(u, { credentials: 'include' });
+      if (!resp.ok) return null;
+      const ct = resp.headers.get('content-type') || '';
+      if (ct.includes('application/json')) return await resp.json();
+      const txt = await resp.text();
+      try { return JSON.parse(txt); } catch { return null; }
+    } catch {
+      return null;
+    }
+  };
+
+  // Prepare AI text for rendering
+  const aiHtml = useMemo(() => {
+    let s = String(aiText ?? '');
+    s = s.replace(/\r\n/g, '\n');
+    s = s.replace(/`r?`n/g, '\n');
+    return s.replace(/\n/g, '<br/>');
+  }, [aiText]);
+
   const buildRunPrompt = async (): Promise<string> => {
-    const head = `You are Jarvis, a concise quant mentor. Analyze this RL training run and give 6-10 actionable insights. Be specific, use numbers from the data, call out issues (overfitting, regime shifts, slippage spikes, poor hit-rate), and suggest improvements. Keep it clear and bullet-style, no fluff.`;
+    const head = `You are Jarvis, a concise quant mentor. Analyze this RL training run and give 6-10 actionable insights. Prefer explicit metrics provided under ANCHOR METRICS over any inferred numbers from CSV. Be specific, use numbers from the data, call out issues (overfitting, regime shifts, slippage spikes, poor hit-rate), and suggest improvements. Keep it clear and bullet-style, no fluff.`;
     const meta = `Run meta: id=${runId}, type=${runStatus?.type || ''}, status=${runStatus?.status || ''}`;
-    const summary = await fetchArtifactText('summary', 5000);
-    const metrics = await fetchArtifactText('metrics', 5000);
-    const equity = await fetchArtifactText('equity', 5000);
-    const rolling = await fetchArtifactText('rolling_metrics', 4000);
-    const orders = await fetchArtifactText('orders', 3000);
-    const trades = await fetchArtifactText('trades', 3000);
+        // Discover which artifacts actually exist to avoid 404 noise during training
+    let artMap: any = {};
+    try {
+      const uA = buildUrl(`/api/stockbot/runs/${runId}/artifacts`);
+      const rA = await fetch(uA, { credentials: 'include' });
+      if (rA.ok) artMap = await rA.json();
+    } catch {}
+
+    const mjson = artMap?.metrics ? await fetchArtifactJson('metrics') : null;
+const anchors = mjson ? [
+      '--- ANCHOR METRICS (ground truth) ---',
+      `total_return: ${mjson.total_return ?? 'n/a'}`,
+      `sharpe: ${mjson.sharpe ?? 'n/a'}`,
+      `sortino: ${mjson.sortino ?? mjson.sortino_ratio ?? 'n/a'}`,
+      `max_drawdown: ${mjson.max_drawdown ?? 'n/a'}`,
+      `calmar: ${mjson.calmar ?? 'n/a'}`,
+      `turnover: ${mjson.turnover ?? mjson.avg_turnover ?? 'n/a'}`,
+    ].join('\n') : '';
+    const summary = artMap?.summary ? await fetchArtifactText('summary', 5000) : '';
+    const metrics = artMap?.metrics ? await fetchArtifactText('metrics', 5000) : '';
+    const equity = artMap?.equity ? await fetchArtifactText('equity', 5000) : '';
+    const rolling = artMap?.rolling_metrics ? await fetchArtifactText('rolling_metrics', 4000) : '';
+    const orders = artMap?.orders ? await fetchArtifactText('orders', 3000) : '';
+    const trades = artMap?.trades ? await fetchArtifactText('trades', 3000) : '';
     const tail = `Output: concise markdown with short bullets and, if useful, a tiny checklist for next run tweaks (risk, turnover, data).
 Data follows as labeled JSON/CSV snippets (trimmed).`;
-    return [head, meta,
+    return [head, meta, anchors,
       '--- summary.json ---', summary || '(missing)',
       '--- metrics.json ---', metrics || '(missing)',
       '--- equity.csv ---', equity || '(missing)',
@@ -324,7 +395,7 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
     setAiError(null);
     try {
       const prompt = await buildRunPrompt();
-      const { response } = await askJarvisLite(prompt, { preferences: { model: 'llama3:8b', format: 'markdown' } } as any);
+      const { response } = await askJarvisLite(prompt, { preferences: { model: 'llama3:8b', format: 'markdown' } } as any, { use_memory: aiUseMemory, model: aiModel || undefined });
       setAiText(String(response || ''));
     } catch (e: any) {
       setAiError(e?.message || 'Failed to get AI insights');
@@ -332,23 +403,10 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
       setAiLoading(false);
     }
   };
+  // Manual generation only (no auto-run)
 
-  // Fire once on entering the page
-  useEffect(() => {
-    if (!runId) return;
-    if (aiInitSentRef.current) return;
-    aiInitSentRef.current = true;
-    requestAiInsights();
-  }, [runId]);
 
-  // Fire once again when the run reaches a terminal state
-  useEffect(() => {
-    if (!runId) return;
-    if (!isTerminal) return;
-    if (aiFinalSentRef.current) return;
-    aiFinalSentRef.current = true;
-    requestAiInsights();
-  }, [runId, isTerminal]);
+  
 
   // Derived series for charts (cleaned, monotonic by time)
   const parseTime = (t: any): number => {
@@ -814,6 +872,19 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
       <Card className="p-4 space-y-2">
         <div className="font-medium">AI Insights</div>
         <div className="text-xs text-muted-foreground">Generated by Jarvis from this run’s artifacts. Auto-refreshes at start and when the run finishes.</div>
+        <div className="flex items-center gap-3 text-xs">
+          <label className="inline-flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" className="border rounded" checked={aiUseMemory} onChange={(e)=>setAiUseMemory(e.target.checked)} />
+            <span className="text-muted-foreground">Use conversation memory</span>
+          </label>
+          <label className="inline-flex items-center gap-2">
+            <span className="text-muted-foreground">Model</span>
+            <select className="border rounded p-1 text-xs" value={aiModel} onChange={(e)=>setAiModel(e.target.value)}>
+              <option value="">Auto (preferences)</option>
+              {aiModels.map((m)=> (<option key={m} value={m}>{m}</option>))}
+            </select>
+          </label>
+        </div>
         {aiLoading ? (
           <div className="space-y-2 text-xs text-muted-foreground">
             <div>Analyzing run artifacts…</div>
@@ -822,7 +893,7 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
         ) : aiError ? (
           <div className="text-xs text-red-500">{aiError}</div>
         ) : aiText ? (
-          <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: aiText.replace(/\n/g, '<br/>') }} />
+          <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: aiHtml }} />
         ) : (
           <div className="text-xs text-muted-foreground">No insights yet.</div>
         )}
@@ -1075,4 +1146,16 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
