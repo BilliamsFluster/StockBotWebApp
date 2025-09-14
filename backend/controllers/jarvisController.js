@@ -14,7 +14,7 @@ const STOCKBOT_URL = process.env.STOCKBOT_URL;
 // ---- TEXT PROMPT → LLM ----
 export const handleJarvisPrompt = async (req, res) => {
   const { prompt, model, format } = req.body;
-  log("Jarvis prompt:", { prompt, model, format });
+  try { log.info({ prompt, model, format }, "Jarvis prompt"); } catch {}
 
   if (!prompt || !model || !format) {
     return res.status(400).json({ error: "Missing required fields." });
@@ -30,9 +30,33 @@ export const handleJarvisPrompt = async (req, res) => {
       prompt,
       model,
       format,
+      use_memory: req.body?.use_memory,
       access_token: accessToken,
     });
 
+    res.json({ response: response.data.response });
+  } catch (error) {
+    console.error("🔴 Error forwarding to Jarvis FastAPI:", error.message);
+    res.status(500).json({ error: "Failed to get response from Jarvis." });
+  }
+};
+
+// Simplified Jarvis prompt that does not require Schwab credentials
+export const handleJarvisPromptLite = async (req, res) => {
+  const { prompt, model, format } = req.body;
+  try { log.info({ prompt, model, format }, "Jarvis prompt lite"); } catch {}
+
+  if (!prompt || !model || !format) {
+    return res.status(400).json({ error: "Missing required fields." });
+  }
+
+  try {
+    const response = await axios.post(`${STOCKBOT_URL}/api/jarvis/chat/ask`, {
+      prompt,
+      model,
+      format,
+      use_memory: req.body?.use_memory,
+    });
     res.json({ response: response.data.response });
   } catch (error) {
     console.error("🔴 Error forwarding to Jarvis FastAPI:", error.message);
@@ -232,7 +256,7 @@ export const planJarvisEdit = async (req, res) => {
     );
     return res.json(r.data); // { actions: [...] }
   } catch (e) {
-    log("🔴 planJarvisEdit failed", e?.response?.status, e?.response?.data || e?.message);
+    try { log.error({ status: e?.response?.status, body: e?.response?.data, msg: e?.message }, "planJarvisEdit failed"); } catch {}
     return res.status(502).json({ error: "planning_failed" });
   }
 };

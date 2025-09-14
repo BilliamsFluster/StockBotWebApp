@@ -1,13 +1,16 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import api, { buildUrl } from "@/api/client";
+import { askJarvisLite, fetchAvailableModels } from "@/api/jarvisApi";
 import { formatPct, formatSigned } from "./lib/formats";
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, ReferenceLine, ReferenceDot } from "recharts";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, ReferenceLine, ReferenceDot, Tooltip } from "recharts";
 
 type TelemetryBar = any;
 type TelemetryEvent = any;
@@ -28,11 +31,8 @@ export default function RunMonitor({ runId }: { runId: string }) {
     slip: true,
     to: true,
   });
-  // Track hover position (per-chart) so legends show hovered values
-  const [hoverT, setHoverT] = useState<{ pnl?: number; expo?: number; slip?: number }>({});
-  const [hoverPnl, setHoverPnl] = useState<{ x?: number; cum?: number; dd?: number }>({});
-  const [hoverExpo, setHoverExpo] = useState<{ x?: number; gross?: number }>({});
-  const [hoverSlip, setHoverSlip] = useState<{ x?: number; slip?: number; to?: number }>({});
+  // Single shared hover timestamp (ms since epoch) used to sync all legends and details
+  const [hoverTs, setHoverTs] = useState<number | null>(null);
   const esBarsRef = useRef<EventSource | null>(null);
   const esEventsRef = useRef<EventSource | null>(null);
   const esStatusRef = useRef<EventSource | null>(null);
@@ -44,6 +44,25 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const eventsFallbackRef = useRef<boolean>(false);
   const telemSeenRef = useRef<number>(0);
   const eventsSeenRef = useRef<number>(0);
+  // Audit polling controls
+  const auditTimerRef = useRef<any>(null);
+  const auditAbortRef = useRef<AbortController | null>(null);
+  // AI insights state
+  const [aiText, setAiText] = useState<string>("");
+  const [aiLoading, setAiLoading] = useState<boolean>(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const aiInitSentRef = useRef<boolean>(false);
+  const aiFinalSentRef = useRef<boolean>(false);
+  const [aiUseMemory, setAiUseMemory] = useState<boolean>(false);
+  const [aiModels, setAiModels] = useState<string[]>([]);
+  const [aiModel, setAiModel] = useState<string>("");
+
+  // Load available local Ollama models for selection
+  useEffect(() => {
+    (async () => {
+      try { const models = await fetchAvailableModels(); setAiModels(models || []); } catch {}
+    })();
+  }, []);
 
   // Subscribe to run status; close live streams when terminal
   useEffect(() => {
@@ -250,29 +269,170 @@ export default function RunMonitor({ runId }: { runId: string }) {
     return () => { if (timer) clearTimeout(timer); };
   }, [runId, isTerminal, updateMs]);
 
-  // Periodically fetch audit log
+  // Periodically fetch audit log (paused when terminal)
   useEffect(() => {
     if (!runId) return;
-    let timer: any;
+    let active = true;
+
+    // Clear any previous timer/requests
+    if (auditTimerRef.current) { try { clearTimeout(auditTimerRef.current); } catch {} auditTimerRef.current = null; }
+    if (auditAbortRef.current) { try { auditAbortRef.current.abort(); } catch {} auditAbortRef.current = null; }
+
     const load = async () => {
+      if (!active) return;
+      if (isTerminal) return; // stop polling once run is terminal
+      const ctrl = new AbortController();
+      auditAbortRef.current = ctrl;
       try {
         const u = buildUrl(`/api/stockbot/runs/${runId}/files/live_audit`);
-        const resp = await fetch(u, { credentials: 'include' });
+        const resp = await fetch(u, { credentials: 'include', signal: ctrl.signal });
         const txt = await resp.text();
         const lines = txt
           .split('\n')
           .filter(Boolean)
-          .map((ln) => {
-            try { return JSON.parse(ln); } catch { return null; }
-          })
+          .map((ln) => { try { return JSON.parse(ln); } catch { return null; } })
           .filter(Boolean);
         setAudit(lines.slice(-20));
-      } catch {}
-      timer = setTimeout(load, 5000);
+      } catch {
+        // ignore fetch/abort errors
+      } finally {
+        auditAbortRef.current = null;
+        if (active && !isTerminal) {
+          auditTimerRef.current = setTimeout(load, 5000);
+        }
+      }
     };
     load();
-    return () => { if (timer) clearTimeout(timer); };
-  }, [runId]);
+
+    return () => {
+      active = false;
+      if (auditTimerRef.current) { try { clearTimeout(auditTimerRef.current); } catch {} auditTimerRef.current = null; }
+      if (auditAbortRef.current) { try { auditAbortRef.current.abort(); } catch {} auditAbortRef.current = null; }
+    };
+  }, [runId, isTerminal]);
+
+  // -------- AI Insights --------
+  const fetchArtifactText = async (name: string, maxChars = 6000): Promise<string> => {
+    try {
+      const u = buildUrl(`/api/stockbot/runs/${runId}/files/${encodeURIComponent(name)}`);
+      const resp = await fetch(u, { credentials: 'include' });
+      if (!resp.ok) return '';
+      const ct = resp.headers.get('content-type') || '';
+      if (ct.includes('application/json')) {
+        const j = await resp.json();
+        const txt = JSON.stringify(j).slice(0, maxChars);
+        return txt;
+      }
+      const txt = (await resp.text()).slice(0, maxChars);
+      return txt;
+    } catch {
+      return '';
+    }
+  };
+
+  const fetchArtifactJson = async (name: string): Promise<any> => {
+    try {
+      const u = buildUrl(`/api/stockbot/runs/${runId}/files/${encodeURIComponent(name)}`);
+      const resp = await fetch(u, { credentials: 'include' });
+      if (!resp.ok) return null;
+      const ct = resp.headers.get('content-type') || '';
+      if (ct.includes('application/json')) return await resp.json();
+      const txt = await resp.text();
+      try { return JSON.parse(txt); } catch { return null; }
+    } catch {
+      return null;
+    }
+  };
+
+
+  const buildRunPrompt = async (): Promise<string> => {
+    const head = `You are Jarvis, a concise quant mentor. Analyze this RL training run and produce a short, practical review for a dashboard.
+
+Output format (GitHub-flavored markdown):
+# Strategy Review
+## Summary
+- 1–2 sentences: overall status (healthy/caution/blockers) and the single most impactful change to try next.
+
+## Critical Alerts
+- Bulleted list calling out breaches (turnover, drawdown, leverage, data gaps) with observed value vs. typical limit.
+
+## Key Metrics
+| Metric | Value |
+|---|---|
+
+## Next Run Checklist
+- [ ] Concrete tweaks with exact numbers: parameter -> new_value (rationale)
+
+## Data Notes
+- Any data quality or coverage issues affecting conclusions.
+
+Rules:
+- Prefer explicit numbers from ANCHOR METRICS over CSV inference. If a metric is missing, write 'n/a' and do not invent values.
+- Keep it crisp (~120–200 words excluding tables). Short sentences. No fluff.
+- Use GFM tables and checkboxes only; no code fences.`;
+    const meta = `Run meta: id=${runId}, type=${runStatus?.type || ''}, status=${runStatus?.status || ''}`;
+        // Discover which artifacts actually exist to avoid 404 noise during training
+    let artMap: any = {};
+    try {
+      const uA = buildUrl(`/api/stockbot/runs/${runId}/artifacts`);
+      const rA = await fetch(uA, { credentials: 'include' });
+      if (rA.ok) artMap = await rA.json();
+    } catch {}
+
+    const mjson = artMap?.metrics ? await fetchArtifactJson('metrics') : null;
+    const configYaml = artMap?.config ? await fetchArtifactText('config', 6000) : '';
+    const payloadTxt = artMap?.payload ? await fetchArtifactText('payload', 6000) : '';
+    const anchors = mjson ? [
+      '--- ANCHOR METRICS (ground truth) ---',
+      `total_return: ${mjson.total_return ?? 'n/a'}`,
+      `sharpe: ${mjson.sharpe ?? 'n/a'}`,
+      `sortino: ${mjson.sortino ?? mjson.sortino_ratio ?? 'n/a'}`,
+      `max_drawdown: ${mjson.max_drawdown ?? 'n/a'}`,
+      `calmar: ${mjson.calmar ?? 'n/a'}`,
+      `turnover: ${mjson.turnover ?? mjson.avg_turnover ?? 'n/a'}`,
+    ].join('\n') : '';
+    const summary = artMap?.summary ? await fetchArtifactText('summary', 5000) : '';
+    const metrics = artMap?.metrics ? await fetchArtifactText('metrics', 5000) : '';
+    const equity = artMap?.equity ? await fetchArtifactText('equity', 5000) : '';
+    const rolling = artMap?.rolling_metrics ? await fetchArtifactText('rolling_metrics', 4000) : '';
+    const orders = artMap?.orders ? await fetchArtifactText('orders', 3000) : '';
+    const trades = artMap?.trades ? await fetchArtifactText('trades', 3000) : '';
+    const tail = `Output: concise markdown with short bullets and, if useful, a tiny checklist for next run tweaks (risk, turnover, data).
+Data follows as labeled JSON/CSV snippets (trimmed).`;
+    const settings = [
+      '--- CURRENT TRAINING SETTINGS ---',
+      configYaml ? '--- config.snapshot.yaml ---\n' + configYaml : '',
+      payloadTxt ? '--- payload.json ---\n' + payloadTxt : '',
+    ].filter(Boolean).join('\n');
+
+    return [head, meta, anchors, settings,
+      '--- summary.json ---', summary || '(missing)',
+      '--- metrics.json ---', metrics || '(missing)',
+      '--- equity.csv ---', equity || '(missing)',
+      '--- rolling_metrics.csv ---', rolling || '(missing)',
+      '--- orders.csv ---', orders || '(missing)',
+      '--- trades.csv ---', trades || '(missing)',
+      tail].join('\n');
+  };
+
+  const requestAiInsights = async () => {
+    if (!runId) return;
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const prompt = await buildRunPrompt();
+      const { response } = await askJarvisLite(prompt, { preferences: { model: 'llama3:8b', format: 'markdown' } } as any, { use_memory: aiUseMemory, model: aiModel || undefined });
+      setAiText(String(response || ''));
+    } catch (e: any) {
+      setAiError(e?.message || 'Failed to get AI insights');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+  // Manual generation only (no auto-run)
+
+
+  
 
   // Derived series for charts (cleaned, monotonic by time)
   const parseTime = (t: any): number => {
@@ -351,16 +511,34 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const expoDomain   = useMemo(() => domainOf(expoSeries.map(d => d.gross), 0.05), [expoSeries]);
   const slipDomain   = useMemo(() => domainOf(slipTurnSeries.map(d => d.slip), 0.15), [slipTurnSeries]);
   const toDomain     = useMemo(() => domainOf(slipTurnSeries.map(d => d.to), 0.15), [slipTurnSeries]);
+  // Use a shared time domain across all charts to ensure sync
   const tMin = useMemo(() => {
-    const arr = pnlSeries.map(d => d.t).filter((x) => Number.isFinite(x));
+    const arr = ([] as number[])
+      .concat(pnlSeries.map(d => d.t))
+      .concat(expoSeries.map(d => d.t))
+      .concat(slipTurnSeries.map(d => d.t))
+      .filter((x) => Number.isFinite(x));
     return arr.length ? Math.min(...arr) : 0;
-  }, [pnlSeries]);
+  }, [pnlSeries, expoSeries, slipTurnSeries]);
   const tMax = useMemo(() => {
-    const arr = pnlSeries.map(d => d.t).filter((x) => Number.isFinite(x));
+    const arr = ([] as number[])
+      .concat(pnlSeries.map(d => d.t))
+      .concat(expoSeries.map(d => d.t))
+      .concat(slipTurnSeries.map(d => d.t))
+      .filter((x) => Number.isFinite(x));
     return arr.length ? Math.max(...arr) : 1;
-  }, [pnlSeries]);
+  }, [pnlSeries, expoSeries, slipTurnSeries]);
 
-  const viewBar = useMemo(() => (viewIndex >= 0 && viewIndex < bars.length ? bars[viewIndex] : last), [viewIndex, bars, last]);
+  const barsT = useMemo(() => bars.map((b) => parseTime(b?.t)), [bars]);
+  const viewBar = useMemo(() => {
+    if (viewIndex >= 0 && viewIndex < bars.length) return bars[viewIndex];
+    if (hoverTs != null) {
+      const objs = barsT.map((t) => ({ t }));
+      const i = nearestIndex(objs, hoverTs);
+      return i >= 0 ? bars[i] : last;
+    }
+    return last;
+  }, [viewIndex, bars, last, hoverTs, barsT]);
   // Decimate series for readability (bumped density)
   const decimate = <T,>(arr: T[], maxPoints = 3000): T[] => {
     const n = arr.length; if (n <= maxPoints) return arr;
@@ -373,7 +551,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const expoD = useMemo(() => decimate(expoSeries, 3000), [expoSeries]);
   const slipD = useMemo(() => decimate(slipTurnSeries, 3000), [slipTurnSeries]);
   // Nearest point helpers for legends at hovered x
-  const nearestIndex = (arr: Array<{ t: number }>, t?: number): number => {
+  function nearestIndex(arr: Array<{ t: number }>, t?: number): number {
     if (!arr.length) return -1;
     if (t == null || !Number.isFinite(t)) return arr.length - 1;
     let lo = 0, hi = arr.length - 1;
@@ -384,25 +562,54 @@ export default function RunMonitor({ runId }: { runId: string }) {
     const i = lo;
     const prev = Math.max(0, i - 1);
     return Math.abs(arr[i].t - t) < Math.abs(arr[prev].t - t) ? i : prev;
-  };
+  }
   const pnlLegend = useMemo(() => {
-    if (hoverPnl.x != null) return { cum: Number(hoverPnl.cum ?? 0), dd: Number(hoverPnl.dd ?? 0) };
-    const i = nearestIndex(pnlSeries, hoverT.pnl);
+    const i = nearestIndex(pnlSeries, hoverTs == null ? undefined : hoverTs);
     const p = i >= 0 ? pnlSeries[i] : undefined;
     return { cum: Number(p?.cum ?? 0), dd: Number(p?.dd ?? 0) };
-  }, [pnlSeries, hoverT.pnl, hoverPnl]);
+  }, [pnlSeries, hoverTs]);
   const expoLegend = useMemo(() => {
-    if (hoverExpo.x != null) return { gross: Number(hoverExpo.gross ?? 0) };
-    const i = nearestIndex(expoSeries, hoverT.expo);
+    const i = nearestIndex(expoSeries, hoverTs == null ? undefined : hoverTs);
     const e = i >= 0 ? expoSeries[i] : undefined;
     return { gross: Number(e?.gross ?? 0) };
-  }, [expoSeries, hoverT.expo, hoverExpo]);
+  }, [expoSeries, hoverTs]);
   const slipLegend = useMemo(() => {
-    if (hoverSlip.x != null) return { slip: Number(hoverSlip.slip ?? 0), to: Number(hoverSlip.to ?? 0) };
-    const i = nearestIndex(slipTurnSeries, hoverT.slip);
+    const i = nearestIndex(slipTurnSeries, hoverTs == null ? undefined : hoverTs);
     const s = i >= 0 ? slipTurnSeries[i] : undefined;
     return { slip: Number(s?.slip ?? 0), to: Number(s?.to ?? 0) };
-  }, [slipTurnSeries, hoverT.slip, hoverSlip]);
+  }, [slipTurnSeries, hoverTs]);
+
+  // Hover points for reference markers
+  const hoverPNLPt = useMemo(() => {
+    if (hoverTs == null) return null as null | { t: number; cum: number; dd: number };
+    const i = nearestIndex(pnlSeries, hoverTs);
+    return i >= 0 ? pnlSeries[i] : null;
+  }, [pnlSeries, hoverTs]);
+  const hoverExpoPt = useMemo(() => {
+    if (hoverTs == null) return null as null | { t: number; gross: number };
+    const i = nearestIndex(expoSeries, hoverTs);
+    return i >= 0 ? expoSeries[i] : null;
+  }, [expoSeries, hoverTs]);
+  const hoverSlipPt = useMemo(() => {
+    if (hoverTs == null) return null as null | { t: number; slip: number; to: number };
+    const i = nearestIndex(slipTurnSeries, hoverTs);
+    return i >= 0 ? slipTurnSeries[i] : null;
+  }, [slipTurnSeries, hoverTs]);
+
+  // Summary values at hover time for quick glance
+  const hoverVals = useMemo(() => {
+    if (hoverTs == null) return null as null | { t: number; cum: number; dd: number; gross: number; slip: number; to: number };
+    return {
+      t: hoverTs,
+      cum: Number(hoverPNLPt?.cum ?? 0),
+      dd: Number(hoverPNLPt?.dd ?? 0),
+      gross: Number(hoverExpoPt?.gross ?? 0),
+      slip: Number(hoverSlipPt?.slip ?? 0),
+      to: Number(hoverSlipPt?.to ?? 0),
+    };
+  }, [hoverTs, hoverPNLPt, hoverExpoPt, hoverSlipPt]);
+
+  // (Tooltip UI intentionally hidden via Tooltip content={() => null})
 
   // Latest weights table (limit to top 8 by |capped|)
   const decisionRows = useMemo(() => {
@@ -433,6 +640,20 @@ export default function RunMonitor({ runId }: { runId: string }) {
   }, [viewBar]);
   const intended = useMemo(() => Array.isArray(viewBar?.orders?.intended) ? viewBar.orders.intended.slice(-15) : [], [viewBar]);
   const sent = useMemo(() => Array.isArray(viewBar?.orders?.sent) ? viewBar.orders.sent.slice(-15) : [], [viewBar]);
+  const viewTs = useMemo(() => parseTime((viewBar as any)?.t), [viewBar]);
+
+  // Color helpers
+  const colorClass = (v: any): string => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n === 0) return "text-muted-foreground";
+    return n > 0 ? "text-green-600" : "text-red-600";
+  };
+  const sideClass = (side: any): string => {
+    const s = String(side || "").toLowerCase();
+    if (s.includes("buy") || s.includes("long")) return "text-green-600";
+    if (s.includes("sell") || s.includes("short")) return "text-red-600";
+    return "text-muted-foreground";
+  };
 
   const loadJobLog = async () => {
     try {
@@ -505,6 +726,60 @@ export default function RunMonitor({ runId }: { runId: string }) {
         </div>
       </Card>
 
+      {hoverVals && (
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          <span className="text-muted-foreground">At Cursor:</span>
+          <span className="rounded border px-2 py-1 bg-background/70">
+            <span className="font-mono">{new Date(hoverVals.t).toLocaleString([], { hour12: false })}</span>
+          </span>
+          <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1">
+            <span className="w-2 h-2 rounded" style={{background:'#2563eb'}} />
+            <span>P&L</span>
+            <span className={["font-mono", colorClass(hoverVals.cum)].join(" ")}>{formatPct(hoverVals.cum)}</span>
+          </span>
+          <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1">
+            <span className="w-2 h-2 rounded" style={{background:'#ef4444'}} />
+            <span>DD</span>
+            <span className={["font-mono", colorClass(hoverVals.dd)].join(" ")}>{formatPct(hoverVals.dd)}</span>
+          </span>
+          <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1">
+            <span className="w-2 h-2 rounded" style={{background:'#16a34a'}} />
+            <span>Gross</span>
+            <span className={["font-mono", colorClass(hoverVals.gross)].join(" ")}>{formatSigned(hoverVals.gross)}</span>
+          </span>
+          <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1">
+            <span className="w-2 h-2 rounded" style={{background:'#a855f7'}} />
+            <span>Slip</span>
+            <span className={["font-mono", colorClass(hoverVals.slip)].join(" ")}>{`${hoverVals.slip.toFixed(1)} bps`}</span>
+          </span>
+          <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1">
+            <span className="w-2 h-2 rounded" style={{background:'#f59e0b'}} />
+            <span>Turnover</span>
+            <span className={["font-mono", colorClass(hoverVals.to)].join(" ")}>{formatPct(hoverVals.to/100)}</span>
+          </span>
+        </div>
+      )}
+
+      {/* Compact guide for interpreting metrics */}
+      <Card className="p-3">
+        <details>
+          <summary className="cursor-pointer text-sm font-medium">How to read these metrics</summary>
+          <div className="mt-2 text-xs leading-relaxed space-y-1">
+            <div><span className="font-medium">Equity / Cum P&L (%):</span> Prefer % returns for training. Smooth upward drift is healthy; long flat/declines need review.</div>
+            <div><span className="font-medium">Drawdown (%):</span> <span className="text-green-600">Good: &lt; 10%</span> · <span className="text-amber-600">OK: 10–20%</span> · <span className="text-red-600">High: &gt; 20%</span></div>
+            <div><span className="font-medium">Rolling Sharpe:</span> <span className="text-green-600">Good: &gt; 1.0</span> · <span className="text-amber-600">OK: 0.5–1.0</span> · <span className="text-red-600">Weak: &lt; 0.5</span></div>
+            <div><span className="font-medium">Hit rate:</span> <span className="text-green-600">Good: &gt; 55%</span> · <span className="text-amber-600">OK: 45–55%</span> · <span className="text-red-600">Low: &lt; 45%</span> (context: payoff ratio matters)</div>
+            <div><span className="font-medium">Realized vol:</span> Stability is key; match your risk target. Rising vol with flat P&L is a warning.</div>
+            <div><span className="font-medium">Gross exposure (lev):</span> Stay within policy. Persistent &gt; 2–3x may be aggressive; near 0 implies risk gating or no signals.</div>
+            <div><span className="font-medium">Turnover:</span> Higher turnover increases costs; ensure P&L covers slippage/fees.</div>
+            <div><span className="font-medium">Slippage (bps):</span> <span className="text-green-600">Good: &lt; 5–10</span> · <span className="text-amber-600">OK: 10–25</span> · <span className="text-red-600">High: &gt; 25</span> and watch for spikes.</div>
+            <div><span className="font-medium">Orders/Fills:</span> Large qty oscillations or frequent rejects indicate sizing/routing issues.</div>
+            <div><span className="font-medium">Decision path:</span> Sanity‑check weights; large caps with poor Sharpe/High DD likely need constraints.</div>
+            <div className="text-muted-foreground">Tip: For training, exact dollar equity is optional — focus on returns %, drawdown, and costs.</div>
+          </div>
+        </details>
+      </Card>
+
       <div className="grid lg:grid-cols-3 gap-6">
         {/* Cum P&L + Drawdown */}
         <Card className="p-4 space-y-2 lg:col-span-1">
@@ -523,27 +798,20 @@ export default function RunMonitor({ runId }: { runId: string }) {
           </div>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={pnlD}
-                onMouseMove={(st:any)=>{
-                  if (st && st.activeLabel != null) {
-                    setHoverT(h=>({...h, pnl: Number(st.activeLabel)}));
-                    const ap = Array.isArray(st.activePayload) ? st.activePayload : [];
-                    const cum = ap.find((p:any)=>p?.dataKey==='cum')?.value;
-                    const dd  = ap.find((p:any)=>p?.dataKey==='dd')?.value;
-                    setHoverPnl({ x: Number(st.activeLabel), cum: Number(cum ?? 0), dd: Number(dd ?? 0) });
-                  }
-                }}
-                onMouseLeave={()=> { setHoverT(h=>({...h, pnl: undefined})); setHoverPnl({}); }}
+              <LineChart data={pnlD} syncId="runSync"
+                onMouseMove={(st:any)=>{ if (st && st.activeLabel != null) setHoverTs(Number(st.activeLabel)); }}
+                onMouseLeave={()=> { setHoverTs(null); }}
               >
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleString([], { hour12: false, month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })} />
+                <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleDateString([], { year: '2-digit', month: 'short', day: '2-digit' })} />
                 <YAxis yAxisId="left" domain={pnlCumDomain as any} tickFormatter={(v) => formatPct(Number(v))} />
                 <YAxis yAxisId="right" orientation="right" domain={pnlDdDomain as any} tickFormatter={(v) => formatPct(Number(v))} />
-                {hoverPnl.x != null && (
+                <Tooltip content={() => null} wrapperStyle={{ display: 'none' }} cursor={false} />
+                {hoverTs != null && hoverPNLPt && (
                   <>
-                    <ReferenceLine x={hoverPnl.x} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
-                    {showSeries.pnl && (<ReferenceDot x={hoverPnl.x} yAxisId="left" y={hoverPnl.cum} r={5} fill="#2563eb" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
-                    {showSeries.dd && (<ReferenceDot x={hoverPnl.x} yAxisId="right" y={hoverPnl.dd} r={5} fill="#ef4444" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
+                    <ReferenceLine x={hoverTs} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
+                    {showSeries.pnl && (<ReferenceDot x={hoverTs} yAxisId="left" y={hoverPNLPt.cum} r={5} fill="#2563eb" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
+                    {showSeries.dd && (<ReferenceDot x={hoverTs} yAxisId="right" y={hoverPNLPt.dd} r={5} fill="#ef4444" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
                   </>
                 )}
                 {showSeries.pnl && <Line yAxisId="left" type="monotone" dataKey="cum" stroke="#2563eb" strokeWidth={1.2} strokeOpacity={0.9} dot={false} isAnimationActive={false} name="Cum P&L (%)" />}
@@ -565,24 +833,18 @@ export default function RunMonitor({ runId }: { runId: string }) {
           </div>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={expoD}
-                onMouseMove={(st:any)=>{
-                  if (st && st.activeLabel != null) {
-                    setHoverT(h=>({...h, expo: Number(st.activeLabel)}));
-                    const ap = Array.isArray(st.activePayload) ? st.activePayload : [];
-                    const g = ap.find((p:any)=>p?.dataKey==='gross')?.value;
-                    setHoverExpo({ x: Number(st.activeLabel), gross: Number(g ?? 0) });
-                  }
-                }}
-                onMouseLeave={()=> { setHoverT(h=>({...h, expo: undefined})); setHoverExpo({}); }}
+              <LineChart data={expoD} syncId="runSync"
+                onMouseMove={(st:any)=>{ if (st && st.activeLabel != null) setHoverTs(Number(st.activeLabel)); }}
+                onMouseLeave={()=> { setHoverTs(null); }}
               >
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleString([], { hour12: false, month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })} />
+                <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleDateString([], { year: '2-digit', month: 'short', day: '2-digit' })} />
                 <YAxis domain={expoDomain as any} tickFormatter={(v) => formatSigned(Number(v))} />
-                {hoverExpo.x != null && (
+                <Tooltip content={() => null} wrapperStyle={{ display: 'none' }} cursor={false} />
+                {hoverTs != null && hoverExpoPt && (
                   <>
-                    <ReferenceLine x={hoverExpo.x} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
-                    {showSeries.gross && (<ReferenceDot x={hoverExpo.x} y={hoverExpo.gross} r={5} fill="#16a34a" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
+                    <ReferenceLine x={hoverTs} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
+                    {showSeries.gross && (<ReferenceDot x={hoverTs} y={hoverExpoPt.gross} r={5} fill="#16a34a" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
                   </>
                 )}
                 {showSeries.gross && <Line type="monotone" dataKey="gross" stroke="#16a34a" strokeWidth={1.2} strokeOpacity={0.9} dot={false} isAnimationActive={false} name="Gross Lev" />}
@@ -608,27 +870,20 @@ export default function RunMonitor({ runId }: { runId: string }) {
           </div>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={slipD}
-                onMouseMove={(st:any)=>{
-                  if (st && st.activeLabel != null) {
-                    setHoverT(h=>({...h, slip: Number(st.activeLabel)}));
-                    const ap = Array.isArray(st.activePayload) ? st.activePayload : [];
-                    const s = ap.find((p:any)=>p?.dataKey==='slip')?.value;
-                    const to = ap.find((p:any)=>p?.dataKey==='to')?.value;
-                    setHoverSlip({ x: Number(st.activeLabel), slip: Number(s ?? 0), to: Number(to ?? 0) });
-                  }
-                }}
-                onMouseLeave={()=> { setHoverT(h=>({...h, slip: undefined})); setHoverSlip({}); }}
+              <LineChart data={slipD} syncId="runSync"
+                onMouseMove={(st:any)=>{ if (st && st.activeLabel != null) setHoverTs(Number(st.activeLabel)); }}
+                onMouseLeave={()=> { setHoverTs(null); }}
               >
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleString([], { hour12: false, month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })} />
+                <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleDateString([], { year: '2-digit', month: 'short', day: '2-digit' })} />
                 <YAxis yAxisId="left" domain={slipDomain as any} tickFormatter={(v) => `${Number(v).toFixed(1)} bps`} />
                 <YAxis yAxisId="right" orientation="right" domain={toDomain as any} tickFormatter={(v) => formatPct(Number(v)/100)} />
-                {hoverSlip.x != null && (
+                <Tooltip content={() => null} wrapperStyle={{ display: 'none' }} cursor={false} />
+                {hoverTs != null && hoverSlipPt && (
                   <>
-                    <ReferenceLine x={hoverSlip.x} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
-                    {showSeries.slip && (<ReferenceDot x={hoverSlip.x} yAxisId="left" y={hoverSlip.slip} r={5} fill="#a855f7" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
-                    {showSeries.to && (<ReferenceDot x={hoverSlip.x} yAxisId="right" y={hoverSlip.to} r={5} fill="#f59e0b" stroke="#111827" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
+                    <ReferenceLine x={hoverTs} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
+                    {showSeries.slip && (<ReferenceDot x={hoverTs} yAxisId="left" y={hoverSlipPt.slip} r={5} fill="#a855f7" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
+                    {showSeries.to && (<ReferenceDot x={hoverTs} yAxisId="right" y={hoverSlipPt.to} r={5} fill="#f59e0b" stroke="#111827" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
                   </>
                 )}
                 {showSeries.slip && <Line yAxisId="left" type="monotone" dataKey="slip" stroke="#a855f7" strokeWidth={1.2} strokeOpacity={0.85} dot={false} isAnimationActive={false} name="Slippage (bps)" />}
@@ -639,9 +894,52 @@ export default function RunMonitor({ runId }: { runId: string }) {
         </Card>
       </div>
 
-      {/* Rolling performance metrics */}
+      {/* AI Insights */}
       <Card className="p-4 space-y-2">
+        <div className="font-medium">AI Insights</div>
+        <div className="text-xs text-muted-foreground">Generated by Jarvis from this run’s artifacts. Auto-refreshes at start and when the run finishes.</div>
+        <div className="flex items-center gap-3 text-xs">
+          <label className="inline-flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" className="border rounded" checked={aiUseMemory} onChange={(e)=>setAiUseMemory(e.target.checked)} />
+            <span className="text-muted-foreground">Use conversation memory</span>
+          </label>
+          <label className="inline-flex items-center gap-2">
+            <span className="text-muted-foreground">Model</span>
+            <select className="border rounded p-1 text-xs" value={aiModel} onChange={(e)=>setAiModel(e.target.value)}>
+              <option value="">Auto (preferences)</option>
+              {aiModels.map((m)=> (<option key={m} value={m}>{m}</option>))}
+            </select>
+          </label>
+        </div>
+        {aiLoading ? (
+          <div className="space-y-2 text-xs text-muted-foreground">
+            <div>Analyzing run artifacts…</div>
+            <div className="h-1 bg-muted rounded overflow-hidden"><div className="h-full w-2/3 bg-primary/30 animate-pulse" /></div>
+          </div>
+        ) : aiError ? (
+          <div className="text-xs text-red-500">{aiError}</div>
+        ) : aiText ? (
+          <div className="max-h-80 overflow-auto min-w-0">
+            <div className="prose prose-sm md:prose dark:prose-invert max-w-none">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {aiText}
+              </ReactMarkdown>
+            </div>
+          </div>
+        ) : (
+          <div className="text-xs text-muted-foreground">No insights yet.</div>
+        )}
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={requestAiInsights} disabled={aiLoading}>Regenerate</Button>
+        </div>
+      </Card>
+
+      {/* Rolling performance metrics */}
+      <Card className="p-4 space-y-2 lg:max-w-md">
         <div className="font-medium">Rolling Metrics</div>
+        {viewBar?.t != null && Number.isFinite(viewTs) && viewTs > 0 && (
+          <div className="text-xs text-muted-foreground">As of {new Date(Number(viewTs)).toLocaleString([], { hour12: false })}</div>
+        )}
         <Table>
           <TableHeader>
             <TableRow>
@@ -652,11 +950,11 @@ export default function RunMonitor({ runId }: { runId: string }) {
           <TableBody>
             <TableRow>
               <TableCell>Sharpe</TableCell>
-              <TableCell className="font-mono text-xs">{formatSigned(Number(viewBar?.rolling?.sharpe ?? 0))}</TableCell>
+              <TableCell className={["font-mono text-xs", colorClass(viewBar?.rolling?.sharpe)].join(" ")}>{formatSigned(Number(viewBar?.rolling?.sharpe ?? 0))}</TableCell>
             </TableRow>
             <TableRow>
               <TableCell>Sortino</TableCell>
-              <TableCell className="font-mono text-xs">{formatSigned(Number(viewBar?.rolling?.sortino ?? 0))}</TableCell>
+              <TableCell className={["font-mono text-xs", colorClass(viewBar?.rolling?.sortino)].join(" ")}>{formatSigned(Number(viewBar?.rolling?.sortino ?? 0))}</TableCell>
             </TableRow>
             <TableRow>
               <TableCell>Realized Vol</TableCell>
@@ -671,9 +969,12 @@ export default function RunMonitor({ runId }: { runId: string }) {
       </Card>
 
       {/* Decision path and Orders */}
-      <div className="grid lg:grid-cols-2 gap-6">
-        <Card className="p-4 space-y-2">
+      <div className="grid lg:grid-cols-3 gap-6">
+        <Card className="p-4 space-y-2 min-w-0">
           <div className="font-medium">Decision Path</div>
+          {viewBar?.t != null && Number.isFinite(viewTs) && viewTs > 0 && (
+            <div className="text-xs text-muted-foreground">As of {new Date(Number(viewTs)).toLocaleString([], { hour12: false })}</div>
+          )}
           {viewBar?.risk?.applied && (
             <div className="text-xs text-muted-foreground">
               Applied: {Array.isArray(viewBar.risk.applied) ? viewBar.risk.applied.join(", ") : String(viewBar.risk.applied)}
@@ -684,7 +985,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
               Flags: {viewBar.risk.flags.join(", ")}
             </div>
           )}
-          <div className="max-h-80 overflow-auto">
+          <div className="max-h-80 overflow-auto min-w-0">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -699,10 +1000,10 @@ export default function RunMonitor({ runId }: { runId: string }) {
                 {decisionRows.map((r) => (
                   <TableRow key={r.sym}>
                     <TableCell className="font-mono text-xs">{r.sym}</TableCell>
-                    {showRaw && <TableCell className="font-mono text-xs">{r.raw == null ? '' : formatSigned(Number(r.raw))}</TableCell>}
-                    {showReg && <TableCell className="font-mono text-xs">{r.reg == null ? '' : formatSigned(Number(r.reg))}</TableCell>}
-                    {showKV  && <TableCell className="font-mono text-xs">{r.kv  == null ? '' : formatSigned(Number(r.kv))}</TableCell>}
-                    {showCap && <TableCell className="font-mono text-xs">{r.cap == null ? '' : formatSigned(Number(r.cap))}</TableCell>}
+                    {showRaw && <TableCell className={["font-mono text-xs", colorClass(r.raw)].join(" ")}>{r.raw == null ? '' : formatSigned(Number(r.raw))}</TableCell>}
+                    {showReg && <TableCell className={["font-mono text-xs", colorClass(r.reg)].join(" ")}>{r.reg == null ? '' : formatSigned(Number(r.reg))}</TableCell>}
+                    {showKV  && <TableCell className={["font-mono text-xs", colorClass(r.kv)].join(" ")}>{r.kv  == null ? '' : formatSigned(Number(r.kv))}</TableCell>}
+                    {showCap && <TableCell className={["font-mono text-xs", colorClass(r.cap)].join(" ")}>{r.cap == null ? '' : formatSigned(Number(r.cap))}</TableCell>}
                   </TableRow>
                 ))}
               </TableBody>
@@ -710,44 +1011,60 @@ export default function RunMonitor({ runId }: { runId: string }) {
           </div>
         </Card>
 
-        <Card className="p-4 space-y-4">
+        <Card className="p-4 space-y-4 lg:col-span-2 min-w-0">
           <div className="font-medium">Orders & Fills</div>
-          <div className="grid md:grid-cols-3 lg:grid-cols-4 gap-4">
-            <div className="max-h-64 overflow-auto">
+          {viewBar?.t != null && Number.isFinite(viewTs) && viewTs > 0 && (
+            <div className="text-xs text-muted-foreground">As of {new Date(Number(viewTs)).toLocaleString([], { hour12: false })}</div>
+          )}
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+            <div className="max-h-64 overflow-auto min-w-0">
               <div className="text-sm font-medium mb-1">Intended</div>
               <Table>
                 <TableHeader><TableRow><TableHead>Sym</TableHead><TableHead>Side</TableHead><TableHead>Qty</TableHead></TableRow></TableHeader>
                 <TableBody>
                   {intended.map((o: any, i: number) => (
-                    <TableRow key={i}><TableCell className="font-mono text-xs">{o?.sym}</TableCell><TableCell className="text-xs">{o?.side}</TableCell><TableCell className="font-mono text-xs">{o?.qty}</TableCell></TableRow>
+                    <TableRow key={i}>
+                      <TableCell className="font-mono text-xs">{o?.sym}</TableCell>
+                      <TableCell className={["text-xs", sideClass(o?.side)].join(" ")}>{o?.side}</TableCell>
+                      <TableCell className={["font-mono text-xs", colorClass(o?.qty)].join(" ")}>{o?.qty}</TableCell>
+                    </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </div>
-            <div className="max-h-64 overflow-auto">
+            <div className="max-h-64 overflow-auto min-w-0">
               <div className="text-sm font-medium mb-1">Sent</div>
               <Table>
                 <TableHeader><TableRow><TableHead>Sym</TableHead><TableHead>Side</TableHead><TableHead>Qty</TableHead></TableRow></TableHeader>
                 <TableBody>
                   {sent.map((o: any, i: number) => (
-                    <TableRow key={i}><TableCell className="font-mono text-xs">{o?.sym}</TableCell><TableCell className="text-xs">{o?.side}</TableCell><TableCell className="font-mono text-xs">{o?.qty}</TableCell></TableRow>
+                    <TableRow key={i}>
+                      <TableCell className="font-mono text-xs">{o?.sym}</TableCell>
+                      <TableCell className={["text-xs", sideClass(o?.side)].join(" ")}>{o?.side}</TableCell>
+                      <TableCell className={["font-mono text-xs", colorClass(o?.qty)].join(" ")}>{o?.qty}</TableCell>
+                    </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </div>
-            <div className="max-h-64 overflow-auto">
+            <div className="max-h-64 overflow-auto min-w-0">
               <div className="text-sm font-medium mb-1">Fills</div>
               <Table>
                 <TableHeader><TableRow><TableHead>Sym</TableHead><TableHead>Qty</TableHead><TableHead>Price</TableHead><TableHead>Fee (bps)</TableHead></TableRow></TableHeader>
                 <TableBody>
                   {fills.map((f: any, i: number) => (
-                    <TableRow key={i}><TableCell className="font-mono text-xs">{f?.sym}</TableCell><TableCell className="font-mono text-xs">{f?.qty}</TableCell><TableCell className="font-mono text-xs">{Number(f?.price).toFixed(4)}</TableCell><TableCell className="font-mono text-xs">{Number(f?.fee_bps ?? 0).toFixed(2)}</TableCell></TableRow>
+                    <TableRow key={i}>
+                      <TableCell className="font-mono text-xs">{f?.sym}</TableCell>
+                      <TableCell className={["font-mono text-xs", colorClass(f?.qty)].join(" ")}>{f?.qty}</TableCell>
+                      <TableCell className="font-mono text-xs">{Number(f?.price).toFixed(4)}</TableCell>
+                      <TableCell className={["font-mono text-xs", Number(f?.fee_bps ?? 0) > 0 ? "text-amber-600" : "text-muted-foreground"].join(" ")}>{Number(f?.fee_bps ?? 0).toFixed(2)}</TableCell>
+                    </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </div>
             {Array.isArray(viewBar?.orders?.rejects) && viewBar.orders.rejects.length > 0 && (
-              <div className="max-h-64 overflow-auto">
+              <div className="max-h-64 overflow-auto min-w-0">
                 <div className="text-sm font-medium mb-1">Rejects</div>
                 <Table>
                   <TableHeader><TableRow><TableHead>Sym</TableHead><TableHead>Side</TableHead><TableHead>Qty</TableHead></TableRow></TableHeader>
@@ -861,3 +1178,16 @@ export default function RunMonitor({ runId }: { runId: string }) {
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
