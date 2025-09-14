@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { TooltipLabel } from "./shared/TooltipLabel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import api from "@/api/client";
@@ -31,6 +32,7 @@ import {
   AreaChart,
   Area,
   ErrorBar,
+  Brush,
 } from "recharts";
 import {
   ChartContainer,
@@ -92,6 +94,8 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   }>({});
   const [tab, setTab] = useState("overview");
   const [runStatus, setRunStatus] = useState<RunSummary | null>(null);
+  const [compareMode, setCompareMode] = useState(false);
+  const [timeRange, setTimeRange] = useState<[number, number] | null>(null);
 
   // Keep runId in sync with parent prop if it changes (navigation)
   useEffect(() => {
@@ -588,6 +592,24 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
     return { x, y, z };
   }, [gradMatrix]);
 
+  const filteredEquity = useMemo(() => {
+    if (!timeRange) return equity;
+    return equity.slice(timeRange[0], timeRange[1] + 1);
+  }, [equity, timeRange]);
+
+  const filteredDrawdown = useMemo(() => {
+    if (!timeRange) return drawdown;
+    return drawdown.slice(timeRange[0], timeRange[1] + 1);
+  }, [drawdown, timeRange]);
+
+  const handleBrush = (range: { startIndex?: number; endIndex?: number }) => {
+    if (typeof range.startIndex === "number" && typeof range.endIndex === "number") {
+      setTimeRange([range.startIndex, range.endIndex]);
+    } else {
+      setTimeRange(null);
+    }
+  };
+
   return (
     <>
     <div className="space-y-6">
@@ -621,12 +643,26 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
             <Button size="sm" variant="destructive" onClick={onDeleteRun} disabled={!runId || loading}>
               Delete
             </Button>
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button size="sm" variant="secondary">Monitor</Button>
+              </SheetTrigger>
+              <SheetContent side="right" className="p-4">
+                {runId && <RunMonitor runId={runId} />}
+              </SheetContent>
+            </Sheet>
           </div>
           <div className="flex items-center gap-2 rounded border px-2 py-1">
             <TooltipLabel className="text-sm" tooltip="Automatically reload metrics">
               Auto‑refresh
             </TooltipLabel>
             <Switch checked={autoRefresh} onCheckedChange={setAutoRefresh} />
+          </div>
+          <div className="flex items-center gap-2 rounded border px-2 py-1">
+            <TooltipLabel className="text-sm" tooltip="Overlay another run for comparison">
+              Compare
+            </TooltipLabel>
+            <Switch checked={compareMode} onCheckedChange={setCompareMode} />
           </div>
         </div>
         {!!tags && (
@@ -635,7 +671,42 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
           </div>
         )}
       </Card>
-      {metrics && equity.length > 0 && (
+      {metrics && filteredEquity.length > 0 && (
+        <Card className="p-4 space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
+            <div>Net Return: {formatPct(metrics.total_return)}</div>
+            <div>Sharpe: {formatSigned(metrics.sharpe)}</div>
+            <div>Max DD: {formatPct(metrics.max_drawdown)}</div>
+            <div>Turnover: {formatSigned(metrics.turnover)}</div>
+            <div>Fees/Slippage: {formatSigned(metrics.avg_trade_pnl ?? 0)}</div>
+            <div>Status: {runStatus?.status || "–"}</div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="h-24">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={filteredEquity}>
+                  <XAxis dataKey="step" hide />
+                  <YAxis hide />
+                  <Tooltip formatter={(v:any)=>fmtVal(Number(v))} />
+                  <Line type="monotone" dataKey="equity" stroke="#10b981" dot={false} isAnimationActive={false} />
+                  <Brush dataKey="step" onChange={handleBrush} height={10} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="h-24">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={filteredDrawdown}>
+                  <XAxis dataKey="step" hide />
+                  <YAxis hide />
+                  <Tooltip formatter={(v:any)=>formatPct(Number(v))} />
+                  <Area type="monotone" dataKey="dd" stroke="#ef4444" fill="#fecaca" isAnimationActive={false} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </Card>
+      )}
+      {metrics && filteredEquity.length > 0 && (
         <Card className="p-4 space-y-3">
           <TooltipLabel className="font-semibold" tooltip="Net-of-cost equity curve, drawdown and summary metrics.">
             Net Performance
@@ -643,7 +714,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
           <div className="grid lg:grid-cols-2 gap-6">
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={equity}>
+                <LineChart data={filteredEquity}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="step" tickFormatter={fmtStep} />
                   <YAxis tickFormatter={(v: any) => String(v)} />
@@ -654,7 +725,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
             </div>
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={drawdown}>
+                <AreaChart data={filteredDrawdown}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="step" tickFormatter={fmtStep} />
                   <YAxis tickFormatter={(v: any) => formatPct(v)} />
@@ -687,7 +758,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
         </div>
         {showDists && (
           <ActionsHistogramSection runId={runId} tags={tags} />
-      )}
+        )}
       </Card>
 
       <Card className="p-4 space-y-3">
@@ -749,16 +820,16 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
         )}
       </Card>
 
-      <Tabs value={tab} onValueChange={setTab} className="space-y-6">
-        <TabsList className="w-full flex flex-wrap gap-2">
+      <Tabs value={tab} onValueChange={setTab} orientation="vertical" className="flex gap-6">
+        <TabsList className="flex flex-col w-48 space-y-2">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="optim">Optimization</TabsTrigger>
           <TabsTrigger value="timing">Timing</TabsTrigger>
           <TabsTrigger value="grads">Gradients</TabsTrigger>
           <TabsTrigger value="scalars">Scalars</TabsTrigger>
           <TabsTrigger value="report">Report</TabsTrigger>
-          {runId && <TabsTrigger value="monitor">Monitor</TabsTrigger>}
         </TabsList>
+        <div className="flex-1 space-y-6">
         {/* Rollout/Eval */}
         <TabsContent value="overview">
       <div id="tr-overview" />
@@ -778,13 +849,6 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
       </Card>
 
         </TabsContent>
-        {runId && (
-          <TabsContent value="monitor">
-            <Card className="p-2">
-              <RunMonitor runId={runId} />
-            </Card>
-          </TabsContent>
-        )}
         <TabsContent value="optim">
       {/* Optimization */}
       <Card className="p-4 space-y-3">
@@ -1006,6 +1070,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
             )}
           </Card>
         </TabsContent>
+        </div>
       </Tabs>
 
       <div className="text-xs text-muted-foreground">
