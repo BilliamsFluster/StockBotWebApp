@@ -780,7 +780,8 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
         </details>
       </Card>
 
-      <div className="grid lg:grid-cols-3 gap-6">
+      <div className="grid lg:grid-cols-[2fr,1fr] gap-6 items-start">
+        <div className="grid grid-cols-1 gap-6 min-w-0">
         {/* Cum P&L + Drawdown */}
         <Card className="p-4 space-y-2 lg:col-span-1">
           <div className="font-medium">Cum P&L and Drawdown</div>
@@ -893,6 +894,83 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
           </div>
         </Card>
       </div>
+      {/* Right column (visible on lg+): rolling metrics + decision path */}
+      <div className="hidden lg:block space-y-6 min-w-0">
+        <Card className="p-4 space-y-2">
+          <div className="font-medium">Rolling Metrics</div>
+          {viewBar?.t != null && Number.isFinite(viewTs) && viewTs > 0 && (
+            <div className="text-xs text-muted-foreground">As of {new Date(Number(viewTs)).toLocaleString([], { hour12: false })}</div>
+          )}
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Metric</TableHead>
+                <TableHead>Value</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow>
+                <TableCell>Sharpe</TableCell>
+                <TableCell className={["font-mono text-xs", colorClass(viewBar?.rolling?.sharpe)].join(" ")}>{formatSigned(Number(viewBar?.rolling?.sharpe ?? 0))}</TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell>Sortino</TableCell>
+                <TableCell className={["font-mono text-xs", colorClass(viewBar?.rolling?.sortino)].join(" ")}>{formatSigned(Number(viewBar?.rolling?.sortino ?? 0))}</TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell>Realized Vol</TableCell>
+                <TableCell className="font-mono text-xs">{formatPct(Number(viewBar?.rolling?.vol_realized ?? 0))}</TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell>Hit Rate</TableCell>
+                <TableCell className="font-mono text-xs">{formatPct(Number(viewBar?.rolling?.hit_rate ?? 0))}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </Card>
+
+        <Card className="p-4 space-y-2 min-w-0">
+          <div className="font-medium">Decision Path</div>
+          {viewBar?.t != null && Number.isFinite(viewTs) && viewTs > 0 && (
+            <div className="text-xs text-muted-foreground">As of {new Date(Number(viewTs)).toLocaleString([], { hour12: false })}</div>
+          )}
+          {viewBar?.risk?.applied && (
+            <div className="text-xs text-muted-foreground">
+              Applied: {Array.isArray(viewBar.risk.applied) ? viewBar.risk.applied.join(", ") : String(viewBar.risk.applied)}
+            </div>
+          )}
+          {viewBar?.risk?.flags && Array.isArray(viewBar.risk.flags) && viewBar.risk.flags.length > 0 && (
+            <div className="text-xs text-red-500">
+              Flags: {viewBar.risk.flags.join(", ")}
+            </div>
+          )}
+          <div className="max-h-80 min-w-0">
+            <Table containerClassName="max-h-80 overflow-y-auto overflow-x-hidden" className="table-fixed">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-20">Symbol</TableHead>
+                  {showRaw && <TableHead className="w-20">Raw</TableHead>}
+                  {showReg && <TableHead className="w-24">Regime</TableHead>}
+                  {showKV &&  <TableHead className="w-24">Kelly/Vol</TableHead>}
+                  {showCap && <TableHead className="w-24">Capped</TableHead>}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {decisionRows.map((r) => (
+                  <TableRow key={r.sym}>
+                    <TableCell className="font-mono text-xs truncate max-w-[8ch]">{r.sym}</TableCell>
+                    {showRaw && <TableCell className={["font-mono text-xs whitespace-nowrap", colorClass(r.raw)].join(" ")}>{r.raw == null ? '' : formatSigned(Number(r.raw))}</TableCell>}
+                    {showReg && <TableCell className={["font-mono text-xs whitespace-nowrap", colorClass(r.reg)].join(" ")}>{r.reg == null ? '' : formatSigned(Number(r.reg))}</TableCell>}
+                    {showKV  && <TableCell className={["font-mono text-xs whitespace-nowrap", colorClass(r.kv)].join(" ")}>{r.kv  == null ? '' : formatSigned(Number(r.kv))}</TableCell>}
+                    {showCap && <TableCell className={["font-mono text-xs whitespace-nowrap", colorClass(r.cap)].join(" ")}>{r.cap == null ? '' : formatSigned(Number(r.cap))}</TableCell>}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </Card>
+      </div>
+      </div>
 
       {/* AI Insights */}
       <Card className="p-4 space-y-2">
@@ -934,8 +1012,8 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
         </div>
       </Card>
 
-      {/* Rolling performance metrics */}
-      <Card className="p-4 space-y-2 lg:max-w-md">
+      {/* Rolling performance metrics (hidden on lg+ in favor of side panel) */}
+      <Card className="p-4 space-y-2 lg:max-w-md lg:hidden">
         <div className="font-medium">Rolling Metrics</div>
         {viewBar?.t != null && Number.isFinite(viewTs) && viewTs > 0 && (
           <div className="text-xs text-muted-foreground">As of {new Date(Number(viewTs)).toLocaleString([], { hour12: false })}</div>
@@ -969,8 +1047,8 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
       </Card>
 
       {/* Decision path and Orders */}
-      <div className="grid lg:grid-cols-3 gap-6">
-        <Card className="p-4 space-y-2 min-w-0">
+      <div className="grid md:grid-cols-2 gap-6">
+        <Card className="p-4 space-y-2 min-w-0 lg:hidden">
           <div className="font-medium">Decision Path</div>
           {viewBar?.t != null && Number.isFinite(viewTs) && viewTs > 0 && (
             <div className="text-xs text-muted-foreground">As of {new Date(Number(viewTs)).toLocaleString([], { hour12: false })}</div>
@@ -985,25 +1063,25 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
               Flags: {viewBar.risk.flags.join(", ")}
             </div>
           )}
-          <div className="max-h-80 overflow-auto min-w-0">
-            <Table>
+          <div className="max-h-80 min-w-0">
+            <Table containerClassName="max-h-80 overflow-y-auto overflow-x-hidden" className="table-fixed">
               <TableHeader>
                 <TableRow>
-                  <TableHead>Symbol</TableHead>
-                  {showRaw && <TableHead>Raw</TableHead>}
-                  {showReg && <TableHead>Regime</TableHead>}
-                  {showKV &&  <TableHead>Kelly/Vol</TableHead>}
-                  {showCap && <TableHead>Capped</TableHead>}
+                  <TableHead className="w-20">Symbol</TableHead>
+                  {showRaw && <TableHead className="w-20">Raw</TableHead>}
+                  {showReg && <TableHead className="w-24">Regime</TableHead>}
+                  {showKV &&  <TableHead className="w-24">Kelly/Vol</TableHead>}
+                  {showCap && <TableHead className="w-24">Capped</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {decisionRows.map((r) => (
                   <TableRow key={r.sym}>
-                    <TableCell className="font-mono text-xs">{r.sym}</TableCell>
-                    {showRaw && <TableCell className={["font-mono text-xs", colorClass(r.raw)].join(" ")}>{r.raw == null ? '' : formatSigned(Number(r.raw))}</TableCell>}
-                    {showReg && <TableCell className={["font-mono text-xs", colorClass(r.reg)].join(" ")}>{r.reg == null ? '' : formatSigned(Number(r.reg))}</TableCell>}
-                    {showKV  && <TableCell className={["font-mono text-xs", colorClass(r.kv)].join(" ")}>{r.kv  == null ? '' : formatSigned(Number(r.kv))}</TableCell>}
-                    {showCap && <TableCell className={["font-mono text-xs", colorClass(r.cap)].join(" ")}>{r.cap == null ? '' : formatSigned(Number(r.cap))}</TableCell>}
+                    <TableCell className="font-mono text-xs truncate max-w-[8ch]">{r.sym}</TableCell>
+                    {showRaw && <TableCell className={["font-mono text-xs whitespace-nowrap", colorClass(r.raw)].join(" ")}>{r.raw == null ? '' : formatSigned(Number(r.raw))}</TableCell>}
+                    {showReg && <TableCell className={["font-mono text-xs whitespace-nowrap", colorClass(r.reg)].join(" ")}>{r.reg == null ? '' : formatSigned(Number(r.reg))}</TableCell>}
+                    {showKV  && <TableCell className={["font-mono text-xs whitespace-nowrap", colorClass(r.kv)].join(" ")}>{r.kv  == null ? '' : formatSigned(Number(r.kv))}</TableCell>}
+                    {showCap && <TableCell className={["font-mono text-xs whitespace-nowrap", colorClass(r.cap)].join(" ")}>{r.cap == null ? '' : formatSigned(Number(r.cap))}</TableCell>}
                   </TableRow>
                 ))}
               </TableBody>
@@ -1016,7 +1094,7 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
           {viewBar?.t != null && Number.isFinite(viewTs) && viewTs > 0 && (
             <div className="text-xs text-muted-foreground">As of {new Date(Number(viewTs)).toLocaleString([], { hour12: false })}</div>
           )}
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-2 xl:grid-cols-3 gap-4">
             <div className="max-h-64 overflow-auto min-w-0">
               <div className="text-sm font-medium mb-1">Intended</div>
               <Table>

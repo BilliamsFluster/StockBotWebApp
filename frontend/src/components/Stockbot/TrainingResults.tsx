@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { TooltipLabel } from "./shared/TooltipLabel";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+// Tabs removed: replaced by left sidebar section nav
 import api from "@/api/client";
 import { deleteRun } from "@/api/stockbot";
 import type { RunSummary, Metrics, RunArtifacts } from "./lib/types";
@@ -59,8 +59,25 @@ const statTriple = (arr: number[]) => {
   return { median, q1, q3 };
 };
 
-// Lazily load heavy Plotly component on the client only
-const PlotlySurface = dynamic(() => import("./PlotlySurface"), { ssr: false });
+// Lazily load heavy Plotly component with retry to avoid transient ChunkLoadError during dev/HMR
+// and when using HTTPS + proxies. Falls back to a tiny loading stub.
+function withRetry<T>(loader: () => Promise<T>, retries = 3, delay = 1200): () => Promise<T> {
+  const load = async (): Promise<T> => {
+    try { return await loader(); }
+    catch (err: any) {
+      const msg = String(err?.message || err || "");
+      const transient = /chunk load|loading chunk|ChunkLoadError/i.test(msg);
+      if (!transient || retries <= 0) throw err;
+      await new Promise((r) => setTimeout(r, delay));
+      return (withRetry(loader, retries - 1, delay))();
+    }
+  };
+  return load;
+}
+const PlotlySurface = dynamic(() => withRetry(() => import("./PlotlySurface"))(), {
+  ssr: false,
+  loading: () => <div className="text-xs text-muted-foreground">Loading 3D surface…</div>,
+});
 
 export default function TrainingResults({ initialRunId }: { initialRunId?: string }) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
@@ -92,10 +109,29 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
     entropy?: Array<{ step: number; median: number; q1: number; q3: number }>;
     actionHist?: Array<{ mid: number; median: number; err: [number, number] }>;
   }>({});
-  const [tab, setTab] = useState("overview");
+  // Left sidebar section nav + monitor drawer + compare overlay state
+  const [section, setSection] = useState<
+    | "overview"
+    | "performance"
+    | "trades"
+    | "risk"
+    | "diagnostics"
+    | "scalars"
+    | "artifacts"
+  >("overview");
   const [runStatus, setRunStatus] = useState<RunSummary | null>(null);
   const [compareMode, setCompareMode] = useState(false);
   const [timeRange, setTimeRange] = useState<[number, number] | null>(null);
+  const [monitorOpen, setMonitorOpen] = useState(false);
+  const [allRuns, setAllRuns] = useState<RunSummary[]>([]);
+  const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [compareMetrics, setCompareMetrics] = useState<Record<string, Metrics>>({});
+  const [compareEquity, setCompareEquity] = useState<Record<string, Array<{ step: number; equity: number }>>>({});
+  // Layout/UX: monitor hover autoscroll + dynamic grid sizing
+  const monitorRef = useRef<HTMLDivElement | null>(null);
+  const [monitorHover, setMonitorHover] = useState(false);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const [contentWidth, setContentWidth] = useState(0);
 
   // Keep runId in sync with parent prop if it changes (navigation)
   useEffect(() => {
@@ -166,6 +202,18 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
 
     return stopAll;
   }, [runId]);
+
+  // Ensure run list exists for compare when a run is already selected
+  useEffect(() => {
+    if (runs.length > 0) return;
+    (async () => {
+      try {
+        const { data } = await api.get<RunSummary[]>("/stockbot/runs");
+        const onlyTrain = (data || []).filter((r) => r.type === "train");
+        setRuns(onlyTrain);
+      } catch {}
+    })();
+  }, [runs.length]);
 
   // Load persisted UI state per run
   useEffect(() => {
@@ -433,6 +481,56 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   useEffect(() => { if (runId) loadArtifacts(); }, [runId]);
   useEffect(() => { if (runId && tags) loadSeedAggregates(); }, [runId, tags]);
 
+  // Observe available content width to format chart grids dynamically
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        setContentWidth(Math.max(0, e.contentRect.width));
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [monitorOpen]);
+
+  // Nudge Recharts to recompute sizes when layout changes
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try { window.dispatchEvent(new Event('resize')); } catch {}
+    }, 60);
+    return () => clearTimeout(t);
+  }, [monitorOpen, contentWidth, section]);
+
+  const perfCols = contentWidth >= 1100 ? 2 : 1;
+  const diagCols = contentWidth >= 1500 ? 3 : contentWidth >= 1000 ? 2 : 1;
+  const scalarCols = contentWidth >= 1100 ? 2 : 1;
+
+  // Auto-scroll the monitor drawer while hovered
+  useEffect(() => {
+    if (!monitorOpen || !monitorHover) return;
+    let raf: number | null = null;
+    let last = performance.now();
+    const speedPxPerSec = 48; // gentle crawl
+    const step = (now: number) => {
+      const el = monitorRef.current;
+      if (!el) return;
+      const dt = Math.max(0, (now - last) / 1000);
+      last = now;
+      const maxScroll = el.scrollHeight - el.clientHeight;
+      if (maxScroll <= 0) { raf = requestAnimationFrame(step); return; }
+      const next = el.scrollTop + dt * speedPxPerSec;
+      if (next >= maxScroll - 2) {
+        el.scrollTop = 0; // loop from top
+      } else {
+        el.scrollTop = next;
+      }
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => { if (raf != null) cancelAnimationFrame(raf); };
+  }, [monitorOpen, monitorHover]);
+
   const fmtStep = (s: number) => `${s}`;
   const fmtVal = (v: number) => Number.isFinite(v) ? v.toFixed(5) : "";
   const fmtMetric = (k: string, v: number) =>
@@ -453,7 +551,12 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
       title === "Gradient Norm" ? "Global L2 norm of gradients; useful for spotting exploding/vanishing gradients." :
       (tag ? `Scalar: ${tag}` : undefined);
 
-    const data = (tag && series[tag]) || [];
+    const dataFull = (tag && series[tag]) || [];
+    const data = useMemo(() => {
+      if (!timeRange) return dataFull;
+      const [a, b] = timeRange;
+      return dataFull.slice(Math.max(0, a), Math.min(dataFull.length - 1, b) + 1);
+    }, [dataFull, timeRange]);
     const [hover, setHover] = useState<{ step: number; value: number; time: number } | null>(null);
 
     useEffect(() => {
@@ -609,6 +712,554 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
       setTimeRange(null);
     }
   };
+
+  // New dockable layout with left sidebar + monitor drawer
+  const useNewLayout = true;
+  if (useNewLayout) {
+    // Compare overlay data loader (metrics + equity)
+    const loadCompareData = async (ids: string[]) => {
+      const nextMetrics: Record<string, Metrics> = {};
+      const nextEquity: Record<string, Array<{ step: number; equity: number }>> = {};
+      for (const id of ids) {
+        try {
+          const { data: art } = await api.get<RunArtifacts>(`/stockbot/runs/${id}/artifacts`);
+          if (art?.metrics) {
+            const { data: m } = await api.get<Metrics>(buildUrl(art.metrics));
+            nextMetrics[id] = m as Metrics;
+          }
+          if (art?.equity) {
+            const rows = await parseCSV(art.equity);
+            const eqRaw = rows.map((r: any, i: number) => ({ step: i, equity: Number(r.equity) }));
+            if (eqRaw.length) {
+              const base = eqRaw[0].equity || 1;
+              nextEquity[id] = eqRaw.map((e) => ({ step: e.step, equity: (100 * e.equity) / (base || 1e-9) }));
+            }
+          }
+        } catch {}
+      }
+      setCompareMetrics(nextMetrics);
+      setCompareEquity(nextEquity);
+    };
+
+    const overlayEquityKeys = Object.keys(compareEquity);
+
+    return (
+      <>
+      <div ref={contentRef} className={["relative", monitorOpen ? "pr-[820px]" : ""].join(" ")}> 
+          {/* Header */}
+          <Card className="p-4 mb-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="text-lg font-semibold">Training Results</div>
+              <div className="flex-1" />
+              <div className="hidden md:block w-64">
+                <TooltipLabel className="text-xs" tooltip="Select a training run to inspect">Run</TooltipLabel>
+                <select className="border rounded h-10 px-3 w-full" value={runId} onChange={(e) => setRunId(e.target.value)}>
+                  {runs.map((r) => (
+                    <option key={r.id} value={r.id}>{`${r.id} · ${r.status}`}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <TooltipLabel tooltip="ID of a specific run">Run ID</TooltipLabel>
+                <Input value={runId} onChange={(e) => setRunId(e.target.value)} placeholder="Run ID" className="w-48" />
+                <Button size="sm" onClick={onLoad} disabled={!runId || loading}>{loading ? "Loading…" : "Load"}</Button>
+                <Button size="sm" variant="destructive" onClick={onDeleteRun} disabled={!runId || loading}>Delete</Button>
+                <Button size="sm" variant={monitorOpen ? "default" : "secondary"} onClick={() => setMonitorOpen((v) => !v)}>
+                  {monitorOpen ? "Hide Monitor" : "Monitor"}
+                </Button>
+              </div>
+              <div className="flex items-center gap-2 rounded border px-2 py-1">
+                <TooltipLabel className="text-sm" tooltip="Automatically reload metrics">Auto-refresh</TooltipLabel>
+                <Switch checked={autoRefresh} onCheckedChange={setAutoRefresh} />
+              </div>
+              <div className="flex items-center gap-2 rounded border px-2 py-1">
+                <TooltipLabel className="text-sm" tooltip="Overlay multiple runs">Compare</TooltipLabel>
+                <Switch checked={compareMode} onCheckedChange={(v)=>{ setCompareMode(v); if (!v) { setCompareIds([]); setCompareEquity({}); setCompareMetrics({}); } }} />
+              </div>
+            </div>
+            {!!tags && (
+              <div className="text-xs text-muted-foreground mt-2">Scalars: {tags.scalars.slice(0, 8).join(", ")}{tags.scalars.length > 8 ? " …" : ""}</div>
+            )}
+            {compareMode && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <TooltipLabel className="text-xs" tooltip="Pick runs to overlay">Compare runs</TooltipLabel>
+                <select
+                  multiple
+                  className="border rounded px-2 py-1 h-24 min-w-[260px]"
+                  value={compareIds}
+                  onChange={(e) => {
+                    const opts = Array.from(e.target.selectedOptions).map((o) => o.value);
+                    setCompareIds(opts);
+                    loadCompareData(opts);
+                  }}
+                >
+                  {runs.map((r) => (
+                    <option key={r.id} value={r.id}>{r.id}</option>
+                  ))}
+                </select>
+                {Object.keys(compareMetrics).length > 0 && (
+                  <div className="overflow-auto">
+                    <table className="text-xs border rounded">
+                      <thead>
+                        <tr>
+                          <th className="text-left px-2 py-1">Run</th>
+                          <th className="text-left px-2 py-1">Return</th>
+                          <th className="text-left px-2 py-1">Sharpe</th>
+                          <th className="text-left px-2 py-1">Max DD</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.entries(compareMetrics).map(([id, m]) => (
+                          <tr key={id}>
+                            <td className="px-2 py-1 font-mono">{id.slice(-8)}</td>
+                            <td className="px-2 py-1">{formatPct(m.total_return)}</td>
+                            <td className="px-2 py-1">{formatSigned(m.sharpe)}</td>
+                          <td className="px-2 py-1">{formatPct(m.max_drawdown)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </Card>
+
+          {/* Columns: left nav + main */}
+          <div className="grid grid-cols-[14rem,1fr] gap-6">
+            <aside className="space-y-2">
+              <div className="text-sm font-semibold text-muted-foreground mb-1">Sections</div>
+              {[
+                { id: "overview", label: "Overview" },
+                { id: "performance", label: "Performance" },
+                { id: "trades", label: "Trades & Behavior" },
+                { id: "risk", label: "Risk & Exposure" },
+                { id: "diagnostics", label: "Diagnostics" },
+                { id: "scalars", label: "Data & Scalars" },
+                { id: "artifacts", label: "Artifacts" },
+              ].map((s) => (
+                <button
+                  key={s.id}
+                  className={[
+                    "w-full text-left px-3 py-2 rounded border",
+                    section === (s.id as any) ? "bg-muted border-primary" : "border-transparent hover:border-muted-foreground/30",
+                  ].join(" ")}
+                  onClick={() => setSection(s.id as any)}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </aside>
+
+            <div className="space-y-6">
+              {/* Overview */}
+              {section === "overview" && metrics && filteredEquity.length > 0 && (
+                <Card className="p-4 space-y-4">
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
+                    <div>Net Return: {formatPct(metrics.total_return)}</div>
+                    <div>Sharpe: {formatSigned(metrics.sharpe)}</div>
+                    <div>Max DD: {formatPct(metrics.max_drawdown)}</div>
+                    <div>Turnover: {formatSigned(metrics.turnover)}</div>
+                    <div>Fees/Slippage: {formatSigned(metrics.avg_trade_pnl ?? 0)}</div>
+                    <div>Status: {runStatus?.status || "—"}</div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="h-24">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={filteredEquity}>
+                          <XAxis dataKey="step" hide />
+                          <YAxis hide />
+                          <Tooltip formatter={(v:any)=>fmtVal(Number(v))} />
+                          <Line type="monotone" dataKey="equity" stroke="#10b981" dot={false} isAnimationActive={false} />
+                          <Brush dataKey="step" onChange={handleBrush} height={10} />
+                          {overlayEquityKeys.map((id, i) => (
+                            <Line key={id} type="monotone" dataKey="equity" data={compareEquity[id]} stroke={["#2563eb","#16a34a","#ef4444","#f59e0b"][i%4]} dot={false} isAnimationActive={false} />
+                          ))}
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="h-24">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={filteredDrawdown}>
+                          <XAxis dataKey="step" hide />
+                          <YAxis hide />
+                          <Tooltip formatter={(v:any)=>formatPct(Number(v))} />
+                          <Area type="monotone" dataKey="dd" stroke="#ef4444" fill="#fecaca" isAnimationActive={false} />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                  <div className="text-xs text-muted-foreground">Recent anomalies: none detected</div>
+                </Card>
+              )}
+
+              {section === "overview" && (
+                <Card className="p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <TooltipLabel className="font-semibold" tooltip="Training rollout reward and evaluation reward over steps.">Rollout & Eval</TooltipLabel>
+                    <div className="text-sm"><label><input type="checkbox" checked={showRollout} onChange={(e)=>setShowRollout(e.target.checked)} /> Show</label></div>
+                  </div>
+                  {showRollout && (
+                    <div className="grid gap-6" style={{ gridTemplateColumns: perfCols === 2 ? 'repeat(2, minmax(0, 1fr))' : 'repeat(1, minmax(0, 1fr))' }}>
+                      <ChartCard title="Reward (train/eval)" tag={rewardTag} color="#3b82f6" />
+                      <ChartCard title="Episode Length (mean)" tag={epLenTag} />
+                    </div>
+                  )}
+                </Card>
+              )}
+
+              {/* Performance */}
+              {section === "performance" && metrics && filteredEquity.length > 0 && (
+                <Card className="p-4 space-y-3">
+                  <TooltipLabel className="font-semibold" tooltip="Net-of-cost equity curve and drawdown.">Net Performance</TooltipLabel>
+                  <div className="grid gap-6" style={{ gridTemplateColumns: perfCols === 2 ? 'repeat(2, minmax(0, 1fr))' : 'repeat(1, minmax(0, 1fr))' }}>
+                    <div className="h-56">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={filteredEquity}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="step" tickFormatter={fmtStep} />
+                          <YAxis tickFormatter={(v: any) => String(v)} />
+                          <Tooltip labelFormatter={(l) => `step ${l}`} formatter={(v: any) => fmtVal(Number(v))} />
+                          <Line type="monotone" dataKey="equity" stroke="#10b981" dot={false} isAnimationActive={false} />
+                          {overlayEquityKeys.map((id, i) => (
+                            <Line key={id} type="monotone" dataKey={`r_${i}` as any} data={compareEquity[id]} stroke={["#2563eb","#16a34a","#ef4444","#f59e0b"][i%4]} dot={false} isAnimationActive={false} />
+                          ))}
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="h-56">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={filteredDrawdown}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="step" tickFormatter={fmtStep} />
+                          <YAxis tickFormatter={(v: any) => formatPct(v)} />
+                          <Tooltip labelFormatter={(l) => `step ${l}`} formatter={(v: any) => formatPct(Number(v))} />
+                          <Area type="monotone" dataKey="dd" stroke="#ef4444" fill="#fecaca" isAnimationActive={false} />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </Card>
+              )}
+
+              {/* Trades & Behavior */}
+              {section === "trades" && (
+                <Card className="p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <TooltipLabel className="font-semibold" tooltip="Histogram of values from the selected TensorBoard histogram tag (e.g., action distribution).">Action Distributions</TooltipLabel>
+                    <div className="text-sm"><label><input type="checkbox" checked={showDists} onChange={(e)=>setShowDists(e.target.checked)} /> Show</label></div>
+                  </div>
+                  {showDists && (<ActionsHistogramSection runId={runId} tags={tags} />)}
+                  <div className="text-xs text-muted-foreground">Trades table and behavior metrics coming soon.</div>
+                </Card>
+              )}
+
+              {/* Risk & Exposure */}
+              {section === "risk" && artifacts?.equity && (
+                <Card className="p-4 space-y-3">
+                  <TooltipLabel className="font-semibold" tooltip="Turnover and leverage over time.">Risk & Exposure</TooltipLabel>
+                  <div className="h-56">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={lev}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="step" />
+                        <YAxis />
+                        <Tooltip />
+                        <Area dataKey="to" stroke="#06b6d4" fill="#06b6d4" fillOpacity={0.15} />
+                        <Area dataKey="gl" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.15} />
+                        <Area dataKey="nl" stroke="#8b5cf6" fill="#8b5cf6" fillOpacity={0.15} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+              )}
+
+              {/* Diagnostics */}
+              {section === "diagnostics" && (
+                <>
+                  <Card className="p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <TooltipLabel className="font-semibold" tooltip="Optimization metrics from PPO (loss terms, learning rate, clipping, KL).">Optimization</TooltipLabel>
+                      <div className="text-sm"><label><input type="checkbox" checked={showOptim} onChange={(e)=>setShowOptim(e.target.checked)} /> Show</label></div>
+                    </div>
+                    {showOptim && (
+                      <>
+                        <div className="grid gap-6" style={{ gridTemplateColumns: `repeat(${diagCols}, minmax(0, 1fr))` }}>
+                          <ChartCard title="Value Loss" tag={valueLossTag} />
+                          <ChartCard title="Policy Loss" tag={policyLossTag} />
+                          <ChartCard title="Entropy" tag={entropyTag} />
+                        </div>
+                        <div className="grid gap-6" style={{ gridTemplateColumns: `repeat(${diagCols}, minmax(0, 1fr))` }}>
+                          <ChartCard title="Learning Rate" tag={lrTag} />
+                          <ChartCard title="Clip Fraction" tag={clipFracTag} />
+                          <ChartCard title="Approx KL" tag={klTag} />
+                        </div>
+                      </>
+                    )}
+                  </Card>
+
+                  <Card className="p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <TooltipLabel className="font-semibold" tooltip="Performance and throughput metrics such as frames per second (FPS).">Timing</TooltipLabel>
+                      <div className="text-sm"><label><input type="checkbox" checked={showTiming} onChange={(e)=>setShowTiming(e.target.checked)} /> Show</label></div>
+                    </div>
+                    {showTiming && (
+                      <div className="grid gap-6" style={{ gridTemplateColumns: perfCols === 2 ? 'repeat(2, minmax(0, 1fr))' : 'repeat(1, minmax(0, 1fr))' }}>
+                        <ChartCard title="FPS" tag={fpsTag} />
+                      </div>
+                    )}
+                  </Card>
+
+                  <Card className="p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <TooltipLabel className="font-semibold" tooltip="Gradient diagnostics including global norm and per-layer distributions.">Gradients</TooltipLabel>
+                      <div className="text-sm"><label><input type="checkbox" checked={showGrads} onChange={(e)=>setShowGrads(e.target.checked)} /> Show</label></div>
+                    </div>
+                    {showGrads && (
+                      <>
+                        <div className="grid lg:grid-cols-2 gap-6">
+                          <ChartCard title="Gradient Norm" tag={gradTag} color="#ef4444" />
+                          {gradMatrix?.layers && gradMatrix?.steps && gradMatrix.layers.length > 0 && gradMatrix.steps.length > 0 && (
+                            <Card className="p-4 space-y-2">
+                              <div className="font-semibold">Gradient Norms Heatmap (layers × updates)</div>
+                              <Heatmap gm={gradMatrix} />
+                              <div className="text-xs text-muted-foreground">Color scale is log10(norm); red = higher.</div>
+                            </Card>
+                          )}
+                        </div>
+                        {gradientSurface && (
+                          <Card className="p-4 space-y-2">
+                            <div className="font-semibold">Gradient Norms 3D Surface (log10(norm))</div>
+                            <PlotlySurface x={gradientSurface.x} y={gradientSurface.y} z={gradientSurface.z} height={420} />
+                          </Card>
+                        )}
+                      </>
+                    )}
+                  </Card>
+
+                  <Card className="p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <TooltipLabel className="font-semibold" tooltip="Aggregate metrics across run seeds (median – IQR).">Seed Aggregate</TooltipLabel>
+                      <div className="text-sm"><label><input type="checkbox" checked={showSeed} onChange={(e)=>setShowSeed(e.target.checked)} /> Show</label></div>
+                    </div>
+                    {showSeed && (
+                      <div className="space-y-4">
+                        {seedAgg.metrics && (
+                          <table className="text-sm w-full">
+                            <thead>
+                              <tr><th className="text-left">Metric</th><th className="text-left">Median</th><th className="text-left">Q1–Q3</th></tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(seedAgg.metrics).map(([k,v]) => (
+                                <tr key={k}>
+                                  <td className="pr-4 capitalize">{k.replace(/_/g, ' ')}</td>
+                                  <td className="pr-4">{fmtMetric(k, v.median)}</td>
+                                  <td>{fmtMetric(k, v.q1)} – {fmtMetric(k, v.q3)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                        {seedAgg.entropy && (
+                          <div className="h-56">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <LineChart data={seedAgg.entropy}>
+                                <CartesianGrid strokeDasharray="3 3" />
+                                <XAxis dataKey="step" tickFormatter={fmtStep} />
+                                <YAxis />
+                                <Tooltip labelFormatter={(l)=>`step ${l}`} formatter={(v:any)=>fmtVal(Number(v))} />
+                                <Line dataKey="median" stroke="#3b82f6" dot={false} />
+                                <Line dataKey="q1" stroke="#94a3b8" dot={false} strokeDasharray="4 4" />
+                                <Line dataKey="q3" stroke="#94a3b8" dot={false} strokeDasharray="4 4" />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </div>
+                        )}
+                        {seedAgg.actionHist && (
+                          <div className="h-56">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <BarChart data={seedAgg.actionHist}>
+                                <CartesianGrid strokeDasharray="3 3" />
+                                <XAxis dataKey="mid" tickFormatter={(v)=>Number(v).toFixed(2)} />
+                                <YAxis />
+                                <Tooltip formatter={(v:any)=>Number(v).toFixed(2)} />
+                                <Bar dataKey="median" isAnimationActive={false}>
+                                  <ErrorBar dataKey="err" width={4} stroke="#1f2937" />
+                                </Bar>
+                              </BarChart>
+                            </ResponsiveContainer>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </Card>
+                </>
+              )}
+
+              {/* Data & Scalars */}
+              {section === "scalars" && tags && tags.scalars?.length > 0 && (
+                <Card className="p-4 space-y-3">
+                  <TooltipLabel className="font-semibold" tooltip="Browse and plot any scalar TensorBoard tag. Click tags below to add, and toggle visibility.">All Scalars</TooltipLabel>
+                  <ScalarGroups
+                    runId={runId}
+                    tags={tags}
+                    selectedTags={selectedTags}
+                    onToggle={async (t: string) => {
+                      const next = selectedTags.includes(t)
+                        ? selectedTags.filter((x) => x !== t)
+                        : [...selectedTags, t];
+                      setSelectedTags(next);
+                      if (!series[t]) {
+                        try {
+                          const { data } = await api.get<{ series: Record<string, TBPoint[]> }>(
+                            `/stockbot/runs/${runId}/tb/scalars-batch`,
+                            { params: { tags: t } }
+                          );
+                          setSeries((prev) => ({ ...prev, ...(data?.series || {}) }));
+                        } catch {}
+                      }
+                    }}
+                  />
+                  {selectedTags.length > 0 && (
+                    <>
+                      <div className="flex flex-wrap gap-2 text-xs">
+                        {selectedTags.map((t, i) => (
+                          <label key={`${t}-${i}`} className="flex items-center gap-1 border rounded px-2 py-1">
+                            <input
+                              type="checkbox"
+                              checked={visibleSelected[t] !== false}
+                              onChange={(e)=>setVisibleSelected((m)=>({ ...m, [t]: e.target.checked }))}
+                            />
+                            {t}
+                            <button className="ml-1 text-muted-foreground" onClick={()=>{
+                              setSelectedTags((xs)=>xs.filter((x)=>x!==t));
+                              setVisibleSelected((m)=>{ const n={...m}; delete n[t]; return n; });
+                            }}>×</button>
+                          </label>
+                        ))}
+                        <button className="text-xs underline" onClick={()=>{ setSelectedTags([]); setVisibleSelected({}); }}>Clear</button>
+                      </div>
+                      <div className="grid gap-4" style={{ gridTemplateColumns: scalarCols === 2 ? 'repeat(2, minmax(0, 1fr))' : 'repeat(1, minmax(0, 1fr))' }}>
+                        {selectedTags.filter((t)=>visibleSelected[t] !== false).map((t, i) => (
+                          <ChartCard key={`${t}-${i}`} title={t} tag={t} />
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </Card>
+              )}
+
+              {/* Artifacts */}
+              {section === "artifacts" && (
+                <Card className="p-4 space-y-4">
+                  <TooltipLabel className="font-semibold" tooltip="Downloaded artifacts saved under the run's report folder.">Report Files</TooltipLabel>
+                  {artifacts ? (
+                    <div className="flex flex-wrap gap-3 text-sm">
+                      {artifacts.metrics && (
+                        <a className="underline" href={artifacts.metrics} target="_blank" rel="noreferrer">metrics.json</a>
+                      )}
+                      {artifacts.equity && (
+                        <a className="underline" href={artifacts.equity} target="_blank" rel="noreferrer">equity.csv</a>
+                      )}
+                      {artifacts.rolling_metrics && (
+                        <a className="underline" href={artifacts.rolling_metrics} target="_blank" rel="noreferrer">rolling_metrics.csv</a>
+                      )}
+                      {artifacts.trades && (
+                        <a className="underline" href={artifacts.trades} target="_blank" rel="noreferrer">trades.csv</a>
+                      )}
+                      {artifacts.gamma_train_yf && (
+                        <a className="underline" href={artifacts.gamma_train_yf} target="_blank" rel="noreferrer">regime_posteriors.yf.csv</a>
+                      )}
+                      {artifacts.gamma_eval_yf && (
+                        <a className="underline" href={artifacts.gamma_eval_yf} target="_blank" rel="noreferrer">regime_posteriors.eval.yf.csv</a>
+                      )}
+                      {artifacts.gamma_prebuilt && (
+                        <a className="underline" href={artifacts.gamma_prebuilt} target="_blank" rel="noreferrer">regime_posteriors.csv</a>
+                      )}
+                      {artifacts.summary && (
+                        <a className="underline" href={artifacts.summary} target="_blank" rel="noreferrer">summary.json</a>
+                      )}
+                      {artifacts.config && (
+                        <a className="underline" href={artifacts.config} target="_blank" rel="noreferrer">config.snapshot.yaml</a>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-muted-foreground">No artifacts found for this run.</div>
+                  )}
+
+                  {artifacts?.equity && (
+                    <div className="grid md:grid-cols-2 gap-4">
+                      <div className="rounded-lg border p-3">
+                        <div className="text-sm font-medium mb-2">Equity & Drawdown</div>
+                        <ChartContainer
+                          config={{ equity: { label: "Equity (Base=100)", color: "hsl(var(--chart-1))" }, dd: { label: "Drawdown (%)", color: "hsl(var(--chart-2))" } }}
+                          className="h-[220px]"
+                        >
+                          <LineChart data={equity.map((e, i) => ({ step: e.step, equity: e.equity, dd: drawdown[i]?.dd ?? 0 }))}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="step" />
+                            <YAxis yAxisId="left" tickFormatter={(v: any) => String(v)} />
+                            <YAxis yAxisId="right" orientation="right" tickFormatter={(v: any) => `${v}%`} domain={["auto", 0]} />
+                            <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+                            <Line yAxisId="left" dataKey="equity" type="monotone" stroke="var(--color-equity)" dot={false} />
+                            <Line yAxisId="right" dataKey="dd" type="monotone" stroke="var(--color-dd)" dot={false} />
+                          </LineChart>
+                        </ChartContainer>
+                      </div>
+                      <div className="rounded-lg border p-3">
+                        <div className="text-sm font-medium mb-2">Turnover & Leverage</div>
+                        <ChartContainer
+                          config={{ to: { label: "Turnover", color: "hsl(var(--chart-3))" }, gl: { label: "Gross", color: "hsl(var(--chart-4))" }, nl: { label: "Net", color: "hsl(var(--chart-5))" } }}
+                          className="h-[220px]"
+                        >
+                          <AreaChart data={lev}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="step" />
+                            <YAxis />
+                            <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+                            <Area dataKey="to" stroke="var(--color-to)" fill="var(--color-to)" fillOpacity={0.15} />
+                            <Area dataKey="gl" stroke="var(--color-gl)" fill="var(--color-gl)" fillOpacity={0.15} />
+                            <Area dataKey="nl" stroke="var(--color-nl)" fill="var(--color-nl)" fillOpacity={0.15} />
+                          </AreaChart>
+                        </ChartContainer>
+                      </div>
+                    </div>
+                  )}
+
+                  {artifacts?.equity && (
+                    <div className="rounded-lg border p-3">
+                      <WeightsHeatmap inline equityUrl={artifacts.equity} />
+                    </div>
+                  )}
+                </Card>
+              )}
+
+              <div className="text-xs text-muted-foreground">Tip: Use the brush on any chart to filter time across panels.</div>
+            </div>
+          </div>
+
+          {/* Right monitor drawer */}
+        {monitorOpen && (
+          <div
+            ref={monitorRef}
+            onMouseEnter={() => setMonitorHover(true)}
+            onMouseLeave={() => setMonitorHover(false)}
+            className="fixed right-0 top-0 bottom-0 w-[820px] max-w-[95vw] bg-background border-l shadow-xl p-4 overflow-y-auto z-40"
+          >
+            {runId && <RunMonitor runId={runId} />}
+          </div>
+        )}
+        </div>
+
+        {showHeatmap && artifacts?.equity && (
+          <WeightsHeatmap equityUrl={artifacts.equity} onClose={()=>setShowHeatmap(false)} />
+        )}
+        {showCharts && artifacts?.equity && (
+          <RunChartsModal equityUrl={artifacts.equity} rollingUrl={artifacts.rolling_metrics || undefined} onClose={()=>setShowCharts(false)} />
+        )}
+      </>
+    );
+  }
 
   return (
     <>
