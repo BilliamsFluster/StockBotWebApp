@@ -37,6 +37,7 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart";
+import MonitorDrawer from "./Results/Monitor/MonitorDrawer";
 
 type TBTags = { scalars: string[]; histograms: string[] };
 type TBPoint = { step: number; wall_time: number; value: number };
@@ -92,6 +93,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   }>({});
   const [tab, setTab] = useState("overview");
   const [runStatus, setRunStatus] = useState<RunSummary | null>(null);
+  const [monitorOpen, setMonitorOpen] = useState(false);
 
   // Keep runId in sync with parent prop if it changes (navigation)
   useEffect(() => {
@@ -590,9 +592,10 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
 
   return (
     <>
-    <div className="space-y-6">
-      <Card className="p-4 space-y-3">
-        <div className="flex flex-wrap items-center gap-3">
+      <MonitorDrawer runId={runId} open={monitorOpen} onOpenChange={setMonitorOpen} />
+      <div className="space-y-6">
+        <Card className="p-4 space-y-3">
+          <div className="flex flex-wrap items-center gap-3">
           <div className="text-lg font-semibold">Training Results</div>
           <div className="flex-1" />
           <div className="hidden md:block w-64">
@@ -628,6 +631,9 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
             </TooltipLabel>
             <Switch checked={autoRefresh} onCheckedChange={setAutoRefresh} />
           </div>
+          <Button size="sm" variant="secondary" onClick={() => setMonitorOpen(true)}>
+            Monitor
+          </Button>
         </div>
         {!!tags && (
           <div className="text-xs text-muted-foreground">
