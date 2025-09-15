@@ -4,6 +4,7 @@ import { protectRoute } from "../middleware/protectRoute.js";
 import {
   planJarvisEdit,
   proxyJarvisVoiceWs,
+  proxyOpenWebUI,
   fetchModels,
   handleJarvisPrompt,
   handleJarvisPromptLite,
@@ -17,6 +18,7 @@ export default function createJarvisRoutes(app) {
   // =====================
   // TEXT + CONTROL ROUTES
   // =====================
+  router.use("/openwebui", protectRoute, proxyOpenWebUI);
   router.post("/ask", protectRoute, handleJarvisPrompt);
   router.post("/ask-lite", protectRoute, handleJarvisPromptLite);
   router.get("/history", protectRoute, getJarvisHistory);

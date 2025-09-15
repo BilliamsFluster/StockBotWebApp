@@ -4,10 +4,39 @@ import { refreshSchwabAccessTokenInternal } from "../config/schwab.js";
 import { log } from "../utils/logger.js";
 import FormData from 'form-data';
 import WebSocket from "ws";
+import { createProxyMiddleware } from 'http-proxy-middleware';
 
 
 
 const STOCKBOT_URL = process.env.STOCKBOT_URL;
+
+export const proxyOpenWebUI = createProxyMiddleware({
+  target: STOCKBOT_URL,
+  changeOrigin: true,
+  pathRewrite: () => '/api/jarvis/chat/ask',
+  onProxyReq: async (proxyReq, req) => {
+    try {
+      const userId = req.user?._id;
+      const accessToken = await refreshSchwabAccessTokenInternal(userId);
+      const body = req.body || {};
+      const messages = Array.isArray(body.messages) ? body.messages : [];
+      const lastUser = [...messages].reverse().find(m => m.role === 'user');
+      const model = body.model;
+      const transformed = {
+        prompt: lastUser?.content || '',
+        model,
+        access_token: accessToken,
+      };
+      const data = JSON.stringify(transformed);
+      proxyReq.setHeader('Content-Type', 'application/json');
+      proxyReq.setHeader('Content-Length', Buffer.byteLength(data));
+      proxyReq.write(data);
+      proxyReq.end();
+    } catch (err) {
+      console.error('proxyOpenWebUI error:', err);
+    }
+  },
+});
 
 
 
