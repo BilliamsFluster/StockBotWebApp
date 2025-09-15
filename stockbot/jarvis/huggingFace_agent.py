@@ -44,7 +44,7 @@ except Exception:
 # Project deps
 # -----------------------------------------
 from .agent import BaseAgent
-from .memory_manager import MemoryManager
+from .memory_manager import MemoryManager, Role
 from providers.provider_manager import ProviderManager
 from utils.web_search import fetch_financial_snippets
 
@@ -496,7 +496,7 @@ class HuggingFaceAgent(BaseAgent):
         final_prompt = self._truncate_prefill(final_prompt)
 
         reply = self._generate_raw(final_prompt, output_format)
-        self.memory_manager.add_turn(uid, user_msg, reply)
+        self.memory_manager.add_to_short_term(uid, Role.JARVIS, reply)
 
         if self.memory_manager.should_summarize(uid):
             self.memory_manager.summarize_short_term(
@@ -530,7 +530,7 @@ class HuggingFaceAgent(BaseAgent):
         finally:
             reply = "".join(full).strip()
             if reply:
-                self.memory_manager.add_turn(uid, user_msg, reply)
+                self.memory_manager.add_to_short_term(uid, Role.JARVIS, reply)
                 if self.memory_manager.should_summarize(uid):
                     asyncio.create_task(
                         self.memory_manager.summarize_short_term(

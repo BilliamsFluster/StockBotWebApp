@@ -24,6 +24,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 # --- NEW: Import the diarization module ---
 from .diarization import SpeakerRegistry, SpeakerEmbedder
+from .memory_manager import Role
 
 # Load Silero VAD (PyTorch impl) and utilities from torch.hub
 VAD_MODEL, VAD_UTILS = torch.hub.load(
@@ -123,6 +124,12 @@ async def process_and_send_results(
     contextual_transcript = f"[Speaker {speaker_id}]: {transcript}"
     conn_history.append({"role": "user", "content": contextual_transcript})
     await websocket.send_text(json.dumps({"event": "transcript", "data": transcript, "speaker": f"Speaker {speaker_id}"}))
+
+    try:
+        uid = getattr(jarvis_service.agent, "_user_id", "default")
+        jarvis_service.agent.memory_manager.add_to_short_term(uid, Role.USER, contextual_transcript)
+    except Exception:
+        pass
 
     # Local helper to synthesize and send TTS audio in a cancel-aware way
     async def flush_tts_phrase(text: str):

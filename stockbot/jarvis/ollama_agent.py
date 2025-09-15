@@ -8,7 +8,7 @@ import os
 from typing import Any, Dict, Optional, AsyncGenerator
 
 from .agent import BaseAgent
-from .memory_manager import MemoryManager
+from .memory_manager import MemoryManager, Role
 from providers.provider_manager import ProviderManager
 from utils.web_search import fetch_financial_snippets
 
@@ -198,8 +198,8 @@ class OllamaAgent(BaseAgent):
         # Fire a blocking Ollama call and get the full reply.
         reply = self._generate_raw(final_prompt, output_format)
 
-        # Persist conversation turn.
-        self.memory_manager.add_turn(uid, user_msg, reply)
+        # Append Jarvis reply to memory (user message handled upstream)
+        self.memory_manager.add_to_short_term(uid, Role.JARVIS, reply)
 
         # Periodically summarize to keep token budgets reasonable.
         if self.memory_manager.should_summarize(uid):
@@ -241,12 +241,17 @@ class OllamaAgent(BaseAgent):
 
         # Persist the stitched reply.
         reply = "".join(full).strip()
-        self.memory_manager.add_turn(uid, user_msg, reply)
-        
+        self.memory_manager.add_to_short_term(uid, Role.JARVIS, reply)
+
         # Run summarization without blocking the stream caller.
         if self.memory_manager.should_summarize(uid):
             print("[Jarvis] Triggering non-blocking background summarization.")
-            asyncio.create_task(self.memory_manager.summarize_short_term(uid, self))
+            asyncio.create_task(
+                self.memory_manager.summarize_short_term(
+                    uid,
+                    llm_summarize_fn=lambda p: self._generate_raw(p, "text")
+                )
+            )
         
         log.debug("[Jarvis] generate_stream() finished.")
 
