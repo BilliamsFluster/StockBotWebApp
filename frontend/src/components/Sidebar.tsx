@@ -13,6 +13,7 @@ import {
   PanelLeftClose,
   PanelRightClose,
   User,
+  MessageSquare,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -55,7 +56,10 @@ interface SidebarProps {
 const navSections = [
   {
     title: "General",
-    links: [{ href: "/overview", icon: LayoutDashboard, label: "Overview" }],
+    links: [
+      { href: "/overview", icon: LayoutDashboard, label: "Overview" },
+      { href: "/openwebui", icon: MessageSquare, label: "Chat" },
+    ],
   },
   {
     title: "Finance",
