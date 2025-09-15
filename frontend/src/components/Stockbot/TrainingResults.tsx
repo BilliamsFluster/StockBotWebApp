@@ -19,6 +19,7 @@ import { parseCSV, drawdownFromEquity } from "./lib/csv";
 import RunMonitor from "./RunMonitor";
 import { buildUrl } from "@/api/client";
 import { formatPct, formatSigned } from "./lib/formats";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   ResponsiveContainer,
   LineChart,
@@ -134,6 +135,8 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   const [contentWidth, setContentWidth] = useState(0);
   const userScrollRef = useRef(0);
   const userInteractRef = useRef(0);
+  // Fallback tabs state for legacy layout block (kept for compatibility)
+  const [tab, setTab] = useState("overview");
 
   // Keep runId in sync with parent prop if it changes (navigation)
   useEffect(() => {
@@ -508,9 +511,9 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   const diagCols = contentWidth >= 1500 ? 3 : contentWidth >= 1000 ? 2 : 1;
   const scalarCols = contentWidth >= 1100 ? 2 : 1;
 
-  // Auto-scroll the monitor drawer while hovered
+  // Auto-scroll the monitor drawer only when NOT hovered (pause during interaction)
   useEffect(() => {
-    if (!monitorOpen || !monitorHover) return;
+    if (!monitorOpen || monitorHover) return;
     let raf: number | null = null;
     let last = performance.now();
     const speedPxPerSec = 16; // slower crawl to reduce sensitivity
@@ -739,6 +742,54 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
     }
   };
 
+  // Decimation: LTTB for smoother big charts in terminal view
+  function lttb<T>(data: T[], threshold: number, getX: (p: T) => number, getY: (p: T) => number): T[] {
+    const n = data.length;
+    if (threshold >= n || threshold <= 2) return data.slice();
+    const sampled: T[] = [];
+    let a = 0;
+    sampled.push(data[a]);
+    const every = (n - 2) / (threshold - 2);
+    for (let i = 0; i < threshold - 2; i++) {
+      let avgX = 0, avgY = 0;
+      let avgRangeStart = Math.floor((i + 1) * every) + 1;
+      let avgRangeEnd = Math.floor((i + 2) * every) + 1;
+      if (avgRangeEnd > n) avgRangeEnd = n;
+      const avgRangeLength = Math.max(1, avgRangeEnd - avgRangeStart);
+      for (let idx = avgRangeStart; idx < avgRangeEnd; idx++) {
+        avgX += getX(data[idx]);
+        avgY += getY(data[idx]);
+      }
+      avgX /= avgRangeLength; avgY /= avgRangeLength;
+      let rangeOffs = Math.floor((i + 0) * every) + 1;
+      let rangeTo = Math.floor((i + 1) * every) + 1;
+      let maxArea = -1;
+      let nextA = rangeOffs;
+      let maxAreaPoint = data[rangeOffs] ?? data[a];
+      const ax = getX(data[a]);
+      const ay = getY(data[a]);
+      for (; rangeOffs < rangeTo && rangeOffs < n; rangeOffs++) {
+        const bx = getX(data[rangeOffs]);
+        const by = getY(data[rangeOffs]);
+        const area = Math.abs((ax - avgX) * (by - ay) - (ax - bx) * (avgY - ay)) * 0.5;
+        if (area > maxArea) { maxArea = area; maxAreaPoint = data[rangeOffs]; nextA = rangeOffs; }
+      }
+      sampled.push(maxAreaPoint);
+      a = nextA;
+    }
+    sampled.push(data[n - 1]);
+    return sampled;
+  }
+  const MAX_PERF_POINTS = 4000;
+  const perfEquityD = React.useMemo(() => {
+    const arr = filteredEquity;
+    return arr.length > MAX_PERF_POINTS ? lttb(arr, MAX_PERF_POINTS, p => p.step, p => p.equity) : arr;
+  }, [filteredEquity]);
+  const perfDrawdownD = React.useMemo(() => {
+    const arr = filteredDrawdown;
+    return arr.length > MAX_PERF_POINTS ? lttb(arr, MAX_PERF_POINTS, p => p.step, p => p.dd) : arr;
+  }, [filteredDrawdown]);
+
   // New dockable layout with left sidebar + monitor drawer
   const useNewLayout = true;
   if (useNewLayout) {
@@ -941,7 +992,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
                   <div className="grid gap-6" style={{ gridTemplateColumns: perfCols === 2 ? 'repeat(2, minmax(0, 1fr))' : 'repeat(1, minmax(0, 1fr))' }}>
                     <div className="h-56">
                       <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={filteredEquity}>
+                        <LineChart data={perfEquityD}>
                           <CartesianGrid strokeDasharray="3 3" />
                           <XAxis dataKey="step" tickFormatter={fmtStep} />
                           <YAxis tickFormatter={(v: any) => String(v)} />
@@ -955,7 +1006,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
                     </div>
                     <div className="h-56">
                       <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={filteredDrawdown}>
+                        <AreaChart data={perfDrawdownD}>
                           <CartesianGrid strokeDasharray="3 3" />
                           <XAxis dataKey="step" tickFormatter={fmtStep} />
                           <YAxis tickFormatter={(v: any) => formatPct(v)} />

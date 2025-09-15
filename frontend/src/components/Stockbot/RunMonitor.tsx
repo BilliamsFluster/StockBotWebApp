@@ -23,7 +23,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const [audit, setAudit] = useState<any[]>([]);
   const [viewIndex, setViewIndex] = useState<number>(-1);
   const [runStatus, setRunStatus] = useState<{ status?: string; type?: string } | null>(null);
-  const [updateMs, setUpdateMs] = useState<number>(1000);
+  const [updateMs, setUpdateMs] = useState<number>(250);
   const [showSeries, setShowSeries] = useState<{ pnl: boolean; dd: boolean; gross: boolean; slip: boolean; to: boolean }>({
     pnl: true,
     dd: true,
@@ -40,6 +40,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const barsBufRef = useRef<TelemetryBar[]>([]);
   const eventsBufRef = useRef<TelemetryEvent[]>([]);
   const lastRef = useRef<TelemetryBar | null>(null);
+  const lastTSeenRef = useRef<number>(-Infinity);
   const telemFallbackRef = useRef<boolean>(false);
   const eventsFallbackRef = useRef<boolean>(false);
   const telemSeenRef = useRef<number>(0);
@@ -112,13 +113,26 @@ export default function RunMonitor({ runId }: { runId: string }) {
     const s = (runStatus?.status || '').toUpperCase();
     return s === 'SUCCEEDED' || s === 'FAILED' || s === 'CANCELLED';
   })();
+  // Treat RUNNING explicitly so we can (re)start streams when transitioning from QUEUED
+  const isActive = (() => {
+    const s = (runStatus?.status || '').toUpperCase();
+    return s === 'RUNNING';
+  })();
 
   // Connect SSE for bars (buffered; disabled when terminal)
   useEffect(() => {
     if (!runId) return;
     if (isTerminal) return;
+    if (!isActive) return; // defer connecting streams until RUNNING
+    // Close any prior streams and reset fallbacks/seen counters when re-activating
     try { esBarsRef.current?.close(); } catch {}
     try { esEventsRef.current?.close(); } catch {}
+    telemFallbackRef.current = false;
+    eventsFallbackRef.current = false;
+    telemSeenRef.current = 0;
+    eventsSeenRef.current = 0;
+    lastTSeenRef.current = -Infinity;
+
     const u = buildUrl(`/api/stockbot/runs/${runId}/telemetry?from_start=true`);
     const es = new EventSource(u, { withCredentials: true });
     esBarsRef.current = es;
@@ -157,7 +171,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
     es2.onerror = () => { try { es2.close(); } catch {}; eventsFallbackRef.current = true; };
 
     return () => { try { es.close(); } catch {}; try { es2.close(); } catch {}; };
-  }, [runId, isTerminal]);
+  }, [runId, isTerminal, isActive]);
 
   // Flush buffers at a controlled cadence
   useEffect(() => {
@@ -169,7 +183,16 @@ export default function RunMonitor({ runId }: { runId: string }) {
         const e = eventsBufRef.current;
         if (b.length) {
           setBars((prev) => {
-            const merged = prev.concat(b);
+            // append only strictly-forward-in-time bars to keep series monotonic and stable
+            const fresh: TelemetryBar[] = [];
+            for (const j of b) {
+              const tt = parseTime((j as any)?.t);
+              if (Number.isFinite(tt) && tt > lastTSeenRef.current) {
+                fresh.push(j);
+                lastTSeenRef.current = tt;
+              }
+            }
+            const merged = fresh.length ? prev.concat(fresh) : prev;
             barsBufRef.current = [];
             return merged.length > 2000 ? merged.slice(-1500) : merged;
           });
@@ -443,17 +466,15 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
   };
 
   const cleanMonotonic = <T extends { t: number }>(arr: T[]): T[] => {
-    // sort ascending by t and drop non-finite/duplicates/backwards
-    const a = arr
-      .filter((p) => Number.isFinite(p.t))
-      .sort((x, y) => x.t - y.t);
+    // Input arrives in-order; drop non-finite and any backward/duplicate time without sorting
     const out: T[] = [];
     let lastT = -Infinity;
-    for (const p of a) {
-      if (!Number.isFinite(p.t)) continue;
-      if (p.t <= lastT) continue;
+    for (const p of arr) {
+      const tt = Number(p?.t);
+      if (!Number.isFinite(tt)) continue;
+      if (tt <= lastT) continue;
       out.push(p);
-      lastT = p.t;
+      lastT = tt;
     }
     return out;
   };
@@ -506,11 +527,74 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
     if (forceZeroTop) return [min - pad, Math.max(0, max) + pad];
     return [min - pad, max + pad];
   };
-  const pnlCumDomain = useMemo(() => domainOf(pnlSeries.map(d => d.cum), 0.1), [pnlSeries]);
-  const pnlDdDomain  = useMemo(() => domainOf(pnlSeries.map(d => d.dd), 0.1, true), [pnlSeries]);
-  const expoDomain   = useMemo(() => domainOf(expoSeries.map(d => d.gross), 0.05), [expoSeries]);
-  const slipDomain   = useMemo(() => domainOf(slipTurnSeries.map(d => d.slip), 0.15), [slipTurnSeries]);
-  const toDomain     = useMemo(() => domainOf(slipTurnSeries.map(d => d.to), 0.15), [slipTurnSeries]);
+  // Stabilize Y domains to avoid constant jitter: only expand as new extremes appear
+  const [pnlCumDomain, setPnlCumDomain] = useState<[number, number]>([0, 1]);
+  const [pnlDdDomain, setPnlDdDomain] = useState<[number, number]>([0, 1]);
+  const [expoDomain, setExpoDomain] = useState<[number, number]>([0, 1]);
+  const [slipDomain, setSlipDomain] = useState<[number, number]>([0, 1]);
+  const [toDomain, setToDomain] = useState<[number, number]>([0, 1]);
+  const ext = useRef({
+    pnlCum: { min: Infinity, max: -Infinity },
+    pnlDd:  { min: Infinity, max: -Infinity },
+    expo:   { min: Infinity, max: -Infinity },
+    slip:   { min: Infinity, max: -Infinity },
+    to:     { min: Infinity, max: -Infinity },
+  });
+  const padDomain = (min: number, max: number, padFrac: number, forceZeroTop = false): [number, number] => {
+    const range = Math.max(1e-9, max - min);
+    const pad = range * padFrac;
+    return [min - pad, (forceZeroTop ? Math.max(0, max) : max) + pad];
+  };
+  useEffect(() => {
+    const vals = pnlSeries.map(d => d.cum).filter(v => Number.isFinite(v));
+    if (vals.length) {
+      const vmin = Math.min(...vals), vmax = Math.max(...vals);
+      if (vmin < ext.current.pnlCum.min) ext.current.pnlCum.min = vmin;
+      if (vmax > ext.current.pnlCum.max) ext.current.pnlCum.max = vmax;
+      const { min, max } = ext.current.pnlCum;
+      if (Number.isFinite(min) && Number.isFinite(max)) setPnlCumDomain(padDomain(min, max, 0.10));
+    }
+  }, [pnlSeries.length]);
+  useEffect(() => {
+    const vals = pnlSeries.map(d => d.dd).filter(v => Number.isFinite(v));
+    if (vals.length) {
+      const vmin = Math.min(...vals), vmax = Math.max(...vals);
+      if (vmin < ext.current.pnlDd.min) ext.current.pnlDd.min = vmin;
+      if (vmax > ext.current.pnlDd.max) ext.current.pnlDd.max = vmax;
+      const { min, max } = ext.current.pnlDd;
+      if (Number.isFinite(min) && Number.isFinite(max)) setPnlDdDomain(padDomain(min, max, 0.10, true));
+    }
+  }, [pnlSeries.length]);
+  useEffect(() => {
+    const vals = expoSeries.map(d => d.gross).filter(v => Number.isFinite(v));
+    if (vals.length) {
+      const vmin = Math.min(...vals), vmax = Math.max(...vals);
+      if (vmin < ext.current.expo.min) ext.current.expo.min = vmin;
+      if (vmax > ext.current.expo.max) ext.current.expo.max = vmax;
+      const { min, max } = ext.current.expo;
+      if (Number.isFinite(min) && Number.isFinite(max)) setExpoDomain(padDomain(min, max, 0.05));
+    }
+  }, [expoSeries.length]);
+  useEffect(() => {
+    const vals = slipTurnSeries.map(d => d.slip).filter(v => Number.isFinite(v));
+    if (vals.length) {
+      const vmin = Math.min(...vals), vmax = Math.max(...vals);
+      if (vmin < ext.current.slip.min) ext.current.slip.min = vmin;
+      if (vmax > ext.current.slip.max) ext.current.slip.max = vmax;
+      const { min, max } = ext.current.slip;
+      if (Number.isFinite(min) && Number.isFinite(max)) setSlipDomain(padDomain(min, max, 0.15));
+    }
+  }, [slipTurnSeries.length]);
+  useEffect(() => {
+    const vals = slipTurnSeries.map(d => d.to).filter(v => Number.isFinite(v));
+    if (vals.length) {
+      const vmin = Math.min(...vals), vmax = Math.max(...vals);
+      if (vmin < ext.current.to.min) ext.current.to.min = vmin;
+      if (vmax > ext.current.to.max) ext.current.to.max = vmax;
+      const { min, max } = ext.current.to;
+      if (Number.isFinite(min) && Number.isFinite(max)) setToDomain(padDomain(min, max, 0.15));
+    }
+  }, [slipTurnSeries.length]);
   // Use a shared time domain across all charts to ensure sync
   const tMin = useMemo(() => {
     const arr = ([] as number[])
@@ -547,9 +631,58 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
     if (out[out.length - 1] !== arr[n - 1]) out.push(arr[n - 1]);
     return out;
   };
-  const pnlD = useMemo(() => decimate(pnlSeries, 3000), [pnlSeries]);
-  const expoD = useMemo(() => decimate(expoSeries, 3000), [expoSeries]);
-  const slipD = useMemo(() => decimate(slipTurnSeries, 3000), [slipTurnSeries]);
+  // LTTB decimator for terminal (large) datasets
+  function lttb<T>(data: T[], threshold: number, getX: (p: T) => number, getY: (p: T) => number): T[] {
+    const n = data.length;
+    if (threshold >= n || threshold <= 2) return data.slice();
+    const sampled: T[] = [];
+    let a = 0;
+    sampled.push(data[a]);
+    const every = (n - 2) / (threshold - 2);
+    for (let i = 0; i < threshold - 2; i++) {
+      let avgX = 0, avgY = 0;
+      let avgRangeStart = Math.floor((i + 1) * every) + 1;
+      let avgRangeEnd = Math.floor((i + 2) * every) + 1;
+      if (avgRangeEnd > n) avgRangeEnd = n;
+      const avgRangeLength = Math.max(1, avgRangeEnd - avgRangeStart);
+      for (let idx = avgRangeStart; idx < avgRangeEnd; idx++) {
+        avgX += getX(data[idx]);
+        avgY += getY(data[idx]);
+      }
+      avgX /= avgRangeLength; avgY /= avgRangeLength;
+      let rangeOffs = Math.floor((i + 0) * every) + 1;
+      let rangeTo = Math.floor((i + 1) * every) + 1;
+      let maxArea = -1;
+      let nextA = rangeOffs;
+      let maxAreaPoint = data[rangeOffs] ?? data[a];
+      const ax = getX(data[a]);
+      const ay = getY(data[a]);
+      for (; rangeOffs < rangeTo && rangeOffs < n; rangeOffs++) {
+        const bx = getX(data[rangeOffs]);
+        const by = getY(data[rangeOffs]);
+        const area = Math.abs((ax - avgX) * (by - ay) - (ax - bx) * (avgY - ay)) * 0.5;
+        if (area > maxArea) { maxArea = area; maxAreaPoint = data[rangeOffs]; nextA = rangeOffs; }
+      }
+      sampled.push(maxAreaPoint);
+      a = nextA;
+    }
+    sampled.push(data[n - 1]);
+    return sampled;
+  }
+  const MAX_LIVE = 3000;      // live view (already trimmed upstream)
+  const MAX_TERMINAL = 4000;  // terminal view (full history)
+  const pnlD = useMemo(() => {
+    if (isTerminal) return pnlSeries.length > MAX_TERMINAL ? lttb(pnlSeries, MAX_TERMINAL, p => p.t, p => p.cum) : pnlSeries;
+    return decimate(pnlSeries, MAX_LIVE);
+  }, [pnlSeries, isTerminal]);
+  const expoD = useMemo(() => {
+    if (isTerminal) return expoSeries.length > MAX_TERMINAL ? lttb(expoSeries, MAX_TERMINAL, p => p.t, p => p.gross) : expoSeries;
+    return decimate(expoSeries, MAX_LIVE);
+  }, [expoSeries, isTerminal]);
+  const slipD = useMemo(() => {
+    if (isTerminal) return slipTurnSeries.length > MAX_TERMINAL ? lttb(slipTurnSeries, MAX_TERMINAL, p => p.t, p => p.slip) : slipTurnSeries;
+    return decimate(slipTurnSeries, MAX_LIVE);
+  }, [slipTurnSeries, isTerminal]);
   // Nearest point helpers for legends at hovered x
   function nearestIndex(arr: Array<{ t: number }>, t?: number): number {
     if (!arr.length) return -1;
@@ -564,35 +697,35 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
     return Math.abs(arr[i].t - t) < Math.abs(arr[prev].t - t) ? i : prev;
   }
   const pnlLegend = useMemo(() => {
-    const i = nearestIndex(pnlSeries, hoverTs == null ? undefined : hoverTs);
-    const p = i >= 0 ? pnlSeries[i] : undefined;
+    const i = nearestIndex(pnlD, hoverTs == null ? undefined : hoverTs);
+    const p = i >= 0 ? pnlD[i] : undefined;
     return { cum: Number(p?.cum ?? 0), dd: Number(p?.dd ?? 0) };
-  }, [pnlSeries, hoverTs]);
+  }, [pnlD, hoverTs]);
   const expoLegend = useMemo(() => {
-    const i = nearestIndex(expoSeries, hoverTs == null ? undefined : hoverTs);
-    const e = i >= 0 ? expoSeries[i] : undefined;
+    const i = nearestIndex(expoD, hoverTs == null ? undefined : hoverTs);
+    const e = i >= 0 ? expoD[i] : undefined;
     return { gross: Number(e?.gross ?? 0) };
-  }, [expoSeries, hoverTs]);
+  }, [expoD, hoverTs]);
   const slipLegend = useMemo(() => {
-    const i = nearestIndex(slipTurnSeries, hoverTs == null ? undefined : hoverTs);
-    const s = i >= 0 ? slipTurnSeries[i] : undefined;
+    const i = nearestIndex(slipD, hoverTs == null ? undefined : hoverTs);
+    const s = i >= 0 ? slipD[i] : undefined;
     return { slip: Number(s?.slip ?? 0), to: Number(s?.to ?? 0) };
-  }, [slipTurnSeries, hoverTs]);
+  }, [slipD, hoverTs]);
 
   // Hover points for reference markers
   const cursorTime = hoverTs == null ? undefined : hoverTs;
   const hoverPNLPt = useMemo(() => {
-    const i = nearestIndex(pnlSeries, cursorTime as any);
-    return i >= 0 ? pnlSeries[i] : null;
-  }, [pnlSeries, cursorTime]);
+    const i = nearestIndex(pnlD, cursorTime as any);
+    return i >= 0 ? pnlD[i] : null;
+  }, [pnlD, cursorTime]);
   const hoverExpoPt = useMemo(() => {
-    const i = nearestIndex(expoSeries, cursorTime as any);
-    return i >= 0 ? expoSeries[i] : null;
-  }, [expoSeries, cursorTime]);
+    const i = nearestIndex(expoD, cursorTime as any);
+    return i >= 0 ? expoD[i] : null;
+  }, [expoD, cursorTime]);
   const hoverSlipPt = useMemo(() => {
-    const i = nearestIndex(slipTurnSeries, cursorTime as any);
-    return i >= 0 ? slipTurnSeries[i] : null;
-  }, [slipTurnSeries, cursorTime]);
+    const i = nearestIndex(slipD, cursorTime as any);
+    return i >= 0 ? slipD[i] : null;
+  }, [slipD, cursorTime]);
 
   // Summary values at hover time for quick glance
   const hoverVals = useMemo(() => {
@@ -724,37 +857,37 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
         </div>
       </Card>
 
-      <div className="flex flex-nowrap items-center gap-3 text-xs h-8 overflow-hidden whitespace-nowrap">
+      <div className="flex flex-wrap items-center gap-2 text-xs min-h-14">
         <span className="text-muted-foreground">At Cursor:</span>
         <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1 h-6">
-          <span className="font-mono w-[180px] truncate">
+          <span className="font-mono w-[140px] truncate">
             {hoverVals?.t ? new Date(hoverVals.t).toLocaleString([], { hour12: false }) : ''}
           </span>
         </span>
         <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1 h-6">
           <span className="w-2 h-2 rounded" style={{background:'#2563eb'}} />
           <span>P&L</span>
-          <span className={["font-mono tabular-nums text-right w-[72px]", colorClass(hoverVals?.cum)].join(" ")}>{formatPct(Number(hoverVals?.cum || 0))}</span>
+          <span className={["font-mono tabular-nums text-right w-[64px]", colorClass(hoverVals?.cum)].join(" ")}>{formatPct(Number(hoverVals?.cum || 0))}</span>
         </span>
         <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1 h-6">
           <span className="w-2 h-2 rounded" style={{background:'#ef4444'}} />
           <span>DD</span>
-          <span className={["font-mono tabular-nums text-right w-[72px]", colorClass(hoverVals?.dd)].join(" ")}>{formatPct(Number(hoverVals?.dd || 0))}</span>
+          <span className={["font-mono tabular-nums text-right w-[64px]", colorClass(hoverVals?.dd)].join(" ")}>{formatPct(Number(hoverVals?.dd || 0))}</span>
         </span>
         <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1 h-6">
           <span className="w-2 h-2 rounded" style={{background:'#16a34a'}} />
           <span>Gross</span>
-          <span className={["font-mono tabular-nums text-right w-[72px]", colorClass(hoverVals?.gross)].join(" ")}>{formatSigned(Number(hoverVals?.gross || 0))}</span>
+          <span className={["font-mono tabular-nums text-right w-[64px]", colorClass(hoverVals?.gross)].join(" ")}>{formatSigned(Number(hoverVals?.gross || 0))}</span>
         </span>
         <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1 h-6">
           <span className="w-2 h-2 rounded" style={{background:'#a855f7'}} />
           <span>Slip</span>
-          <span className={["font-mono tabular-nums text-right w-[72px]", colorClass(hoverVals?.slip)].join(" ")}>{`${Number(hoverVals?.slip || 0).toFixed(1)} bps`}</span>
+          <span className={["font-mono tabular-nums text-right w-[64px]", colorClass(hoverVals?.slip)].join(" ")}>{`${Number(hoverVals?.slip || 0).toFixed(1)} bps`}</span>
         </span>
         <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1 h-6">
           <span className="w-2 h-2 rounded" style={{background:'#f59e0b'}} />
           <span>Turnover</span>
-          <span className={["font-mono tabular-nums text-right w-[72px]", colorClass(hoverVals?.to)].join(" ")}>{formatPct(Number((hoverVals?.to || 0)/100))}</span>
+          <span className={["font-mono tabular-nums text-right w-[64px]", colorClass(hoverVals?.to)].join(" ")}>{formatPct(Number((hoverVals?.to || 0)/100))}</span>
         </span>
       </div>
 
@@ -805,14 +938,7 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
                 <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleDateString([], { year: '2-digit', month: 'short', day: '2-digit' })} />
                 <YAxis yAxisId="left" domain={pnlCumDomain as any} tickFormatter={(v) => formatPct(Number(v))} />
                 <YAxis yAxisId="right" orientation="right" domain={pnlDdDomain as any} tickFormatter={(v) => formatPct(Number(v))} />
-                <Tooltip isAnimationActive={false}
-                  labelFormatter={(v:any)=>new Date(Number(v)).toLocaleTimeString([], { hour12:false })}
-                  formatter={(value:any, name:any)=>{
-                    if (name === 'cum') return [formatPct(Number(value)), 'P&L'];
-                    if (name === 'dd') return [formatPct(Number(value)), 'DD'];
-                    return [String(value), name];
-                  }}
-                />
+                <Tooltip content={() => null} wrapperStyle={{ display: 'none' }} cursor={false} />
                 {hoverTs != null && hoverPNLPt && (
                   <>
                     <ReferenceLine x={hoverTs} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
@@ -846,10 +972,7 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleDateString([], { year: '2-digit', month: 'short', day: '2-digit' })} />
                 <YAxis domain={expoDomain as any} tickFormatter={(v) => formatSigned(Number(v))} />
-                <Tooltip isAnimationActive={false}
-                  labelFormatter={(v:any)=>new Date(Number(v)).toLocaleTimeString([], { hour12:false })}
-                  formatter={(value:any, name:any)=>[formatSigned(Number(value)), 'Gross']}
-                />
+                <Tooltip content={() => null} wrapperStyle={{ display: 'none' }} cursor={false} />
                 {hoverTs != null && hoverExpoPt && (
                   <>
                     <ReferenceLine x={hoverTs} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
@@ -887,14 +1010,7 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
                 <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleDateString([], { year: '2-digit', month: 'short', day: '2-digit' })} />
                 <YAxis yAxisId="left" domain={slipDomain as any} tickFormatter={(v) => `${Number(v).toFixed(1)} bps`} />
                 <YAxis yAxisId="right" orientation="right" domain={toDomain as any} tickFormatter={(v) => formatPct(Number(v)/100)} />
-                <Tooltip isAnimationActive={false}
-                  labelFormatter={(v:any)=>new Date(Number(v)).toLocaleTimeString([], { hour12:false })}
-                  formatter={(value:any, name:any)=>{
-                    if (name === 'slip') return [`${Number(value).toFixed(1)} bps`, 'Slip'];
-                    if (name === 'to') return [formatPct(Number(value)/100), 'Turnover'];
-                    return [String(value), name];
-                  }}
-                />
+                <Tooltip content={() => null} wrapperStyle={{ display: 'none' }} cursor={false} />
                 {hoverTs != null && hoverSlipPt && (
                   <>
                     <ReferenceLine x={hoverTs} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
