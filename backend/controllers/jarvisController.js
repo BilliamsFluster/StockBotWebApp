@@ -190,6 +190,46 @@ export const getPortfolioData = async (req, res) => {
   }
 };
 
+// Retrieve conversation history from StockBot memory API
+export const getJarvisHistory = async (req, res) => {
+  try {
+    const accessToken = await refreshSchwabAccessTokenInternal(req.user._id);
+    if (!accessToken) {
+      return res.status(401).json({ error: "Failed to refresh Schwab token." });
+    }
+
+    const response = await axios.get(`${STOCKBOT_URL}/api/jarvis/history`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    const messages = response.data?.messages ?? response.data ?? [];
+    res.json({ messages });
+  } catch (error) {
+    console.error("🔴 Failed to get Jarvis history:", error.message);
+    res.status(500).json({ error: "Failed to get Jarvis history." });
+  }
+};
+
+// Retrieve recent trades from StockBot trading endpoint
+export const getJarvisTrades = async (req, res) => {
+  try {
+    const accessToken = await refreshSchwabAccessTokenInternal(req.user._id);
+    if (!accessToken) {
+      return res.status(401).json({ error: "Failed to refresh Schwab token." });
+    }
+
+    const response = await axios.get(`${STOCKBOT_URL}/api/jarvis/trades`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    const trades = response.data?.trades ?? response.data ?? [];
+    res.json({ trades });
+  } catch (error) {
+    console.error("🔴 Failed to get Jarvis trades:", error.message);
+    res.status(500).json({ error: "Failed to get Jarvis trades." });
+  }
+};
+
 export const fetchModels = async (req, res) => {
   try {
     const response = await axios.get('http://localhost:11434/api/tags');

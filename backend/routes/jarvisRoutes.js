@@ -7,6 +7,8 @@ import {
   fetchModels,
   handleJarvisPrompt,
   handleJarvisPromptLite,
+  getJarvisHistory,
+  getJarvisTrades,
 } from "../controllers/jarvisController.js";
 
 export default function createJarvisRoutes(app) {
@@ -17,6 +19,8 @@ export default function createJarvisRoutes(app) {
   // =====================
   router.post("/ask", protectRoute, handleJarvisPrompt);
   router.post("/ask-lite", protectRoute, handleJarvisPromptLite);
+  router.get("/history", protectRoute, getJarvisHistory);
+  router.get("/trades", protectRoute, getJarvisTrades);
 
   /*router.post("/voice/start", protectRoute, startVoiceAssistant);
   router.post("/voice/stop", protectRoute, stopVoiceAssistant);
