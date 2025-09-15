@@ -35,6 +35,11 @@ from api.controllers.trade_controller import (
     status_live,
     stop_live,
 )
+import asyncio
+import os
+import json
+import time
+from pathlib import Path
 
 
 '''def verify_api_key(request: Request): -- security will be implemented soon
@@ -151,13 +156,10 @@ def trade_stop():
 async def ws_run_status(ws: WebSocket, run_id: str):
     await ws.accept()
     try:
-        from api.controllers.stockbot_controller import RUNS  # lazy import
+        from api.controllers.stockbot_controller import RUN_MANAGER  # lazy import
         last = None
         while True:
-            rec = RUNS.get(run_id)
-            if not rec:
-                await ws.send_json({"error": "not found"})
-                break
+            rec = RUN_MANAGER.get(run_id)
             payload = {
                 "id": rec.id,
                 "type": rec.type,
@@ -186,16 +188,13 @@ async def ws_run_status(ws: WebSocket, run_id: str):
 @router.get("/runs/{run_id}/stream")
 async def stream_run_status(run_id: str):
     """Server-Sent Events stream of run status until terminal; emits JSON per event."""
-    from api.controllers.stockbot_controller import RUNS  # lazy import to avoid cycles
+    from api.controllers.stockbot_controller import RUN_MANAGER  # lazy import to avoid cycles
 
     async def event_gen():
         last = None
         sent_init = False
         while True:
-            rec = RUNS.get(run_id)
-            if not rec:
-                yield "event: error\n" + f"data: {{\"error\": \"not found\"}}\n\n"
-                return
+            rec = RUN_MANAGER.get(run_id)
             if not sent_init:
                 if isinstance(rec.meta, dict):
                     payload_obj = rec.meta.get("payload") or rec.meta
@@ -228,7 +227,6 @@ async def stream_run_status(run_id: str):
                 "error": rec.error,
             }
             if payload != last:
-                import json
                 yield "data: " + json.dumps(payload) + "\n\n"
                 last = payload
             # break if terminal
@@ -239,10 +237,123 @@ async def stream_run_status(run_id: str):
     return StreamingResponse(event_gen(), media_type="text/event-stream")
 
 
+# ---- Telemetry SSE (per-bar and events) ----
+
+def _telemetry_paths(out_dir: Path):
+    telem = out_dir / "live_telemetry.jsonl"
+    ev = out_dir / "live_events.jsonl"
+    roll = out_dir / "live_rollups.jsonl"
+    return telem, ev, roll
+
+
+async def _tail_jsonl(path: Path, *, from_start: bool = False, event_name: str = "message"):
+    """Async generator that tails a JSONL file and yields SSE frames."""
+    sent_init = False
+    # Wait for file to appear with backoff
+    delay = 0.1
+    waited = 0.0
+    while not path.exists():
+        await asyncio.sleep(delay)
+        waited += delay
+        delay = min(delay * 1.5, 2.0)
+        if waited > 60.0:
+            # give up after a minute with an init error
+            yield f"event: error\ndata: {{\"error\": \"file_not_found\"}}\n\n"
+            return
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            if not from_start:
+                # seek to end so we only stream fresh lines
+                f.seek(0, os.SEEK_END)
+            while True:
+                line = f.readline()
+                if not line:
+                    await asyncio.sleep(0.25)
+                    continue
+                line = line.strip()
+                if not line:
+                    continue
+                # Small sanity: ensure it's JSON; fallback to raw line
+                try:
+                    _ = json.loads(line)
+                except Exception:
+                    payload = json.dumps({"raw": line})
+                else:
+                    payload = line
+                yield f"event: {event_name}\n" + "data: " + payload + "\n\n"
+    except asyncio.CancelledError:
+        return
+
+
+@router.get("/runs/{run_id}/telemetry")
+async def stream_run_telemetry(run_id: str, from_start: bool = False):
+    out_dir = _resolve_out_dir_for_run(run_id)
+    if out_dir is None:
+        async def not_found():
+            yield "event: error\n" + "data: {\"error\": \"run_not_found\"}\n\n"
+        return StreamingResponse(not_found(), media_type="text/event-stream")
+    telem_path, _ev_path, _ = _telemetry_paths(out_dir)
+
+    async def gen():
+        # initial metadata event (best-effort)
+        try:
+            from api.controllers.stockbot_controller import RUN_MANAGER
+            rec = RUN_MANAGER.get(run_id)
+            meta = rec.meta if isinstance(rec.meta, dict) else {}
+            init = {
+                "run_id": rec.id,
+                "type": rec.type,
+                "created_at": rec.created_at,
+                "config": meta.get("resolved_config") or meta.get("config_snapshot") or None,
+            }
+        except Exception:
+            init = {"run_id": run_id}
+        yield "event: init\n" + "data: " + json.dumps(init) + "\n\n"
+        async for frame in _tail_jsonl(telem_path, from_start=from_start, event_name="bar"):
+            yield frame
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@router.get("/runs/{run_id}/events")
+async def stream_run_events(run_id: str, from_start: bool = True):
+    out_dir = _resolve_out_dir_for_run(run_id)
+    if out_dir is None:
+        async def not_found():
+            yield "event: error\n" + "data: {\"error\": \"run_not_found\"}\n\n"
+        return StreamingResponse(not_found(), media_type="text/event-stream")
+    _telem_path, ev_path, _ = _telemetry_paths(out_dir)
+
+    async def gen():
+        init = {"run_id": run_id}
+        yield "event: init\n" + "data: " + json.dumps(init) + "\n\n"
+        async for frame in _tail_jsonl(ev_path, from_start=from_start, event_name="event"):
+            yield frame
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
 @router.post("/policies")
 async def upload_policy(file: UploadFile = File(...)):
     return await save_policy_upload(file)
 
+
+def _resolve_out_dir_for_run(run_id: str) -> Path | None:
+    """Resolve out_dir for a run id without raising 404.
+
+    Tries registry first; if missing, falls back to RUNS_DIR/<run_id>.
+    """
+    try:
+        from api.controllers.stockbot_controller import RUN_MANAGER
+        rec = RUN_MANAGER.get(run_id)
+        return Path(rec.out_dir)
+    except Exception:
+        try:
+            from api.controllers.stockbot_controller import RUNS_DIR
+            p = Path(RUNS_DIR) / run_id
+            return p if p.exists() else None
+        except Exception:
+            return None
 
 @router.post("/insights")
 def post_insights(req: InsightsRequest):

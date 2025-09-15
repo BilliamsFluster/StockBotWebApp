@@ -26,6 +26,7 @@ from stable_baselines3.common.save_util import load_from_zip_file
 from stockbot.rl.utils import make_env, Split, make_strategy, episode_rollout  # strategy-aware
 from stockbot.backtest.metrics import compute_all, save_metrics
 from stockbot.backtest.trades import build_trades_fifo
+from stockbot.telemetry.writer import TelemetryWriter
 
 BASE_RUNS = Path(__file__).resolve().parents[1] / "runs"  # stockbot/runs
 
@@ -82,6 +83,21 @@ def _run_backtest(env, strategy) -> Tuple[pd.DataFrame, pd.DataFrame]:
 
     symbols = getattr(env.unwrapped, "syms", None)
 
+    # Telemetry state
+    tw = TelemetryWriter()
+    last_cum_ret = 0.0
+    roll_window = 60
+    roll_vals: list[float] = []
+    last_rolling = {
+        "sharpe": None,
+        "sortino": None,
+        "vol_realized": None,
+        "hit_rate": None,
+    }
+
+    gross_hist: list[float] = []
+    guard_counts = {"daily_dd_halt": 0, "per_name_cap": 0, "gross_leverage_cap": 0}
+    nbar = 0
     while not (done or trunc):
         action, _a_info = strategy.predict(obs, deterministic=True)
         obs, r, done, trunc, info = env.step(action)
@@ -116,6 +132,294 @@ def _run_backtest(env, strategy) -> Tuple[pd.DataFrame, pd.DataFrame]:
                 weights_list.append({f"w{i}": float(w[i]) for i in range(len(w))})
         else:
             weights_list.append({})
+
+        # ---- emit telemetry (best-effort, per-bar) ----
+        try:
+            # decision/valuation timestamps
+            bar_ts = ts  # close time for the step (as chosen above)
+            bar_idx = len(eq_list) - 1
+
+            # Build prices in view order
+            prices_close = []
+            try:
+                pc = env.unwrapped._prices(env.unwrapped._i - 1)
+                prices_close = [float(pc.get(s, float("nan"))) for s in env.unwrapped.syms]
+            except Exception:
+                pass
+
+            # Positions snapshot
+            pos_qty = []
+            pos_mv = []
+            try:
+                prices_map = env.unwrapped._prices(env.unwrapped._i - 1)
+                for s in env.unwrapped.syms:
+                    pos = env.unwrapped.port.positions.get(s)
+                    q = float(pos.qty) if pos else 0.0
+                    mv = q * float(prices_map.get(s, 0.0))
+                    pos_qty.append(q)
+                    pos_mv.append(float(mv))
+            except Exception:
+                pass
+
+            # Access internals from env step for sizing path
+            weights_raw = None
+            weights_regime = None
+            weights_kelly_vol = None
+            weights_capped = None
+            applied_layers: list[str] = []
+            flags: list[str] = []
+            gross = float(info.get("gross_leverage", 0.0))
+            net = float(info.get("net_leverage", 0.0))
+            gamma_vec = None
+            gamma_state = None
+            gamma_scale = 1.0
+            try:
+                # If env provided full decision path, use it
+                if "weights_raw" in info:
+                    weights_raw = list(map(float, list(info.get("weights_raw") or [])))
+                if "weights_regime" in info:
+                    weights_regime = list(map(float, list(info.get("weights_regime") or [])))
+                if "weights_kelly_vol" in info:
+                    weights_kelly_vol = list(map(float, list(info.get("weights_kelly_vol") or [])))
+                if "weights_capped" in info:
+                    weights_capped = list(map(float, list(info.get("weights_capped") or [])))
+                if weights_capped is None and "weights" in info:
+                    weights_capped = list(map(float, list(info.get("weights") or [])))
+                applied_layers = list(info.get("risk_applied") or [])
+                trace = getattr(env.unwrapped, "sizing_trace", None)
+                if trace and len(trace) > 0:
+                    last_t = trace[-1]
+                    gamma_scale = float(last_t.get("gamma", getattr(last_t, "gamma", 1.0))) if isinstance(last_t, dict) else 1.0
+                    f_kelly = float(last_t.get("f_kelly", 1.0))
+                    vol_scale = float(last_t.get("vol_scale", 1.0))
+                    if not applied_layers:
+                        # best-effort fallback
+                        if f_kelly != 1.0 or vol_scale != 1.0:
+                            applied_layers.extend(["kelly", "vol_target"]) 
+                # Env exposes regime beliefs if configured; gamma scalar used is embedded in apply_sizing_layers, but
+                # we can still annotate that regime was present when _gamma_seq exists.
+                if getattr(env.unwrapped, "_gamma_seq", None) is not None:
+                    applied_layers.append("regime")
+                    gamma = env.unwrapped._gamma_seq[env.unwrapped._i]  # type: ignore[index]
+                    try:
+                        import numpy as _np
+                        gamma_vec = [float(x) for x in _np.asarray(gamma).reshape(-1)]
+                        gamma_state = int(max(range(len(gamma_vec)), key=lambda i: gamma_vec[i])) if gamma_vec else None
+                    except Exception:
+                        pass
+                # For raw/regime/kelly_vol approximations, we lack the pre-cap arrays; set to None when unavailable
+            except Exception:
+                pass
+
+            # Costs / slippage (best-effort from last trade in env.trades)
+            costs_bps = None
+            slippage_bps = None
+            try:
+                last_tr = env.unwrapped.trades[-1] if getattr(env.unwrapped, "trades", None) else None
+                if last_tr:
+                    br = {
+                        "commission": float(last_tr.get("commission", 0.0)),
+                        "spread": float(last_tr.get("spread", 0.0)),
+                        "impact": float(last_tr.get("impact", 0.0)),
+                    }
+                    total = br["commission"] + br["spread"] + br["impact"] + float(last_tr.get("fees", 0.0))
+                    costs_bps = {**br, "total": float(total)}
+                    arr = float(last_tr.get("planned_px", last_tr.get("planned_price", 0.0)))
+                    rel = float(last_tr.get("realized_px", last_tr.get("realized_price", 0.0)))
+                    if arr and rel:
+                        slippage_bps = {"arrival": float((rel - arr) / arr * 10_000.0)}
+            except Exception:
+                pass
+
+            # PnL
+            eq = float(info.get("equity", 0.0))
+            eq_prev = float(eq_list[-2]) if len(eq_list) >= 2 else eq
+            bar_ret = (eq - eq_prev) / max(eq_prev, 1e-9)
+            last_cum_ret += bar_ret
+            roll_vals.append(bar_ret)
+            if len(roll_vals) > roll_window:
+                roll_vals.pop(0)
+            try:
+                import math
+                import numpy as _np
+                arr = _np.array(roll_vals, dtype=float)
+                vol = float(arr.std() * (252 ** 0.5)) if arr.size > 1 else 0.0
+                mean = float(arr.mean()) if arr.size > 0 else 0.0
+                sharpe = float((mean / (arr.std() + 1e-12)) * (252 ** 0.5)) if arr.size > 1 else 0.0
+                downside = float(arr[arr < 0].std()) if arr.size > 1 and (arr < 0).any() else 0.0
+                sortino = float((mean / (downside + 1e-12)) * (252 ** 0.5)) if downside > 0 else 0.0
+                hit_rate = float((arr > 0).mean()) if arr.size > 0 else 0.0
+                last_rolling = {
+                    "sharpe": sharpe,
+                    "sortino": sortino,
+                    "vol_realized": vol,
+                    "hit_rate": hit_rate,
+                }
+            except Exception:
+                pass
+
+            # Schema/metadata
+            try:
+                obs_space = env.unwrapped.observation_space
+                win_shape = list(obs_space["window"].shape)
+                port_shape = list(obs_space["portfolio"].shape)
+                schema_obs = f"win{win_shape}-port{port_shape}"
+            except Exception:
+                schema_obs = None
+            try:
+                import os as _os
+                git_sha = _os.environ.get("STOCKBOT_GIT_SHA")
+            except Exception:
+                git_sha = None
+
+            telem = {
+                "t": (pd.Timestamp(bar_ts).to_pydatetime().isoformat() if bar_ts else None),
+                "bar_idx": int(bar_idx),
+                "symbols": list(env.unwrapped.syms) if getattr(env.unwrapped, "syms", None) else None,
+                "prices": {"close": prices_close},
+                "positions": {
+                    "qty": pos_qty,
+                    "mkt_value": pos_mv,
+                    "cash": float(getattr(env.unwrapped.port, "cash", 0.0)),
+                    "nav": float(eq),
+                },
+                "policy": {
+                    # Use pre-overlay weights if available
+                    "action_raw": weights_raw if weights_raw is not None else weights_capped,
+                    "entropy": None,
+                    "value_pred": None,
+                },
+                "regime": {
+                    "gamma": gamma_vec,
+                    "state": gamma_state,
+                    "scaler": gamma_scale,
+                },
+                "weights": {
+                    "raw": weights_raw,
+                    "regime": weights_regime,
+                    "kelly_vol": weights_kelly_vol,
+                    "capped": weights_capped,
+                },
+                "risk": {
+                    "applied": applied_layers,
+                    "flags": [],
+                },
+                "leverage": {"gross": gross, "net": net},
+                "canary": {
+                    "stage": 0,
+                    "deployable_capital_pct": 1.0,
+                    "gates": {
+                        "slippage_ok": True,
+                        "hit_rate_ok": True,
+                        "vol_ok": True,
+                        "heartbeat_ok": True,
+                        "drawdown_ok": True,
+                        "reject_rate_ok": True,
+                    },
+                    "action": "hold",
+                    "reason": None,
+                    "last_promotion_at": None,
+                },
+                "orders": {
+                    # For backtest, intended==sent best-effort
+                    "intended": [],
+                    "sent": [],
+                    "fills": [],
+                    "rejects": [],
+                },
+                "costs_bps": costs_bps,
+                "slippage_bps": slippage_bps,
+                "latency_ms": {"data_to_decision": None, "decision_to_send": None, "send_to_fill": None},
+                "pnl": {"bar_bps": float(bar_ret * 10_000.0), "cum_pct": float(last_cum_ret), "dd_pct": float(-abs(info.get("drawdown", 0.0)))},
+                "rolling": last_rolling,
+                "turnover": {"bar_pct": float(info.get("turnover", 0.0) * 100.0)},
+                "health": {"heartbeat_ms": 0, "status": "OK"},
+                "model": {"git_sha": git_sha},
+                "data": {"manifest_hash": manifest_hash},
+                "schema": {"obs": schema_obs},
+                "errors": [],
+            }
+
+            # Orders and fills from the env's last step plan (if available)
+            try:
+                # The env recorded trades into env.unwrapped.trades; filter ones matching this ts
+                ts_trade = env.unwrapped.src.index[env.unwrapped._i - 1]
+                recent = [t for t in env.unwrapped.trades if str(t.get("ts")) == str(ts_trade)]
+                fills = []
+                for t in recent:
+                    fills.append({
+                        "sym": t.get("symbol"),
+                        "qty": float(t.get("qty", 0.0)),
+                        "price": float(t.get("realized_px", t.get("realized_price", 0.0))),
+                        "liq": "taker",
+                        "fee_bps": float(t.get("cost_bps", 0.0)),
+                    })
+                telem["orders"]["fills"] = fills  # type: ignore[index]
+                # Intended/Sent & costs/slippage from env info
+                if "orders_intended" in info:
+                    telem["orders"]["intended"] = list(info.get("orders_intended") or [])  # type: ignore[index]
+                if "orders_sent" in info:
+                    telem["orders"]["sent"] = list(info.get("orders_sent") or [])  # type: ignore[index]
+                if "bar_costs_bps" in info:
+                    telem["costs_bps"] = dict(info.get("bar_costs_bps") or {})
+                if "slippage_bps" in info:
+                    telem["slippage_bps"] = dict(info.get("slippage_bps") or {})
+                if "markouts_bps" in info:
+                    telem["markouts_bps"] = dict(info.get("markouts_bps") or {})
+                if "participation_pct" in info:
+                    telem["participation"] = {"sym_pct": info.get("participation_pct")}
+            except Exception:
+                pass
+
+            tw.emit_bar(telem)
+            try:
+                arr = telem.get("slippage_bps", {}).get("arrival") if isinstance(telem.get("slippage_bps"), dict) else None
+                if arr is not None and abs(float(arr)) > 20.0:
+                    tw.emit_event({
+                        "event": "ABNORMAL_SLIPPAGE",
+                        "details": {"gate": "slippage_ok", "threshold": 20.0, "observed": float(arr)},
+                        "at": int(pd.Timestamp(bar_ts).timestamp() * 1000) if bar_ts else None,
+                    })
+            except Exception:
+                pass
+            # Rollups every 20 bars
+            try:
+                gross_hist.append(gross)
+                nbar += 1
+                if nbar % 20 == 0:
+                    import numpy as _np
+                    cap = float(getattr(getattr(env.unwrapped.cfg, "margin", object()), "max_gross_leverage", 1.0)) or 1.0
+                    last60 = gross_hist[-60:]
+                    util = float(_np.mean(last60)) / cap if cap > 0 else float(_np.mean(last60))
+                    roll = {
+                        "summary": {"window": 60, "exposure_utilization": util},
+                        "capacity": {"usage": util},
+                        "guardrail": {"counters": guard_counts},
+                        "at": pd.Timestamp(bar_ts).to_pydatetime().isoformat() if bar_ts else None,
+                    }
+                    tw.emit_rollup(roll)
+            except Exception:
+                pass
+            # Emit guardrail/risk events (if any flagged this bar)
+            try:
+                revents = getattr(env.unwrapped, "risk_events", [])
+                if revents:
+                    recent_ts = env.unwrapped.src.index[env.unwrapped._i - 1]
+                    for ev in revents[-5:]:  # only last few
+                        if str(ev.get("ts")) == str(int(pd.Timestamp(recent_ts).timestamp())):
+                            et = str(ev.get("type", "")).lower()
+                            if et in guard_counts:
+                                guard_counts[et] += 1
+                            tw.emit_event({
+                                "event": str(ev.get("type", "RISK_EVENT")).upper(),
+                                "details": ev.get("detail") or {},
+                                "at": int(pd.Timestamp(recent_ts).timestamp() * 1000),
+                            })
+            except Exception:
+                pass
+        except Exception:
+            # never break the backtest on telemetry failures
+            pass
 
     base = pd.DataFrame({
         "ts": ts_list,
@@ -290,6 +594,17 @@ def main():
     save_metrics(out_dir, metrics)
 
     print(f">> Wrote equity.csv, orders.csv, trades.csv, rolling_metrics.csv, metrics.json to {out_dir}")
+
+    # Save a lightweight live_metrics.json for UI downloads
+    try:
+        live_metrics = {
+            "total_return": float(metrics.get("total_return", 0.0)) if isinstance(metrics, dict) else None,
+            "sharpe": float(metrics.get("sharpe", 0.0)) if isinstance(metrics, dict) else None,
+            "max_drawdown": float(metrics.get("max_drawdown", 0.0)) if isinstance(metrics, dict) else None,
+        }
+        (out_dir / "live_metrics.json").write_text(json.dumps(live_metrics, indent=2))
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

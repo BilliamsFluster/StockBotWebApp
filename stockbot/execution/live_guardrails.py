@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Deque, Dict
 from pathlib import Path
 import json
+import os
 
 
 @dataclass
@@ -61,11 +62,17 @@ def heartbeat_ok(last_bar_ts: int, now_ts: int, max_delay_sec: int, broker_ok: b
     return (now_ts - last_bar_ts) <= max_delay_sec and broker_ok
 
 
+def _default_audit_path() -> Path:
+    root = Path(__file__).resolve().parents[1] / "runs"
+    run_id = os.environ.get("STOCKBOT_RUN_ID") or ""
+    return (root / run_id / "live_audit.jsonl") if run_id else (root / "live_audit.jsonl")
+
+
 @dataclass
 class LiveGuardrails:
     cfg: CanaryConfig = field(default_factory=CanaryConfig)
     state: CanaryState = field(default_factory=CanaryState)
-    audit_path: Path = Path("live_audit.jsonl")
+    audit_path: Path = field(default_factory=_default_audit_path)
     max_delay_sec: int = 300
 
     def record(self, metrics: Dict, last_bar_ts: int, now_ts: int, broker_ok: bool) -> float:

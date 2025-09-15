@@ -234,9 +234,10 @@ export default function NewTraining({
     };
 
     try {
-      const wsUrl = buildUrl(`/api/stockbot/runs/${jobId}/ws`).replace(/^http/, "ws");
-      ws = new WebSocket(wsUrl);
-      ws.onmessage = (ev) => {
+      // Prefer SSE first to avoid WS proxy issues (e.g., TLS terminators on port 5001)
+      const url = buildUrl(`/api/stockbot/runs/${jobId}/stream`);
+      es = new EventSource(url, { withCredentials: true });
+      es.onmessage = (ev) => {
         try {
           const st = JSON.parse(ev.data);
           setStatus(st);
@@ -248,44 +249,39 @@ export default function NewTraining({
                 setArtifacts(a);
               } catch {}
             })();
-            try {
-              ws && ws.close();
-            } catch {}
+            es && es.close();
             running = false;
           }
         } catch {}
       };
-      ws.onerror = () => {
+      es.onerror = () => {
+        try { es && es.close(); } catch {}
+        // Optional WS fallback only when backend likely supports it (avoid :5001)
+        const wsUrl = buildUrl(`/api/stockbot/runs/${jobId}/ws`).replace(/^http/, "ws");
+        if (/:5001\//.test(wsUrl)) { schedule(0); return; }
         try {
-          ws && ws.close();
-        } catch {}
-        const url = buildUrl(`/api/stockbot/runs/${jobId}/stream`);
-        es = new EventSource(url);
-        es.onmessage = (ev) => {
-          try {
-            const st = JSON.parse(ev.data);
-            setStatus(st);
-            if (TERMINAL.includes(st.status)) {
-              setProgress(st.status === "SUCCEEDED" ? "Run complete." : `Run ${st.status.toLowerCase()}.`);
-              (async () => {
-                try {
-                  const { data: a } = await api.get<RunArtifacts>(`/stockbot/runs/${jobId}/artifacts`);
-                  setArtifacts(a);
-                } catch {}
-              })();
-              es && es.close();
-              running = false;
-            }
-          } catch {}
-        };
-        es.onerror = () => {
-          es && es.close();
-          schedule(0);
-        };
+          ws = new WebSocket(wsUrl);
+          ws.onmessage = (ev) => {
+            try {
+              const st = JSON.parse(ev.data);
+              setStatus(st);
+              if (TERMINAL.includes(st.status)) {
+                setProgress(st.status === "SUCCEEDED" ? "Run complete." : `Run ${st.status.toLowerCase()}.`);
+                (async () => {
+                  try {
+                    const { data: a } = await api.get<RunArtifacts>(`/stockbot/runs/${jobId}/artifacts`);
+                    setArtifacts(a);
+                  } catch {}
+                })();
+                try { ws && ws.close(); } catch {}
+                running = false;
+              }
+            } catch {}
+          };
+          ws.onerror = () => { try { ws && ws.close(); } catch {}; schedule(0); };
+        } catch { schedule(0); }
       };
-    } catch {
-      schedule(0);
-    }
+    } catch { schedule(0); }
 
     return () => {
       running = false;

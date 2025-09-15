@@ -24,10 +24,12 @@ def plan_fills(
     for i, d in enumerate(diff):
         if abs(d) < 1e-12:
             continue
-        qty = nav * d / prices_next[i]
+        qty_intended = nav * d / prices_next[i]
+        qty = qty_intended
         side = "buy" if qty > 0 else "sell"
         notional = abs(qty * prices_next[i])
-        participation = 0.0 if adv_next[i] == 0 else notional / adv_next[i]
+        participation_intended = 0.0 if adv_next[i] == 0 else notional / adv_next[i]
+        participation = participation_intended
         if participation > max_participation and adv_next[i] > 0:
             capped_notional = max_participation * adv_next[i]
             qty = capped_notional / prices_next[i] * np.sign(qty)
@@ -37,8 +39,10 @@ def plan_fills(
                 "symbol_idx": i,
                 "side": side,
                 "qty": float(qty),
+                "qty_intended": float(qty_intended),
                 "planned_price": float(prices_next[i]),
                 "participation": float(participation),
+                "participation_intended": float(participation_intended),
             }
         )
     return orders

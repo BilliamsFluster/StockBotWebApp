@@ -61,6 +61,7 @@ class ChatAskIn(BaseModel):
     prompt: str
     model: Optional[str] = "llama3:8b"
     format: Optional[str] = "markdown"
+    use_memory: Optional[bool] = True
 
 class ChatAskOut(BaseModel):
     response: str
@@ -73,9 +74,61 @@ def chat_ask(
     req: ChatAskIn,
     service: JarvisService = Depends(get_jarvis_service),
 ) -> ChatAskOut:
-    """Simple text chat endpoint."""
-    response = service.agent.generate(req.prompt, output_format=req.format)
-    return ChatAskOut(response=response)
+    """Simple text chat endpoint.
+
+    If use_memory is False, we bypass memory context and persistence for this call.
+    """
+    # Optional per-call model override
+    old_model = None
+    if req.model and hasattr(service.agent, 'model'):
+        try:
+            old_model = getattr(service.agent, 'model', None)
+            setattr(service.agent, 'model', req.model)
+        except Exception:
+            old_model = None
+
+    try:
+        if req.use_memory is False:
+            # Build a tools-only context without memory and avoid persisting the turn.
+            try:
+                user_msg = req.prompt
+                # BaseAgent API
+                flags = service.agent.detect_flags(user_msg)
+                # Agent-specific helpers (present in both OllamaAgent and HuggingFaceAgent)
+                tool_ctx = service.agent._resolve_flag_context(flags)  # type: ignore[attr-defined]
+                system_prompt = service.agent._get_system_prompt()      # type: ignore[attr-defined]
+
+                context_str = ""
+                if tool_ctx:
+                    import json as _json
+                    context_str = f"## Market Data\n{_json.dumps(tool_ctx, indent=2)}\n\n"
+
+                meta_prompt = {
+                    "markdown": "Respond in markdown format.",
+                    "json": "Respond using valid JSON.",
+                    "text": "Respond in plain text format, no markdown or JSON.",
+                }
+                final_prompt = (
+                    f"{system_prompt}\n\n"
+                    f"{context_str}"
+                    f"## Your Turn\nUser: {user_msg}\nAssistant:\n\n{meta_prompt.get(req.format or 'text', '')}"
+                )
+                raw = service.agent._generate_raw(final_prompt, req.format or "text")  # type: ignore[attr-defined]
+                return ChatAskOut(response=raw)
+            except Exception:
+                # Fallback: direct raw call without extra context
+                raw = service.agent._generate_raw(req.prompt, req.format or "text")  # type: ignore[attr-defined]
+                return ChatAskOut(response=raw)
+
+        # Default path: full memory-enabled generation
+        response = service.agent.generate(req.prompt, output_format=req.format)
+        return ChatAskOut(response=response)
+    finally:
+        if old_model is not None and hasattr(service.agent, 'model'):
+            try:
+                setattr(service.agent, 'model', old_model)
+            except Exception:
+                pass
 
 # DOM action models
 class WaitFor(BaseModel):
