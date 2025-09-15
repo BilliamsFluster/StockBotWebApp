@@ -19,6 +19,9 @@ import { SizingSection, DEFAULT_SIZING } from "./SizingSection";
 import { RewardLoggingSection, DEFAULT_REWARD  } from "./RewardLoggingSection";
 import { DownloadsSection } from "./DownloadsSection";
 import { buildTrainPayload, type TrainPayload } from "./payload";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 
 const TERMINAL: Array<JobStatusResponse["status"]> = ["SUCCEEDED", "FAILED", "CANCELLED"];
 const ppoDivisible = (n: number, b: number) => n > 0 && b > 0 && n % b === 0;
@@ -128,6 +131,10 @@ export default function NewTraining({
   const [saveTb, setSaveTb] = useState(true);
   const [saveActions, setSaveActions] = useState(true);
   const [saveRegime, setSaveRegime] = useState(true);
+
+  // ===== Advanced JSON =====
+  const [useJson, setUseJson] = useState(false);
+  const [jsonPayload, setJsonPayload] = useState("");
 
   // ===== Run state =====
   const [jobId, setJobId] = useState<string | null>(null);
@@ -303,6 +310,82 @@ export default function NewTraining({
     } catch {}
   };
 
+  const gatherState = () => ({
+    symbols: symbols.split(",").map((s) => s.trim()).join(","),
+    start,
+    end,
+    interval,
+    adjusted,
+    lookback,
+    trainSplit,
+    featureSet,
+    dataSource,
+    rsi,
+    macd,
+    bbands,
+    normalizeObs,
+    embargo,
+    commissionPerShare,
+    takerFeeBps,
+    makerRebateBps,
+    halfSpreadBps,
+    impactK,
+    fillPolicy,
+    vwapMinutes,
+    maxParticipation,
+    cvFolds,
+    cvEmbargo,
+    regimeEnabled,
+    regimeStates,
+    regimeFeatures,
+    appendBeliefs,
+    policy,
+    totalTimesteps,
+    nSteps,
+    batchSize,
+    learningRate,
+    gamma,
+    gaeLambda,
+    clipRange,
+    entCoef,
+    vfCoef,
+    maxGradNorm,
+    dropout,
+    seed,
+    mappingMode,
+    investMax,
+    grossLevCap,
+    maxStepChange,
+    rebalanceEps,
+    minHoldBars,
+    kellyEnabled,
+    kellyLambda,
+    kellyFMax,
+    kellyEmaAlpha,
+    volEnabled,
+    volTarget,
+    volMin,
+    clampMin,
+    clampMax,
+    dailyLoss,
+    perNameCap,
+    rewardBase,
+    wDrawdown,
+    wTurnover,
+    wVol,
+    wLeverage,
+    saveTb,
+    saveActions,
+    saveRegime,
+  });
+
+  useEffect(() => {
+    if (useJson) {
+      setJsonPayload(JSON.stringify(buildTrainPayload(gatherState()), null, 2));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useJson]);
+
   // ===== Submit =====
   const onSubmit = async () => {
     setSubmitting(true);
@@ -333,74 +416,20 @@ export default function NewTraining({
     }
 
     try {
-      const payload: TrainPayload = buildTrainPayload({
-        symbols: symbols.split(",").map(s => s.trim()).join(","), // normalize
-        start,
-        end,
-        interval,
-        adjusted,
-        lookback,
-        trainSplit,
-        featureSet,
-        dataSource,
-        rsi,
-        macd,
-        bbands,
-        normalizeObs,
-        embargo,
-        commissionPerShare,
-        takerFeeBps,
-        makerRebateBps,
-        halfSpreadBps,
-        impactK,
-        fillPolicy,
-        vwapMinutes,
-        maxParticipation,
-        cvFolds,
-        cvEmbargo,
-        regimeEnabled,
-        regimeStates,
-        regimeFeatures,
-        appendBeliefs,
-        policy,
-        totalTimesteps,
-        nSteps,
-        batchSize,
-        learningRate,
-        gamma,
-        gaeLambda,
-        clipRange,
-        entCoef,
-        vfCoef,
-        maxGradNorm,
-        dropout,
-        seed,
-        mappingMode,
-        investMax,
-        grossLevCap,
-        maxStepChange,
-        rebalanceEps,
-        minHoldBars,
-        kellyEnabled,
-        kellyLambda,
-        kellyFMax,
-        kellyEmaAlpha,
-        volEnabled,
-        volTarget,
-        volMin,
-        clampMin,
-        clampMax,
-        dailyLoss,
-        perNameCap,
-        rewardBase,
-        wDrawdown,
-        wTurnover,
-        wVol,
-        wLeverage,
-        saveTb,
-        saveActions,
-        saveRegime,
-      });
+      const state = gatherState();
+      let payload: TrainPayload;
+      if (useJson && jsonPayload.trim()) {
+        try {
+          payload = JSON.parse(jsonPayload);
+        } catch {
+          setError("Invalid JSON payload");
+          setSubmitting(false);
+          setProgress(null);
+          return;
+        }
+      } else {
+        payload = buildTrainPayload(state);
+      }
 
       const { data: resp } = await api.post<{ job_id: string }>("/stockbot/train", payload);
       if (!resp?.job_id) throw new Error("No job_id returned");
@@ -455,6 +484,20 @@ export default function NewTraining({
         </div>
       )}
       {error && <div className="text-sm text-red-600">{error}</div>}
+
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <Switch id="use-json" checked={useJson} onCheckedChange={setUseJson} />
+          <Label htmlFor="use-json">Edit JSON payload</Label>
+        </div>
+        {useJson && (
+          <Textarea
+            className="font-mono text-xs h-64"
+            value={jsonPayload}
+            onChange={(e) => setJsonPayload(e.target.value)}
+          />
+        )}
+      </div>
 
       <Accordion type="multiple" className="w-full">
         <DatasetSection
