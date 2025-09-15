@@ -345,7 +345,7 @@ def _env_snapshot_from_train(req: "TrainRequest") -> Dict[str, Any]:
     base["start"] = ds.start_date
     base["end"] = ds.end_date
     base["adjusted"] = bool(ds.adjusted_prices)
-    if getattr(ds, "eval_window_days", None) is not None:
+    if getattr(ds, "eval_window_days", None):
         base["eval_window_days"] = int(ds.eval_window_days)
 
     # Episode lookback
