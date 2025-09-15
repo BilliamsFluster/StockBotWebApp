@@ -19,7 +19,8 @@ def infer_split_from_cfg(cfg: EnvConfig) -> Split:
     end = to_dt(cfg.end)
 
     eval_window = getattr(cfg, "eval_window_days", None)
-    if eval_window:
+    use_custom_window = bool(eval_window)
+    if use_custom_window:
         eval_start = end - timedelta(days=int(eval_window) - 1)
         if eval_start < start:
             eval_start = start
@@ -57,24 +58,26 @@ def infer_split_from_cfg(cfg: EnvConfig) -> Split:
         eval_ = (eval_start.strftime("%Y-%m-%d"), eval_end.strftime("%Y-%m-%d"))
 
     # Ensure the eval window has enough calendar days to fetch bars; if not,
-    # back off to a rolling tail window ending at `end`.
-    try:
-        # Heuristic: require enough calendar days to cover lookback plus
-        # indicator warmup and multi-asset alignment losses.
-        L = int(getattr(cfg.episode, "lookback", 64))
-        min_eval_days = max(100, L + 40)
-    except Exception:
-        min_eval_days = 100
-    e0 = to_dt(eval_[0]); e1 = to_dt(eval_[1])
-    if (e1 - e0).days < min_eval_days:
-        new_start = end - timedelta(days=min_eval_days)
-        if new_start < start:
-            new_start = start
-        eval_ = (new_start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
-        # tighten train end to day before eval start when possible
-        tr_end = to_dt(eval_[0]) - timedelta(days=1)
-        if tr_end > start:
-            train = (start.strftime("%Y-%m-%d"), tr_end.strftime("%Y-%m-%d"))
+    # back off to a rolling tail window ending at `end`. Only auto-adjust when
+    # the window was inferred (i.e., no explicit override was provided).
+    if not use_custom_window:
+        try:
+            # Heuristic: require enough calendar days to cover lookback plus
+            # indicator warmup and multi-asset alignment losses.
+            L = int(getattr(cfg.episode, "lookback", 64))
+            min_eval_days = max(100, L + 40)
+        except Exception:
+            min_eval_days = 100
+        e0 = to_dt(eval_[0]); e1 = to_dt(eval_[1])
+        if (e1 - e0).days < min_eval_days:
+            new_start = end - timedelta(days=min_eval_days)
+            if new_start < start:
+                new_start = start
+            eval_ = (new_start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+            # tighten train end to day before eval start when possible
+            tr_end = to_dt(eval_[0]) - timedelta(days=1)
+            if tr_end > start:
+                train = (start.strftime("%Y-%m-%d"), tr_end.strftime("%Y-%m-%d"))
 
     return Split(train=train, eval=eval_)
 
