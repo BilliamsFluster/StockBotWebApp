@@ -12,6 +12,10 @@ vi.mock('../../utils/logger.js', () => ({
   log: vi.fn()
 }));
 
+vi.mock('http-proxy-middleware', () => ({
+  createProxyMiddleware: () => (req, res, next) => next && next()
+}));
+
 import axios from 'axios';
 import { refreshSchwabAccessTokenInternal } from '../../config/schwab.js';
 
