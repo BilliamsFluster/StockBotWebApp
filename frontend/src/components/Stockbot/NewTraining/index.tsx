@@ -18,7 +18,7 @@ import { ModelSection } from "./ModelSection";
 import { SizingSection, DEFAULT_SIZING } from "./SizingSection";
 import { RewardLoggingSection, DEFAULT_REWARD  } from "./RewardLoggingSection";
 import { DownloadsSection } from "./DownloadsSection";
-import { buildTrainPayload, type TrainPayload } from "./payload";
+import { buildTrainPayload, type TrainPayload, stateFromTrainPayload } from "./payload";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -381,19 +381,180 @@ export default function NewTraining({
     saveRegime,
   });
 
+  const formState = useMemo(
+    () => gatherState(),
+    [
+      symbols,
+      start,
+      end,
+      interval,
+      adjusted,
+      lookback,
+      evalWindow,
+      trainSplit,
+      featureSet,
+      dataSource,
+      rsi,
+      macd,
+      bbands,
+      normalizeObs,
+      embargo,
+      commissionPerShare,
+      takerFeeBps,
+      makerRebateBps,
+      halfSpreadBps,
+      impactK,
+      fillPolicy,
+      vwapMinutes,
+      maxParticipation,
+      cvFolds,
+      cvEmbargo,
+      regimeEnabled,
+      regimeStates,
+      regimeFeatures,
+      appendBeliefs,
+      policy,
+      totalTimesteps,
+      nSteps,
+      batchSize,
+      learningRate,
+      gamma,
+      gaeLambda,
+      clipRange,
+      entCoef,
+      vfCoef,
+      maxGradNorm,
+      dropout,
+      seed,
+      mappingMode,
+      investMax,
+      grossLevCap,
+      maxStepChange,
+      rebalanceEps,
+      minHoldBars,
+      kellyEnabled,
+      kellyLambda,
+      kellyFMax,
+      kellyEmaAlpha,
+      volEnabled,
+      volTarget,
+      volMin,
+      clampMin,
+      clampMax,
+      dailyLoss,
+      perNameCap,
+      rewardBase,
+      wDrawdown,
+      wTurnover,
+      wVol,
+      wLeverage,
+      saveTb,
+      saveActions,
+      saveRegime,
+    ]
+  );
+
   useEffect(() => {
-    if (useJson) {
-      const payload = buildTrainPayload(gatherState());
-      if (
-        payload.dataset.train_eval_split !== "custom_ranges" &&
-        payload.dataset.eval_window_days === undefined
-      ) {
-        payload.dataset.eval_window_days = 365; // expose for manual JSON edits
-      }
-      setJsonPayload(JSON.stringify(payload, null, 2));
+    if (!useJson) return;
+    const payload = buildTrainPayload(formState);
+    if (
+      payload.dataset.train_eval_split !== "custom_ranges" &&
+      payload.dataset.eval_window_days === undefined
+    ) {
+      payload.dataset.eval_window_days = 365; // expose for manual JSON edits
     }
+    const next = JSON.stringify(payload, null, 2);
+    if (next !== jsonPayload) setJsonPayload(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useJson]);
+  }, [useJson, formState]);
+
+  const setters = useMemo(
+    () => ({
+      symbols: setSymbols,
+      start: setStart,
+      end: setEnd,
+      interval: setInterval,
+      adjusted: setAdjusted,
+      lookback: setLookback,
+      evalWindow: setEvalWindow,
+      trainSplit: setTrainSplit,
+      featureSet: setFeatureSet,
+      dataSource: setDataSource,
+      rsi: setRsi,
+      macd: setMacd,
+      bbands: setBbands,
+      normalizeObs: setNormalizeObs,
+      embargo: setEmbargo,
+      commissionPerShare: setCommissionPerShare,
+      takerFeeBps: setTakerFeeBps,
+      makerRebateBps: setMakerRebateBps,
+      halfSpreadBps: setHalfSpreadBps,
+      impactK: setImpactK,
+      fillPolicy: setFillPolicy,
+      vwapMinutes: setVwapMinutes,
+      maxParticipation: setMaxParticipation,
+      cvFolds: setCvFolds,
+      cvEmbargo: setCvEmbargo,
+      regimeEnabled: setRegimeEnabled,
+      regimeStates: setRegimeStates,
+      regimeFeatures: setRegimeFeatures,
+      appendBeliefs: setAppendBeliefs,
+      policy: setPolicy,
+      totalTimesteps: setTotalTimesteps,
+      nSteps: setNSteps,
+      batchSize: setBatchSize,
+      learningRate: setLearningRate,
+      gamma: setGamma,
+      gaeLambda: setGaeLambda,
+      clipRange: setClipRange,
+      entCoef: setEntCoef,
+      vfCoef: setVfCoef,
+      maxGradNorm: setMaxGradNorm,
+      dropout: setDropout,
+      seed: setSeed,
+      mappingMode: setMappingMode,
+      investMax: setInvestMax,
+      grossLevCap: setGrossLevCap,
+      maxStepChange: setMaxStepChange,
+      rebalanceEps: setRebalanceEps,
+      minHoldBars: setMinHoldBars,
+      kellyEnabled: setKellyEnabled,
+      kellyLambda: setKellyLambda,
+      kellyFMax: setKellyFMax,
+      kellyEmaAlpha: setKellyEmaAlpha,
+      volEnabled: setVolEnabled,
+      volTarget: setVolTarget,
+      volMin: setVolMin,
+      clampMin: setClampMin,
+      clampMax: setClampMax,
+      dailyLoss: setDailyLoss,
+      perNameCap: setPerNameCap,
+      rewardBase: setRewardBase,
+      wDrawdown: setWDrawdown,
+      wTurnover: setWTurnover,
+      wVol: setWVol,
+      wLeverage: setWLeverage,
+      saveTb: setSaveTb,
+      saveActions: setSaveActions,
+      saveRegime: setSaveRegime,
+    }),
+    []
+  );
+
+  useEffect(() => {
+    if (!useJson) return;
+    let parsed: TrainPayload;
+    try {
+      parsed = JSON.parse(jsonPayload);
+    } catch {
+      return; // ignore invalid JSON until user fixes
+    }
+    const newState = stateFromTrainPayload(parsed);
+    Object.entries(newState).forEach(([k, v]) => {
+      const setter = (setters as any)[k];
+      if (setter) setter(v);
+    });
+  }, [jsonPayload, useJson, setters]);
 
   // ===== Submit =====
   const onSubmit = async () => {
