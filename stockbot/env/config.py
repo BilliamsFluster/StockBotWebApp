@@ -97,6 +97,7 @@ class EnvConfig:
     end: str = "2022-12-31"
     adjusted: bool = True
     eval_window_days: Optional[int] = None
+    custom_ranges: Optional[Sequence[Dict[str, Sequence[str]]]] = None
 
     fees: FeeModel = FeeModel()
     margin: MarginConfig = MarginConfig()
@@ -135,6 +136,7 @@ class EnvConfig:
             end=d.get("end", "2022-12-31"),
             adjusted=bool(d.get("adjusted", True)),
             eval_window_days=d.get("eval_window_days"),
+            custom_ranges=d.get("custom_ranges"),
 
             fees=mk(FeeModel, "fees"),
             margin=mk(MarginConfig, "margin"),

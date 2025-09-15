@@ -15,6 +15,17 @@ def to_dt(s: str) -> datetime:
 
 def infer_split_from_cfg(cfg: EnvConfig) -> Split:
     """Train/eval split inference with optional eval window override."""
+    # Explicit custom ranges take precedence when provided
+    custom = getattr(cfg, "custom_ranges", None)
+    if custom:
+        try:
+            first = custom[0]
+            train = tuple(first["train"])  # type: ignore[index]
+            eval_ = tuple(first["eval"])   # type: ignore[index]
+            return Split(train=train, eval=eval_)
+        except Exception:
+            pass
+
     start = to_dt(cfg.start)
     end = to_dt(cfg.end)
 

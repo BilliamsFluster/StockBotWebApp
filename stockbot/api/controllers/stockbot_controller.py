@@ -7,7 +7,7 @@ import subprocess
 import zipfile
 from tempfile import NamedTemporaryFile
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, List, Optional, Dict, Literal
 import secrets
 import yaml
@@ -345,8 +345,30 @@ def _env_snapshot_from_train(req: "TrainRequest") -> Dict[str, Any]:
     base["start"] = ds.start_date
     base["end"] = ds.end_date
     base["adjusted"] = bool(ds.adjusted_prices)
-    if getattr(ds, "eval_window_days", None):
+    if ds.eval_window_days is not None:
         base["eval_window_days"] = int(ds.eval_window_days)
+    # Support explicit custom ranges or derive one from eval_window_days
+    if ds.train_eval_split == "custom_ranges":
+        if ds.custom_ranges:
+            base["custom_ranges"] = ds.custom_ranges
+        elif ds.eval_window_days is not None:
+            try:
+                end_dt = datetime.fromisoformat(ds.end_date)
+                start_dt = datetime.fromisoformat(ds.start_date)
+                eval_start = end_dt - timedelta(days=int(ds.eval_window_days) - 1)
+                if eval_start < start_dt:
+                    eval_start = start_dt
+                train_end = eval_start - timedelta(days=1)
+                if train_end < start_dt:
+                    train_end = start_dt
+                base["custom_ranges"] = [
+                    {
+                        "train": [start_dt.strftime("%Y-%m-%d"), train_end.strftime("%Y-%m-%d")],
+                        "eval": [eval_start.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d")],
+                    }
+                ]
+            except Exception:
+                pass
 
     # Episode lookback
     base.setdefault("episode", {})
