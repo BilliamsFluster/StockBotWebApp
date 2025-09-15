@@ -545,9 +545,26 @@ async def start_train_job(req: TrainRequest, bg: BackgroundTasks):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to build env snapshot: {e}")
     _dump_yaml(env_snapshot, snapshot_path)
+
+    # Validate dataset upfront so the user receives immediate feedback on
+    # insufficient rows, rather than failing deep in training.
+    try:
+        from stockbot.env.config import EnvConfig
+        from stockbot.env.data_adapter import PanelSource
+        from stockbot.ingestion.yfinance_ingestion import YFinanceProvider
+
+        cfg = EnvConfig(**env_snapshot)
+        prov = YFinanceProvider()
+        PanelSource(prov, cfg)
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Dataset validation failed: {e}")
+
+    payload_dict = req.model_dump(exclude_none=True)
     payload_path = Path(out_dir) / "payload.json"
     try:
-        payload_path.write_text(json.dumps(req.model_dump(), indent=2))
+        payload_path.write_text(json.dumps(payload_dict, indent=2))
     except Exception:
         pass
 
@@ -558,13 +575,13 @@ async def start_train_job(req: TrainRequest, bg: BackgroundTasks):
 
         # Non-blocking: schedule as background task. Training can start immediately.
         # The trainer will proceed even if these artifacts are not ready yet.
-        bg.add_task(prepare_env, req.model_dump(), out_dir)
+        bg.add_task(prepare_env, payload_dict, out_dir)
     except Exception as e:  # pragma: no cover - best effort only
         print(f"[start_train_job] env prep scheduling failed: {e}")
 
     # augment meta with dataset manifest hash if present
     meta = {
-        "payload": req.model_dump(),
+        "payload": payload_dict,
         "config_snapshot": str(snapshot_path),
         "payload_path": str(payload_path),
     }
