@@ -383,7 +383,14 @@ export default function NewTraining({
 
   useEffect(() => {
     if (useJson) {
-      setJsonPayload(JSON.stringify(buildTrainPayload(gatherState()), null, 2));
+      const payload = buildTrainPayload(gatherState());
+      if (
+        payload.dataset.train_eval_split !== "custom_ranges" &&
+        payload.dataset.eval_window_days === undefined
+      ) {
+        payload.dataset.eval_window_days = 365; // expose for manual JSON edits
+      }
+      setJsonPayload(JSON.stringify(payload, null, 2));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [useJson]);
