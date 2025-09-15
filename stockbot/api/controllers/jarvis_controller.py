@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from jarvis.ws_handler import handle_voice_ws
 from jarvis.jarvis_service import JarvisService
 from jarvis.ollama_agent import OllamaAgent
-from jarvis.memory_manager import MemoryManager
+from jarvis.memory_manager import MemoryManager, Role
 from jarvis.huggingFace_agent import HuggingFaceAgent
 
 # -----------------------------
@@ -67,6 +67,10 @@ class ChatAskOut(BaseModel):
     response: str
 
 
+class UserIdIn(BaseModel):
+    user_id: str
+
+
 # -----------------------------
 # Chat handlers
 # -----------------------------
@@ -88,10 +92,14 @@ def chat_ask(
             old_model = None
 
     try:
+        uid = service.agent._pick_user_id(req.prompt) if hasattr(service.agent, '_pick_user_id') else 'default'
+        user_msg = service.agent._strip_user_tag(req.prompt) if hasattr(service.agent, '_strip_user_tag') else req.prompt
+        if req.use_memory is not False:
+            _mm.add_to_short_term(uid, Role.USER, user_msg)
+
         if req.use_memory is False:
             # Build a tools-only context without memory and avoid persisting the turn.
             try:
-                user_msg = req.prompt
                 # BaseAgent API
                 flags = service.agent.detect_flags(user_msg)
                 # Agent-specific helpers (present in both OllamaAgent and HuggingFaceAgent)
@@ -117,7 +125,7 @@ def chat_ask(
                 return ChatAskOut(response=raw)
             except Exception:
                 # Fallback: direct raw call without extra context
-                raw = service.agent._generate_raw(req.prompt, req.format or "text")  # type: ignore[attr-defined]
+                raw = service.agent._generate_raw(user_msg, req.format or "text")  # type: ignore[attr-defined]
                 return ChatAskOut(response=raw)
 
         # Default path: full memory-enabled generation
@@ -129,6 +137,29 @@ def chat_ask(
                 setattr(service.agent, 'model', old_model)
             except Exception:
                 pass
+
+
+def chat_history(
+    req: UserIdIn,
+    service: JarvisService = Depends(get_jarvis_service),
+) -> Dict[str, Any]:
+    return service.get_chat_history(req.user_id)
+
+
+def reset_memory(
+    req: UserIdIn,
+    service: JarvisService = Depends(get_jarvis_service),
+) -> Dict[str, str]:
+    service.reset_memory(req.user_id)
+    return {"status": "ok"}
+
+
+def summarize_memory(
+    req: UserIdIn,
+    service: JarvisService = Depends(get_jarvis_service),
+) -> Dict[str, Any]:
+    summary = service.summarize_memory(req.user_id)
+    return {"summary": summary}
 
 # DOM action models
 class WaitFor(BaseModel):

@@ -169,6 +169,22 @@ class MemoryManager:
                 lines.append(f"You: {text}")
         return "\n".join(lines)
 
+    def add_to_short_term(self, user_id: str, role: Role | str, message: str):
+        """Append a single message to short-term memory and prune by token budget."""
+        log.debug(f"[Memory] add_to_short_term user_id={user_id} role={role}")
+        r = Role(role) if not isinstance(role, Role) else role
+        with self._lock:
+            self._load_user(user_id)
+            st: List[Tuple[Role, str]] = self._mem[user_id]["short_term"]  # type: ignore
+            st.append((r, message))
+
+            total_tokens = sum(self._count_tokens(msg) for _, msg in st)
+            while total_tokens > self.max_st_tokens and st:
+                removed_role, removed_msg = st.pop(0)
+                total_tokens -= self._count_tokens(removed_msg)
+
+            self._save_user(user_id)
+
     def add_turn(self, user_id: str, user_msg: str, jarvis_reply: str):
         """
         Append a (USER, msg) + (JARVIS, reply) turn and prune by token budget.

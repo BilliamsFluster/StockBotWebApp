@@ -28,6 +28,30 @@ def chat_ask(
     return ctrl.chat_ask(req, service=service)
 
 
+@router.post("/chat/history")
+def chat_history(
+    req: ctrl.UserIdIn,
+    service: JarvisService = Depends(ctrl.get_jarvis_service),
+):
+    return ctrl.chat_history(req, service=service)
+
+
+@router.post("/chat/reset")
+def chat_reset(
+    req: ctrl.UserIdIn,
+    service: JarvisService = Depends(ctrl.get_jarvis_service),
+):
+    return ctrl.reset_memory(req, service=service)
+
+
+@router.post("/chat/summarize")
+def chat_summarize(
+    req: ctrl.UserIdIn,
+    service: JarvisService = Depends(ctrl.get_jarvis_service),
+):
+    return ctrl.summarize_memory(req, service=service)
+
+
 @router.websocket("/voice/ws")
 async def jarvis_voice_ws(
     websocket: WebSocket,

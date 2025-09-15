@@ -74,3 +74,18 @@ class JarvisService:
     async def process_message(self, message: str):
         # This should now call the agent's generate method
         return self.agent.generate(message, output_format="text")
+
+    # Memory helpers -------------------------------------------------
+    def get_chat_history(self, user_id: str):
+        return self.agent.memory_manager.get_raw_memory(user_id)
+
+    def reset_memory(self, user_id: str):
+        self.agent.memory_manager.reset_memory(user_id)
+
+    def summarize_memory(self, user_id: str):
+        def _summarize_fn(prompt: str) -> str:
+            if hasattr(self.agent, "_generate_raw"):
+                return self.agent._generate_raw(prompt, "text")  # type: ignore[attr-defined]
+            return self.agent.generate(prompt, output_format="text")
+
+        return self.agent.memory_manager.summarize_short_term(user_id, _summarize_fn)
