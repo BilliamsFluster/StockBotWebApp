@@ -337,7 +337,27 @@ def _env_snapshot_from_train(req: "TrainRequest") -> Dict[str, Any]:
     Starts from env.example.yaml and overlays UI selections so YFinance-based
     training uses the requested symbols/dates/costs/features/sizing.
     """
-    base = _load_yaml("stockbot/env/env.example.yaml");
+    base = _load_yaml("stockbot/env/env.example.yaml")
+    # Drop legacy top-level sections from the template so that generated
+    # snapshots only contain the flattened EnvConfig schema.  Keeping the
+    # original groups (e.g. ``dataset`` or ``costs``) led to confusing
+    # duplicates in ``config.snapshot.yaml`` where stale defaults appeared
+    # alongside the flattened overrides.  Training only consumes the
+    # flattened form, so strip the unused groups to avoid misinterpretation.
+    for k in (
+        "dataset",
+        "features",
+        "costs",
+        "execution_model",
+        "cv",
+        "stress_windows",
+        "regime",
+        "model",
+        "sizing",
+        "reward",
+        "artifacts",
+    ):
+        base.pop(k, None)
 
     ds = req.dataset
     base["symbols"] = list(ds.symbols)
