@@ -88,6 +88,7 @@ async function startServer() {
     const server = https.createServer(sslOptions, app);
     expressWs(app, server);
 
+    // Jarvis routes include chat, history, trades and voice
     app.use("/api/jarvis", createJarvisRoutes(app));
     // WebSocket proxy to FastAPI for StockBot live status
     app.ws("/api/stockbot/runs/:id/ws", (client, req) => {
@@ -121,6 +122,7 @@ async function startServer() {
       const server = http.createServer(app);
       expressWs(app, server);
 
+      // Jarvis routes include chat, history, trades and voice
       app.use("/api/jarvis", createJarvisRoutes(app));
       app.ws("/api/stockbot/runs/:id/ws", (client, req) => {
         try {
