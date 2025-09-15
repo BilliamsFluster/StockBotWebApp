@@ -40,6 +40,7 @@ export default function NewTraining({
   const [interval, setInterval] = useState<"1d" | "1h" | "15m">("1d");
   const [adjusted, setAdjusted] = useState(true);
   const [lookback, setLookback] = useState(64);
+  const [evalWindow, setEvalWindow] = useState(0);
   const [trainSplit, setTrainSplit] = useState("last_year");
 
   // ===== Features =====
@@ -317,6 +318,7 @@ export default function NewTraining({
     interval,
     adjusted,
     lookback,
+    evalWindow,
     trainSplit,
     featureSet,
     dataSource,
@@ -513,6 +515,8 @@ export default function NewTraining({
           setAdjusted={setAdjusted}
           lookback={lookback}
           setLookback={setLookback}
+          evalWindow={evalWindow}
+          setEvalWindow={setEvalWindow}
           trainEvalSplit={trainSplit}
           setTrainEvalSplit={setTrainSplit}
         />

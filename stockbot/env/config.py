@@ -96,6 +96,7 @@ class EnvConfig:
     start: str = "2018-01-01"
     end: str = "2022-12-31"
     adjusted: bool = True
+    eval_window_days: Optional[int] = None
 
     fees: FeeModel = FeeModel()
     margin: MarginConfig = MarginConfig()
@@ -133,6 +134,7 @@ class EnvConfig:
             start=d.get("start", "2018-01-01"),
             end=d.get("end", "2022-12-31"),
             adjusted=bool(d.get("adjusted", True)),
+            eval_window_days=d.get("eval_window_days"),
 
             fees=mk(FeeModel, "fees"),
             margin=mk(MarginConfig, "margin"),

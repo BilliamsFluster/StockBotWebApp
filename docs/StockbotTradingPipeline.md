@@ -160,6 +160,7 @@ The frontend posts `TrainRequest` (pydantic models in `stockbot/api/controllers/
   - `lookback` (int): observation window (mirrors `episode.lookback`).
   - `train_eval_split` ("last_year"|"80_20"|"custom_ranges")
   - `custom_ranges` (optional array of ranges)
+  - `eval_window_days` (optional int): override eval window length (calendar days)
 
 - `features` (FeaturesModel)
   - `feature_set` (list): e.g., ["ohlcv_ta_basic"]

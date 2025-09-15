@@ -8,6 +8,7 @@ export interface TrainPayload {
     lookback: number;
     train_eval_split: "last_year" | "80_20" | "custom_ranges";
     custom_ranges?: { train: [string, string]; eval: [string, string] }[];
+    eval_window_days?: number;
   };
   features: {
     feature_set: ("ohlcv" | "ohlcv_ta_basic" | "ohlcv_ta_rich")[];
@@ -97,6 +98,7 @@ export function buildTrainPayload(state: any): TrainPayload {
       adjusted_prices: !!state.adjusted,
       lookback: Number(state.lookback) || 64,
       train_eval_split: state.trainSplit || 'last_year',
+      eval_window_days: Number(state.evalWindow) || undefined,
     },
     features: {
       feature_set: state.featureSet,
