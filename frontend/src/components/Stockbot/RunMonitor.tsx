@@ -580,34 +580,32 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
   }, [slipTurnSeries, hoverTs]);
 
   // Hover points for reference markers
+  const cursorTime = hoverTs == null ? undefined : hoverTs;
   const hoverPNLPt = useMemo(() => {
-    if (hoverTs == null) return null as null | { t: number; cum: number; dd: number };
-    const i = nearestIndex(pnlSeries, hoverTs);
+    const i = nearestIndex(pnlSeries, cursorTime as any);
     return i >= 0 ? pnlSeries[i] : null;
-  }, [pnlSeries, hoverTs]);
+  }, [pnlSeries, cursorTime]);
   const hoverExpoPt = useMemo(() => {
-    if (hoverTs == null) return null as null | { t: number; gross: number };
-    const i = nearestIndex(expoSeries, hoverTs);
+    const i = nearestIndex(expoSeries, cursorTime as any);
     return i >= 0 ? expoSeries[i] : null;
-  }, [expoSeries, hoverTs]);
+  }, [expoSeries, cursorTime]);
   const hoverSlipPt = useMemo(() => {
-    if (hoverTs == null) return null as null | { t: number; slip: number; to: number };
-    const i = nearestIndex(slipTurnSeries, hoverTs);
+    const i = nearestIndex(slipTurnSeries, cursorTime as any);
     return i >= 0 ? slipTurnSeries[i] : null;
-  }, [slipTurnSeries, hoverTs]);
+  }, [slipTurnSeries, cursorTime]);
 
   // Summary values at hover time for quick glance
   const hoverVals = useMemo(() => {
-    if (hoverTs == null) return null as null | { t: number; cum: number; dd: number; gross: number; slip: number; to: number };
+    const tCandidate = hoverPNLPt?.t ?? hoverExpoPt?.t ?? hoverSlipPt?.t ?? tMax;
     return {
-      t: hoverTs,
+      t: Number.isFinite(tCandidate as any) ? (tCandidate as number) : 0,
       cum: Number(hoverPNLPt?.cum ?? 0),
       dd: Number(hoverPNLPt?.dd ?? 0),
       gross: Number(hoverExpoPt?.gross ?? 0),
       slip: Number(hoverSlipPt?.slip ?? 0),
       to: Number(hoverSlipPt?.to ?? 0),
-    };
-  }, [hoverTs, hoverPNLPt, hoverExpoPt, hoverSlipPt]);
+    } as { t: number; cum: number; dd: number; gross: number; slip: number; to: number };
+  }, [hoverPNLPt, hoverExpoPt, hoverSlipPt, tMax]);
 
   // (Tooltip UI intentionally hidden via Tooltip content={() => null})
 
@@ -726,39 +724,39 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
         </div>
       </Card>
 
-      {hoverVals && (
-        <div className="flex flex-wrap items-center gap-3 text-xs">
-          <span className="text-muted-foreground">At Cursor:</span>
-          <span className="rounded border px-2 py-1 bg-background/70">
-            <span className="font-mono">{new Date(hoverVals.t).toLocaleString([], { hour12: false })}</span>
+      <div className="flex flex-nowrap items-center gap-3 text-xs h-8 overflow-hidden whitespace-nowrap">
+        <span className="text-muted-foreground">At Cursor:</span>
+        <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1 h-6">
+          <span className="font-mono w-[180px] truncate">
+            {hoverVals?.t ? new Date(hoverVals.t).toLocaleString([], { hour12: false }) : ''}
           </span>
-          <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1">
-            <span className="w-2 h-2 rounded" style={{background:'#2563eb'}} />
-            <span>P&L</span>
-            <span className={["font-mono", colorClass(hoverVals.cum)].join(" ")}>{formatPct(hoverVals.cum)}</span>
-          </span>
-          <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1">
-            <span className="w-2 h-2 rounded" style={{background:'#ef4444'}} />
-            <span>DD</span>
-            <span className={["font-mono", colorClass(hoverVals.dd)].join(" ")}>{formatPct(hoverVals.dd)}</span>
-          </span>
-          <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1">
-            <span className="w-2 h-2 rounded" style={{background:'#16a34a'}} />
-            <span>Gross</span>
-            <span className={["font-mono", colorClass(hoverVals.gross)].join(" ")}>{formatSigned(hoverVals.gross)}</span>
-          </span>
-          <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1">
-            <span className="w-2 h-2 rounded" style={{background:'#a855f7'}} />
-            <span>Slip</span>
-            <span className={["font-mono", colorClass(hoverVals.slip)].join(" ")}>{`${hoverVals.slip.toFixed(1)} bps`}</span>
-          </span>
-          <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1">
-            <span className="w-2 h-2 rounded" style={{background:'#f59e0b'}} />
-            <span>Turnover</span>
-            <span className={["font-mono", colorClass(hoverVals.to)].join(" ")}>{formatPct(hoverVals.to/100)}</span>
-          </span>
-        </div>
-      )}
+        </span>
+        <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1 h-6">
+          <span className="w-2 h-2 rounded" style={{background:'#2563eb'}} />
+          <span>P&L</span>
+          <span className={["font-mono tabular-nums text-right w-[72px]", colorClass(hoverVals?.cum)].join(" ")}>{formatPct(Number(hoverVals?.cum || 0))}</span>
+        </span>
+        <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1 h-6">
+          <span className="w-2 h-2 rounded" style={{background:'#ef4444'}} />
+          <span>DD</span>
+          <span className={["font-mono tabular-nums text-right w-[72px]", colorClass(hoverVals?.dd)].join(" ")}>{formatPct(Number(hoverVals?.dd || 0))}</span>
+        </span>
+        <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1 h-6">
+          <span className="w-2 h-2 rounded" style={{background:'#16a34a'}} />
+          <span>Gross</span>
+          <span className={["font-mono tabular-nums text-right w-[72px]", colorClass(hoverVals?.gross)].join(" ")}>{formatSigned(Number(hoverVals?.gross || 0))}</span>
+        </span>
+        <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1 h-6">
+          <span className="w-2 h-2 rounded" style={{background:'#a855f7'}} />
+          <span>Slip</span>
+          <span className={["font-mono tabular-nums text-right w-[72px]", colorClass(hoverVals?.slip)].join(" ")}>{`${Number(hoverVals?.slip || 0).toFixed(1)} bps`}</span>
+        </span>
+        <span className="rounded border px-2 py-1 bg-background/70 inline-flex items-center gap-1 h-6">
+          <span className="w-2 h-2 rounded" style={{background:'#f59e0b'}} />
+          <span>Turnover</span>
+          <span className={["font-mono tabular-nums text-right w-[72px]", colorClass(hoverVals?.to)].join(" ")}>{formatPct(Number((hoverVals?.to || 0)/100))}</span>
+        </span>
+      </div>
 
       {/* Compact guide for interpreting metrics */}
       <Card className="p-3">
@@ -807,7 +805,14 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
                 <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleDateString([], { year: '2-digit', month: 'short', day: '2-digit' })} />
                 <YAxis yAxisId="left" domain={pnlCumDomain as any} tickFormatter={(v) => formatPct(Number(v))} />
                 <YAxis yAxisId="right" orientation="right" domain={pnlDdDomain as any} tickFormatter={(v) => formatPct(Number(v))} />
-                <Tooltip content={() => null} wrapperStyle={{ display: 'none' }} cursor={false} />
+                <Tooltip isAnimationActive={false}
+                  labelFormatter={(v:any)=>new Date(Number(v)).toLocaleTimeString([], { hour12:false })}
+                  formatter={(value:any, name:any)=>{
+                    if (name === 'cum') return [formatPct(Number(value)), 'P&L'];
+                    if (name === 'dd') return [formatPct(Number(value)), 'DD'];
+                    return [String(value), name];
+                  }}
+                />
                 {hoverTs != null && hoverPNLPt && (
                   <>
                     <ReferenceLine x={hoverTs} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
@@ -841,7 +846,10 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleDateString([], { year: '2-digit', month: 'short', day: '2-digit' })} />
                 <YAxis domain={expoDomain as any} tickFormatter={(v) => formatSigned(Number(v))} />
-                <Tooltip content={() => null} wrapperStyle={{ display: 'none' }} cursor={false} />
+                <Tooltip isAnimationActive={false}
+                  labelFormatter={(v:any)=>new Date(Number(v)).toLocaleTimeString([], { hour12:false })}
+                  formatter={(value:any, name:any)=>[formatSigned(Number(value)), 'Gross']}
+                />
                 {hoverTs != null && hoverExpoPt && (
                   <>
                     <ReferenceLine x={hoverTs} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
@@ -879,7 +887,14 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
                 <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleDateString([], { year: '2-digit', month: 'short', day: '2-digit' })} />
                 <YAxis yAxisId="left" domain={slipDomain as any} tickFormatter={(v) => `${Number(v).toFixed(1)} bps`} />
                 <YAxis yAxisId="right" orientation="right" domain={toDomain as any} tickFormatter={(v) => formatPct(Number(v)/100)} />
-                <Tooltip content={() => null} wrapperStyle={{ display: 'none' }} cursor={false} />
+                <Tooltip isAnimationActive={false}
+                  labelFormatter={(v:any)=>new Date(Number(v)).toLocaleTimeString([], { hour12:false })}
+                  formatter={(value:any, name:any)=>{
+                    if (name === 'slip') return [`${Number(value).toFixed(1)} bps`, 'Slip'];
+                    if (name === 'to') return [formatPct(Number(value)/100), 'Turnover'];
+                    return [String(value), name];
+                  }}
+                />
                 {hoverTs != null && hoverSlipPt && (
                   <>
                     <ReferenceLine x={hoverTs} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />

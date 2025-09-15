@@ -132,6 +132,8 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   const [monitorHover, setMonitorHover] = useState(false);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [contentWidth, setContentWidth] = useState(0);
+  const userScrollRef = useRef(0);
+  const userInteractRef = useRef(0);
 
   // Keep runId in sync with parent prop if it changes (navigation)
   useEffect(() => {
@@ -511,10 +513,20 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
     if (!monitorOpen || !monitorHover) return;
     let raf: number | null = null;
     let last = performance.now();
-    const speedPxPerSec = 48; // gentle crawl
+    const speedPxPerSec = 16; // slower crawl to reduce sensitivity
     const step = (now: number) => {
       const el = monitorRef.current;
       if (!el) return;
+      // Pause auto-scroll briefly after user wheel/scroll
+      if (Date.now() - userScrollRef.current < 2500) {
+        raf = requestAnimationFrame(step);
+        return;
+      }
+      // Pause while user is interacting/moving pointer over charts
+      if (Date.now() - userInteractRef.current < 2500) {
+        raf = requestAnimationFrame(step);
+        return;
+      }
       const dt = Math.max(0, (now - last) / 1000);
       last = now;
       const maxScroll = el.scrollHeight - el.clientHeight;
@@ -530,6 +542,20 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
     raf = requestAnimationFrame(step);
     return () => { if (raf != null) cancelAnimationFrame(raf); };
   }, [monitorOpen, monitorHover]);
+
+  const onMonitorWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    const el = monitorRef.current;
+    if (!el) return;
+    // Always consume the wheel so the page doesn't scroll
+    e.preventDefault();
+    e.stopPropagation();
+    userScrollRef.current = Date.now();
+    el.scrollTop += e.deltaY;
+  };
+
+  const onMonitorPointer = () => {
+    userInteractRef.current = Date.now();
+  };
 
   const fmtStep = (s: number) => `${s}`;
   const fmtVal = (v: number) => Number.isFinite(v) ? v.toFixed(5) : "";
@@ -1244,7 +1270,13 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
             ref={monitorRef}
             onMouseEnter={() => setMonitorHover(true)}
             onMouseLeave={() => setMonitorHover(false)}
-            className="fixed right-0 top-0 bottom-0 w-[820px] max-w-[95vw] bg-background border-l shadow-xl p-4 overflow-y-auto z-40"
+            onMouseMoveCapture={onMonitorPointer}
+            onPointerDownCapture={onMonitorPointer}
+            onWheelCapture={onMonitorWheel}
+            data-lenis-prevent
+            data-lenis-prevent-wheel
+            data-lenis-prevent-touch
+            className="fixed right-0 top-0 bottom-0 w-[820px] max-w-[95vw] bg-background border-l shadow-xl p-4 overflow-y-auto overscroll-y-contain z-40 [scrollbar-gutter:stable]"
           >
             {runId && <RunMonitor runId={runId} />}
           </div>
