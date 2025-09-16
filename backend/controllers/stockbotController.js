@@ -94,6 +94,16 @@ export async function startTrainProxy(req, res) {
 }
 
 
+/** POST /api/stockbot/train/validate */
+export async function validateTrainProxy(req, res) {
+  try {
+    const { data } = await axios.post(`${STOCKBOT_URL}/api/stockbot/train/validate`, req.body);
+    return res.json(data);
+  } catch (e) {
+    const { status, body } = safeErrorBody(e, 400);
+    return res.status(status).json(body);
+  }
+}
 
 /** POST /api/stockbot/backtest */
 export async function startBacktestProxy(req, res) {

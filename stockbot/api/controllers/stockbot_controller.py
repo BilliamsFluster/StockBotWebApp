@@ -532,6 +532,134 @@ def _run_subprocess_sync(args: List[str], rec: RunRecord):
 
 # --------------- API ----------------
 
+async def validate_train_request(req: TrainRequest):
+    """Resolve the effective train/eval windows and surface data coverage issues."""
+
+    from dataclasses import replace
+    from time import perf_counter
+
+    import numpy as np
+
+    from stockbot.env.config import EnvConfig
+    from stockbot.env.data_adapter import PanelSource
+    from stockbot.ingestion.yfinance_ingestion import YFinanceProvider
+    from stockbot.rl.train_utils import infer_split_from_cfg
+
+    try:
+        env_snapshot = _env_snapshot_from_train(req)
+    except Exception as e:  # pragma: no cover - defensive
+        raise HTTPException(status_code=400, detail=f"Failed to build env snapshot: {e}") from e
+
+    with NamedTemporaryFile("w", suffix=".yaml", delete=False) as tmp:
+        yaml.safe_dump(env_snapshot, tmp)
+        tmp_path = Path(tmp.name)
+
+    try:
+        cfg = EnvConfig.from_yaml(tmp_path)
+    except Exception as e:  # pragma: no cover - defensive
+        raise HTTPException(status_code=400, detail=f"Failed to load env config: {e}") from e
+    finally:
+        try:
+            Path(tmp_path).unlink()
+        except Exception:
+            pass
+
+    try:
+        split = infer_split_from_cfg(cfg)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to infer train/eval split: {e}") from e
+
+    provider = YFinanceProvider()
+    lookback = int(getattr(cfg.episode, "lookback", 0))
+    required_bars = lookback + 2
+    buffer_bars = max(5, int(round(required_bars * 0.08)))
+    summaries: Dict[str, Dict[str, Any]] = {}
+    issues: List[Dict[str, Any]] = []
+    total_latency = 0.0
+
+    def summarize_window(mode: str, span: tuple[str, str]) -> Dict[str, Any]:
+        nonlocal total_latency
+
+        start, end = span
+        summary: Dict[str, Any] = {
+            "start": start,
+            "end": end,
+            "calendar_days": None,
+            "business_days": None,
+            "bars": None,
+            "latency_ms": None,
+            "error": None,
+        }
+
+        try:
+            start_dt = datetime.fromisoformat(str(start))
+            end_dt = datetime.fromisoformat(str(end))
+            summary["calendar_days"] = max(0, (end_dt - start_dt).days) + 1 if end_dt >= start_dt else 0
+        except Exception:
+            start_dt = end_dt = None  # type: ignore
+
+        try:
+            summary["business_days"] = int(np.busday_count(str(start), str(end))) + (1 if str(end) >= str(start) else 0)
+        except Exception:
+            summary["business_days"] = None
+
+        t0 = perf_counter()
+        sub_cfg = replace(cfg, start=start, end=end)
+        try:
+            panel = PanelSource(provider, sub_cfg)
+        except Exception as exc:
+            msg = str(exc)
+            summary["error"] = msg
+            issues.append({
+                "level": "error",
+                "scope": mode,
+                "message": msg,
+                "blocking": True,
+            })
+        else:
+            rows = len(panel.index)
+            summary["bars"] = rows
+            if rows < required_bars:
+                issues.append({
+                    "level": "error",
+                    "scope": mode,
+                    "message": (
+                        f"{mode.capitalize()} window has {rows} usable bars but lookback {lookback} "
+                        f"requires ≥ {required_bars}."
+                    ),
+                    "detail": "Extend the date range, reduce lookback, or remove long-window indicators.",
+                    "blocking": True,
+                })
+            elif rows < required_bars + buffer_bars:
+                issues.append({
+                    "level": "warning",
+                    "scope": mode,
+                    "message": (
+                        f"{mode.capitalize()} window has {rows} usable bars (only {rows - required_bars} above the minimum)."
+                    ),
+                    "detail": "Add more history so alignment losses do not break training.",
+                    "blocking": False,
+                })
+
+        latency_ms = (perf_counter() - t0) * 1000.0
+        summary["latency_ms"] = latency_ms
+        total_latency += latency_ms
+        return summary
+
+    summaries["train"] = summarize_window("train", split.train)
+    summaries["eval"] = summarize_window("eval", split.eval)
+
+    return {
+        "lookback": lookback,
+        "required_bars": required_bars,
+        "buffer_bars": buffer_bars,
+        "split": summaries,
+        "issues": issues,
+        "data_source": getattr(req.features, "data_source", None),
+        "latency_ms": total_latency,
+    }
+
+
 async def start_train_job(req: TrainRequest, bg: BackgroundTasks):
     import uuid
 

@@ -26,6 +26,494 @@ import { Label } from "@/components/ui/label";
 const TERMINAL: Array<JobStatusResponse["status"]> = ["SUCCEEDED", "FAILED", "CANCELLED"];
 const ppoDivisible = (n: number, b: number) => n > 0 && b > 0 && n % b === 0;
 
+type ValidationLevel = "error" | "warning" | "info";
+
+interface ValidationIssue {
+  level: ValidationLevel;
+  message: string;
+  detail?: string;
+  blocking?: boolean;
+}
+
+type ServerScope = "train" | "eval" | "global";
+
+interface ServerValidationIssue {
+  level: ValidationLevel;
+  message: string;
+  detail?: string;
+  blocking?: boolean;
+  scope?: ServerScope;
+}
+
+interface ServerSplitRange {
+  start: string;
+  end: string;
+  calendar_days?: number | null;
+  business_days?: number | null;
+  bars?: number | null;
+  latency_ms?: number | null;
+  error?: string | null;
+}
+
+interface ServerValidationResponse {
+  lookback: number;
+  required_bars: number;
+  buffer_bars: number;
+  split: {
+    train: ServerSplitRange;
+    eval: ServerSplitRange;
+  };
+  issues: ServerValidationIssue[];
+  data_source?: string | null;
+  latency_ms?: number | null;
+}
+
+interface ServerCheckState {
+  status: "idle" | "loading" | "succeeded" | "failed";
+  error?: string | null;
+  updatedAt?: string | null;
+  latencyMs?: number | null;
+}
+
+interface RangeSummary {
+  start: string;
+  end: string;
+  calendarDays: number;
+  businessDays: number;
+  bars: number;
+  effectiveBars?: number;
+  observedBars?: number | null;
+  barsSource?: "estimated" | "observed";
+  latencyMs?: number | null;
+  error?: string | null;
+}
+
+interface ValidationResult {
+  issues: ValidationIssue[];
+  blockingIssues: ValidationIssue[];
+  split?: {
+    train: RangeSummary;
+    eval: RangeSummary;
+  };
+  requiredBars: number;
+  bufferBars: number;
+  approxWarmup?: number;
+  embargoLoss?: number;
+  serverCheck?: ServerCheckState;
+}
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+const BARS_PER_DAY: Record<"1d" | "1h" | "15m", number> = {
+  "1d": 1,
+  "1h": 6.5,
+  "15m": 26,
+};
+
+const SERVER_VALIDATION_DEBOUNCE_MS = 600;
+
+const formatIso = (d: Date) => d.toISOString().slice(0, 10);
+
+const formatTimestamp = (iso: string | null | undefined) => {
+  if (!iso) return "";
+  try {
+    const dt = new Date(iso);
+    if (Number.isNaN(dt.getTime())) return "";
+    return dt.toLocaleTimeString();
+  } catch {
+    return "";
+  }
+};
+
+const parseIsoDate = (value: string | undefined | null): Date | null => {
+  if (!value || typeof value !== "string") return null;
+  const parts = value.split("-").map((x) => Number(x));
+  if (parts.length !== 3 || parts.some((x) => Number.isNaN(x))) return null;
+  const [y, m, day] = parts;
+  return new Date(Date.UTC(y, m - 1, day));
+};
+
+const addUtcDays = (d: Date, days: number) => {
+  const next = new Date(d.getTime());
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+};
+
+const diffCalendarDays = (start: Date, end: Date) => {
+  if (end < start) return 0;
+  return Math.floor((end.getTime() - start.getTime()) / MS_PER_DAY);
+};
+
+const countBusinessDays = (start: Date, end: Date) => {
+  if (end < start) return 0;
+  let count = 0;
+  for (let d = new Date(start.getTime()); d.getTime() <= end.getTime(); d.setUTCDate(d.getUTCDate() + 1)) {
+    const day = d.getUTCDay();
+    if (day !== 0 && day !== 6) count += 1;
+  }
+  return count;
+};
+
+const summarizeRange = (start: Date, end: Date, interval: "1d" | "1h" | "15m"): RangeSummary => {
+  const calendarDays = diffCalendarDays(start, end) + 1; // inclusive span for display
+  const businessDays = countBusinessDays(start, end);
+  const multiplier = BARS_PER_DAY[interval] ?? 1;
+  const bars = Math.max(0, Math.round(businessDays * multiplier));
+  return {
+    start: formatIso(start),
+    end: formatIso(end),
+    calendarDays,
+    businessDays,
+    bars,
+  };
+};
+
+interface DeriveSplitInput {
+  start: Date;
+  end: Date;
+  interval: "1d" | "1h" | "15m";
+  lookback: number;
+  trainSplit: string;
+  evalWindow: number;
+}
+
+const deriveSplit = ({ start, end, lookback, trainSplit, evalWindow }: DeriveSplitInput) => {
+  const spanDays = diffCalendarDays(start, end);
+  let trainStart = new Date(start.getTime());
+  let trainEnd = new Date(end.getTime());
+  let evalStart = new Date(start.getTime());
+  let evalEnd = new Date(end.getTime());
+
+  const enforceMinEvalWindow = () => {
+    const minEvalDays = Math.max(100, Math.floor(lookback) + 40);
+    const evalSpan = diffCalendarDays(evalStart, evalEnd);
+    if (evalSpan < minEvalDays) {
+      let newEvalStart = addUtcDays(end, -minEvalDays);
+      if (newEvalStart < start) newEvalStart = new Date(start.getTime());
+      evalStart = newEvalStart;
+      const newTrainEnd = addUtcDays(evalStart, -1);
+      if (newTrainEnd >= start) {
+        trainEnd = newTrainEnd;
+      }
+    }
+  };
+
+  if (evalWindow && evalWindow > 0) {
+    evalEnd = new Date(end.getTime());
+    let candidate = addUtcDays(end, -(evalWindow - 1));
+    if (candidate < start) candidate = new Date(start.getTime());
+    evalStart = candidate;
+    const trainCandidate = addUtcDays(evalStart, -1);
+    trainStart = new Date(start.getTime());
+    trainEnd = trainCandidate >= start ? trainCandidate : new Date(start.getTime());
+    enforceMinEvalWindow();
+  } else if (trainSplit === "80_20" || spanDays < 365) {
+    const splitOffset = Math.floor(spanDays * 0.8);
+    const splitPoint = addUtcDays(start, splitOffset);
+    trainEnd = splitPoint >= start ? splitPoint : new Date(start.getTime());
+    evalStart = addUtcDays(trainEnd, 1);
+    evalEnd = new Date(end.getTime());
+    if (evalStart > evalEnd) {
+      evalStart = new Date(end.getTime());
+    }
+    enforceMinEvalWindow();
+  } else {
+    const lastYear = end.getUTCFullYear();
+    const janFirst = new Date(Date.UTC(lastYear, 0, 1));
+    if (start.getUTCFullYear() >= lastYear) {
+      const splitOffset = Math.floor(spanDays * 0.8);
+      const splitPoint = addUtcDays(start, splitOffset);
+      trainEnd = splitPoint >= start ? splitPoint : new Date(start.getTime());
+      evalStart = addUtcDays(trainEnd, 1);
+      evalEnd = new Date(end.getTime());
+    } else {
+      evalStart = janFirst < start ? new Date(start.getTime()) : janFirst;
+      evalEnd = new Date(end.getTime());
+      const candidateTrainEnd = addUtcDays(evalStart, -1);
+      trainEnd = candidateTrainEnd >= start ? candidateTrainEnd : new Date(start.getTime());
+    }
+    enforceMinEvalWindow();
+  }
+
+  if (trainEnd < trainStart) trainEnd = new Date(trainStart.getTime());
+  if (evalStart < start) evalStart = new Date(start.getTime());
+  if (evalEnd < evalStart) evalEnd = new Date(evalStart.getTime());
+
+  return {
+    train: { start: trainStart, end: trainEnd },
+    eval: { start: evalStart, end: evalEnd },
+  };
+};
+
+const computeValidation = (state: any): ValidationResult => {
+  const issues: ValidationIssue[] = [];
+  const symbols = String(state.symbols || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const lookback = Number(state.lookback) || 0;
+  const requiredBars = Math.max(0, lookback) + 2;
+  const bufferBars = Math.max(5, Math.ceil(requiredBars * 0.08));
+  const embargoLoss = Math.max(0, Number(state.embargo) || 0);
+
+  if (symbols.length === 0) {
+    issues.push({
+      level: "error",
+      message: "Add at least one symbol to train on.",
+      blocking: true,
+    });
+  }
+
+  const interval = (state.interval as "1d" | "1h" | "15m") || "1d";
+  const startDate = parseIsoDate(state.start);
+  const endDate = parseIsoDate(state.end);
+  if (!startDate || !endDate) {
+    issues.push({
+      level: "error",
+      message: "Provide valid ISO dates for start and end (YYYY-MM-DD).",
+      blocking: true,
+    });
+    return {
+      issues,
+      blockingIssues: issues.filter((i) => i.level === "error" && i.blocking),
+      requiredBars,
+      bufferBars,
+      approxWarmup: 0,
+      embargoLoss,
+    };
+  }
+
+  if (endDate < startDate) {
+    issues.push({
+      level: "error",
+      message: "End date must be after start date.",
+      blocking: true,
+    });
+  }
+
+  if (lookback <= 0) {
+    issues.push({
+      level: "error",
+      message: "Lookback must be a positive number of bars.",
+      blocking: true,
+    });
+  }
+
+  if (!Array.isArray(state.featureSet) || state.featureSet.length === 0) {
+    issues.push({
+      level: "error",
+      message: "Select at least one feature set.",
+      blocking: true,
+    });
+  }
+
+  const trainSplit = state.trainSplit || "last_year";
+  const evalWindow = Number(state.evalWindow) || 0;
+  let splitSummary: ValidationResult["split"] | undefined;
+
+  if (endDate >= startDate && lookback > 0) {
+    const split = deriveSplit({
+      start: startDate,
+      end: endDate,
+      lookback,
+      trainSplit,
+      evalWindow,
+      interval,
+    });
+    const trainRange: RangeSummary = {
+      ...summarizeRange(split.train.start, split.train.end, interval),
+      barsSource: "estimated",
+    };
+    const evalRange: RangeSummary = {
+      ...summarizeRange(split.eval.start, split.eval.end, interval),
+      barsSource: "estimated",
+    };
+    trainRange.effectiveBars = trainRange.bars;
+    evalRange.effectiveBars = evalRange.bars;
+    splitSummary = { train: trainRange, eval: evalRange };
+
+    const warnThreshold = requiredBars + Math.max(bufferBars, 10);
+
+    if (trainRange.bars < requiredBars) {
+      issues.push({
+        level: "error",
+        message: `Train window has ≈${trainRange.bars} bars but lookback requires at least ${requiredBars}.`,
+        detail: "Extend the training start date or lower the lookback.",
+        blocking: true,
+      });
+    } else if (trainRange.bars < warnThreshold) {
+      issues.push({
+        level: "warning",
+        message: `Train window is tight (≈${trainRange.bars} bars vs required ${requiredBars}).`,
+        detail: "Consider using a longer history for more stable training.",
+      });
+    }
+
+    if (evalRange.bars < requiredBars) {
+      issues.push({
+        level: "error",
+        message: `Eval window has ≈${evalRange.bars} bars but lookback requires at least ${requiredBars}.`,
+        detail: "Increase eval window days, extend the end date, or reduce lookback.",
+        blocking: true,
+      });
+    } else if (evalRange.bars < warnThreshold) {
+      issues.push({
+        level: "warning",
+        message: `Eval window is tight (≈${evalRange.bars} bars vs required ${requiredBars}).`,
+        detail: "Extend the evaluation window to avoid runtime errors.",
+      });
+    }
+
+    if (trainSplit === "custom_ranges") {
+      issues.push({
+        level: "info",
+        message: "Custom ranges selected — ensure payload JSON supplies explicit ranges (UI uses auto-split heuristics).",
+      });
+    }
+  }
+
+  const nSteps = Number(state.nSteps) || 0;
+  const batchSize = Number(state.batchSize) || 0;
+  if (!ppoDivisible(nSteps, batchSize)) {
+    issues.push({
+      level: "error",
+      message: "PPO expects batch_size to divide n_steps (per environment).",
+      detail: "Adjust n_steps or batch_size so n_steps % batch_size = 0.",
+      blocking: true,
+    });
+  }
+
+  if (state.volEnabled && Number(state.clampMin) === 0 && Number(state.clampMax) === 0) {
+    issues.push({
+      level: "error",
+      message: "Vol target clamps are 0/0 — exposure will pin near zero.",
+      detail: "Use wider clamps such as min 0.25 / max 2.0.",
+      blocking: true,
+    });
+  }
+
+  if (state.mappingMode === "tanh_leverage" && Number(state.grossLevCap) <= 1.0) {
+    issues.push({
+      level: "error",
+      message: "tanh_leverage mapping works best with gross_leverage_cap > 1.0.",
+      detail: "Increase the leverage cap or switch mapping modes.",
+      blocking: true,
+    });
+  }
+
+  const blockingIssues = issues.filter((i) => i.level === "error" && i.blocking);
+
+  return {
+    issues,
+    blockingIssues,
+    split: splitSummary,
+    requiredBars,
+    bufferBars,
+    approxWarmup: 0,
+    embargoLoss,
+  };
+};
+
+const levelColors: Record<ValidationLevel, string> = {
+  error: "text-red-600 dark:text-red-400",
+  warning: "text-amber-600 dark:text-amber-400",
+  info: "text-sky-600 dark:text-sky-400",
+};
+
+const statusColor = (validation: ValidationResult) => {
+  if (validation.blockingIssues.length > 0) return "text-red-600 dark:text-red-400";
+  if (validation.issues.some((issue) => issue.level === "warning")) return "text-amber-600 dark:text-amber-400";
+  return "text-emerald-600 dark:text-emerald-400";
+};
+
+const statusLabel = (validation: ValidationResult) => {
+  if (validation.blockingIssues.length > 0) return "Fix blocking issues";
+  if (validation.issues.some((issue) => issue.level === "warning")) return "Review warnings";
+  return "Ready to train";
+};
+
+function ValidationSummaryCard({ validation }: { validation: ValidationResult }) {
+  const renderRange = (label: string, range: RangeSummary) => {
+    const parts: string[] = [];
+    parts.push(`${range.calendarDays} days`);
+    if (range.observedBars != null) {
+      parts.push(`${range.observedBars} bars`);
+    } else {
+      parts.push(`≈${range.bars} bars`);
+    }
+    return (
+      <div>
+        <span className="font-semibold text-foreground">{label}</span>: {range.start} → {range.end} ({parts.join(", ")})
+        {typeof range.latencyMs === "number" && range.latencyMs >= 0 && (
+          <span className="text-muted-foreground"> — checked in {Math.round(range.latencyMs)} ms</span>
+        )}
+      </div>
+    );
+  };
+
+  const renderServerStatus = () => {
+    const check = validation.serverCheck;
+    if (!check) return null;
+    let text = "";
+    let className = "text-muted-foreground";
+    if (check.status === "idle") {
+      text = "Waiting for inputs";
+    } else if (check.status === "loading") {
+      text = "Checking data…";
+    } else if (check.status === "succeeded") {
+      className = "text-emerald-600 dark:text-emerald-400";
+      const ts = formatTimestamp(check.updatedAt ?? null);
+      text = ts ? `Up to date (${ts})` : "Up to date";
+    } else if (check.status === "failed") {
+      className = "text-red-600 dark:text-red-400";
+      text = `Failed — ${check.error ?? "see server logs"}`;
+    }
+    return (
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <span>Live data check</span>
+        <span className={className}>{text}</span>
+      </div>
+    );
+  };
+
+  return (
+    <div className="rounded-md border border-border/60 bg-muted/40 p-4 space-y-3">
+      <div className="flex items-center justify-between gap-2 text-sm">
+        <div className="font-medium text-foreground">Configuration checks</div>
+        <span className={`text-xs font-semibold uppercase tracking-wide ${statusColor(validation)}`}>
+          {statusLabel(validation)}
+        </span>
+      </div>
+      {renderServerStatus()}
+      {validation.split && (
+        <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+          {renderRange("Train", validation.split.train)}
+          {renderRange("Eval", validation.split.eval)}
+          <div className="sm:col-span-2 text-xs text-muted-foreground">
+            Minimum bars required by lookback: {validation.requiredBars}.
+            {validation.bufferBars ? ` Recommended cushion: +${validation.bufferBars}.` : ""}
+          </div>
+        </div>
+      )}
+      <div className="space-y-2">
+        {validation.issues.length === 0 && (
+          <div className="text-xs text-muted-foreground">
+            No issues detected. You're good to start training.
+          </div>
+        )}
+        {validation.issues.map((issue, idx) => (
+          <div key={idx} className={`text-sm leading-snug ${levelColors[issue.level]}`}>
+            <div>
+              <span className="font-medium capitalize">{issue.level}:</span> {issue.message}
+            </div>
+            {issue.detail && <div className="text-xs text-muted-foreground">{issue.detail}</div>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function NewTraining({
   onJobCreated,
   onCancel,
@@ -454,6 +942,175 @@ export default function NewTraining({
     ]
   );
 
+  const localValidation = useMemo(() => computeValidation(gatherState()), [gatherState]);
+  const validationPayload = useMemo(() => buildTrainPayload(gatherState()), [gatherState]);
+  const [serverValidation, setServerValidation] = useState<ServerValidationResponse | null>(null);
+  const [serverCheck, setServerCheck] = useState<ServerCheckState>({ status: "idle" });
+
+  useEffect(() => {
+    const dataset = validationPayload?.dataset;
+    if (!dataset) {
+      setServerCheck({ status: "idle" });
+      setServerValidation(null);
+      return;
+    }
+    const lookbackVal = Number(dataset.lookback) || 0;
+    const symbols = Array.isArray(dataset.symbols) ? dataset.symbols : [];
+    const startDate = parseIsoDate(dataset.start_date);
+    const endDate = parseIsoDate(dataset.end_date);
+    const hasInputs =
+      symbols.length > 0 &&
+      !!startDate &&
+      !!endDate &&
+      lookbackVal > 0 &&
+      endDate >= startDate;
+
+    if (!hasInputs) {
+      setServerCheck({ status: "idle" });
+      setServerValidation(null);
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      setServerCheck((prev) => ({ status: "loading", updatedAt: prev.updatedAt, latencyMs: prev.latencyMs }));
+      api
+        .post<ServerValidationResponse>("/stockbot/train/validate", validationPayload, { signal: controller.signal })
+        .then(({ data }) => {
+          if (cancelled) return;
+          setServerValidation(data);
+          setServerCheck({
+            status: "succeeded",
+            updatedAt: new Date().toISOString(),
+            latencyMs: typeof data?.latency_ms === "number" ? data.latency_ms : null,
+          });
+        })
+        .catch((err: any) => {
+          if (cancelled || controller.signal.aborted) return;
+          setServerValidation(null);
+          setServerCheck({
+            status: "failed",
+            error: err?.message ?? "Validation request failed",
+          });
+        });
+    }, SERVER_VALIDATION_DEBOUNCE_MS);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [validationPayload]);
+
+  const validation = useMemo<ValidationResult>(() => {
+    const combinedIssues = [...localValidation.issues];
+    const combinedBlocking = [...localValidation.blockingIssues];
+
+    let requiredBars = localValidation.requiredBars;
+    let bufferBars = localValidation.bufferBars;
+
+    const applyServerRange = (target: RangeSummary, source?: ServerSplitRange) => {
+      if (!source) return target;
+      const next: RangeSummary = { ...target };
+      if (source.start) next.start = source.start;
+      if (source.end) next.end = source.end;
+      if (typeof source.calendar_days === "number") next.calendarDays = source.calendar_days;
+      if (typeof source.business_days === "number") next.businessDays = source.business_days;
+      if (typeof source.bars === "number" && source.bars >= 0) {
+        next.bars = source.bars;
+        next.observedBars = source.bars;
+        next.effectiveBars = source.bars;
+        next.barsSource = "observed";
+      }
+      if (typeof source.latency_ms === "number") next.latencyMs = source.latency_ms;
+      if (source.error) next.error = source.error;
+      return next;
+    };
+
+    let split = localValidation.split
+      ? {
+          train: { ...localValidation.split.train },
+          eval: { ...localValidation.split.eval },
+        }
+      : undefined;
+
+    if (serverValidation?.required_bars) {
+      requiredBars = serverValidation.required_bars;
+    }
+    if (serverValidation?.buffer_bars) {
+      bufferBars = Math.max(bufferBars, serverValidation.buffer_bars);
+    }
+
+    if (serverValidation?.split) {
+      if (split) {
+        split = {
+          train: applyServerRange(split.train, serverValidation.split.train),
+          eval: applyServerRange(split.eval, serverValidation.split.eval),
+        };
+      } else {
+        const train = serverValidation.split.train;
+        const evalRange = serverValidation.split.eval;
+        split = {
+          train: {
+            start: train.start,
+            end: train.end,
+            calendarDays: train.calendar_days ?? 0,
+            businessDays: train.business_days ?? 0,
+            bars: train.bars ?? 0,
+            observedBars: train.bars ?? null,
+            effectiveBars: typeof train.bars === "number" ? train.bars : undefined,
+            barsSource: typeof train.bars === "number" ? "observed" : undefined,
+            latencyMs: train.latency_ms ?? null,
+            error: train.error ?? null,
+          },
+          eval: {
+            start: evalRange.start,
+            end: evalRange.end,
+            calendarDays: evalRange.calendar_days ?? 0,
+            businessDays: evalRange.business_days ?? 0,
+            bars: evalRange.bars ?? 0,
+            observedBars: evalRange.bars ?? null,
+            effectiveBars: typeof evalRange.bars === "number" ? evalRange.bars : undefined,
+            barsSource: typeof evalRange.bars === "number" ? "observed" : undefined,
+            latencyMs: evalRange.latency_ms ?? null,
+            error: evalRange.error ?? null,
+          },
+        };
+      }
+    }
+
+    if (serverValidation?.issues?.length) {
+      serverValidation.issues.forEach((issue) => {
+        const normalized: ValidationIssue = {
+          level: issue.level ?? "error",
+          message: issue.message,
+          detail: issue.detail,
+          blocking: issue.blocking,
+        };
+        combinedIssues.push(normalized);
+        if (normalized.blocking) combinedBlocking.push(normalized);
+      });
+    }
+
+    if (serverCheck.status === "failed" && serverCheck.error) {
+      const message = `Server validation failed: ${serverCheck.error}`;
+      if (!combinedIssues.some((issue) => issue.message === message)) {
+        combinedIssues.push({ level: "warning", message, blocking: false });
+      }
+    }
+
+    return {
+      ...localValidation,
+      issues: combinedIssues,
+      blockingIssues: combinedBlocking,
+      split,
+      requiredBars,
+      bufferBars,
+      serverCheck,
+    };
+  }, [localValidation, serverValidation, serverCheck]);
+
   const applyPayloadToState = (payload: TrainPayload) => {
     const toNumber = (value: unknown): number | undefined => {
       if (typeof value === "number") return value;
@@ -626,10 +1283,10 @@ export default function NewTraining({
 
   useEffect(() => {
     if (isJsonEditing) return;
-    const next = JSON.stringify(buildTrainPayload(gatherState()), null, 2);
+    const next = JSON.stringify(validationPayload, null, 2);
     setJsonPayload((prev) => (prev === next ? prev : next));
     setJsonError(null);
-  }, [gatherState, isJsonEditing, showPayload]);
+  }, [validationPayload, isJsonEditing, showPayload]);
 
   const handlePayloadChange = (value: string) => {
     setJsonPayload(value);
@@ -657,20 +1314,8 @@ export default function NewTraining({
     setJobId(null);
 
     // ---- Preflight guards ----
-    if (!ppoDivisible(nSteps, batchSize)) {
-      setError("PPO: batch_size should divide n_steps (or n_steps × n_envs).");
-      setSubmitting(false);
-      setProgress(null);
-      return;
-    }
-    if (volEnabled && clampMin === 0 && clampMax === 0) {
-      setError("Vol target clamps are 0/0 → exposure will pin near zero. Use e.g. min=0.25, max=2.0.");
-      setSubmitting(false);
-      setProgress(null);
-      return;
-    }
-    if (mappingMode === "tanh_leverage" && grossLevCap <= 1.0) {
-      setError("tanh_leverage requires gross_leverage_cap > 1.0 to be useful.");
+    if (validation.blockingIssues.length > 0) {
+      setError(validation.blockingIssues.map((issue) => issue.message).join(" "));
       setSubmitting(false);
       setProgress(null);
       return;
@@ -715,7 +1360,22 @@ export default function NewTraining({
           >
             Cancel
           </Button>
-          <Button onClick={onSubmit} disabled={submitting || isRunning}>
+          <Button
+            onClick={onSubmit}
+            disabled={
+              submitting ||
+              isRunning ||
+              validation.blockingIssues.length > 0 ||
+              validation.serverCheck?.status === "loading"
+            }
+            title={
+              validation.blockingIssues.length > 0
+                ? "Resolve configuration errors before starting"
+                : validation.serverCheck?.status === "loading"
+                ? "Waiting for live data check"
+                : undefined
+            }
+          >
             {submitting && !status ? "Submitting…" : isRunning ? "Running…" : "Start Training"}
           </Button>
         </div>
@@ -739,6 +1399,8 @@ export default function NewTraining({
         </div>
       )}
       {error && <div className="text-sm text-red-600">{error}</div>}
+
+      <ValidationSummaryCard validation={validation} />
 
       <div className="space-y-2">
         <div className="flex items-center gap-2">

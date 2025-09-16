@@ -10,6 +10,7 @@ from api.controllers.stockbot_controller import (
     TrainRequest,
     BacktestRequest,
     start_train_job,
+    validate_train_request,
     start_backtest_job,
     start_train_job as start_cv_job,
     list_runs,
@@ -59,6 +60,11 @@ router = APIRouter()
 @router.post("/train")
 async def post_train(req: TrainRequest, bg: BackgroundTasks):
     return await start_train_job(req, bg)
+
+
+@router.post("/train/validate")
+async def post_train_validate(req: TrainRequest):
+    return await validate_train_request(req)
 
 
 @router.post("/backtest")

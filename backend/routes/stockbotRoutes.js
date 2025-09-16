@@ -3,6 +3,7 @@ import multer from "multer";
 
 import {
   startTrainProxy,
+  validateTrainProxy,
   startBacktestProxy,
   startCvProxy,
   listRunsProxy,
@@ -36,6 +37,7 @@ const router = express.Router();
 
 // Kick off jobs
 router.post("/train", protectRoute, startTrainProxy);
+router.post("/train/validate", protectRoute, validateTrainProxy);
 router.post("/backtest", protectRoute, startBacktestProxy);
 router.post("/cv", protectRoute, startCvProxy);
 
