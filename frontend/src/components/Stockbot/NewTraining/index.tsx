@@ -1,7 +1,7 @@
 // src/components/Stockbot/NewTraining/index.tsx
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-hot-toast";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,9 @@ import { SizingSection, DEFAULT_SIZING } from "./SizingSection";
 import { RewardLoggingSection, DEFAULT_REWARD  } from "./RewardLoggingSection";
 import { DownloadsSection } from "./DownloadsSection";
 import { buildTrainPayload, type TrainPayload } from "./payload";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 
 const TERMINAL: Array<JobStatusResponse["status"]> = ["SUCCEEDED", "FAILED", "CANCELLED"];
 const ppoDivisible = (n: number, b: number) => n > 0 && b > 0 && n % b === 0;
@@ -37,6 +40,7 @@ export default function NewTraining({
   const [interval, setInterval] = useState<"1d" | "1h" | "15m">("1d");
   const [adjusted, setAdjusted] = useState(true);
   const [lookback, setLookback] = useState(64);
+  const [evalWindow, setEvalWindow] = useState(0);
   const [trainSplit, setTrainSplit] = useState("last_year");
 
   // ===== Features =====
@@ -128,6 +132,12 @@ export default function NewTraining({
   const [saveTb, setSaveTb] = useState(true);
   const [saveActions, setSaveActions] = useState(true);
   const [saveRegime, setSaveRegime] = useState(true);
+
+  // ===== Payload JSON view =====
+  const [showPayload, setShowPayload] = useState(false);
+  const [jsonPayload, setJsonPayload] = useState("");
+  const [isJsonEditing, setIsJsonEditing] = useState(false);
+  const [jsonError, setJsonError] = useState<string | null>(null);
 
   // ===== Run state =====
   const [jobId, setJobId] = useState<string | null>(null);
@@ -303,6 +313,340 @@ export default function NewTraining({
     } catch {}
   };
 
+  const gatherState = useCallback(
+    () => ({
+      symbols: symbols.split(",").map((s) => s.trim()).join(","),
+      start,
+      end,
+      interval,
+      adjusted,
+      lookback,
+      evalWindow,
+      trainSplit,
+      featureSet,
+      dataSource,
+      rsi,
+      macd,
+      bbands,
+      normalizeObs,
+      embargo,
+      commissionPerShare,
+      takerFeeBps,
+      makerRebateBps,
+      halfSpreadBps,
+      impactK,
+      fillPolicy,
+      vwapMinutes,
+      maxParticipation,
+      cvFolds,
+      cvEmbargo,
+      regimeEnabled,
+      regimeStates,
+      regimeFeatures,
+      appendBeliefs,
+      policy,
+      totalTimesteps,
+      nSteps,
+      batchSize,
+      learningRate,
+      gamma,
+      gaeLambda,
+      clipRange,
+      entCoef,
+      vfCoef,
+      maxGradNorm,
+      dropout,
+      seed,
+      mappingMode,
+      investMax,
+      grossLevCap,
+      maxStepChange,
+      rebalanceEps,
+      minHoldBars,
+      kellyEnabled,
+      kellyLambda,
+      kellyFMax,
+      kellyEmaAlpha,
+      volEnabled,
+      volTarget,
+      volMin,
+      clampMin,
+      clampMax,
+      dailyLoss,
+      perNameCap,
+      rewardBase,
+      wDrawdown,
+      wTurnover,
+      wVol,
+      wLeverage,
+      saveTb,
+      saveActions,
+      saveRegime,
+    }),
+    [
+      symbols,
+      start,
+      end,
+      interval,
+      adjusted,
+      lookback,
+      evalWindow,
+      trainSplit,
+      featureSet,
+      dataSource,
+      rsi,
+      macd,
+      bbands,
+      normalizeObs,
+      embargo,
+      commissionPerShare,
+      takerFeeBps,
+      makerRebateBps,
+      halfSpreadBps,
+      impactK,
+      fillPolicy,
+      vwapMinutes,
+      maxParticipation,
+      cvFolds,
+      cvEmbargo,
+      regimeEnabled,
+      regimeStates,
+      regimeFeatures,
+      appendBeliefs,
+      policy,
+      totalTimesteps,
+      nSteps,
+      batchSize,
+      learningRate,
+      gamma,
+      gaeLambda,
+      clipRange,
+      entCoef,
+      vfCoef,
+      maxGradNorm,
+      dropout,
+      seed,
+      mappingMode,
+      investMax,
+      grossLevCap,
+      maxStepChange,
+      rebalanceEps,
+      minHoldBars,
+      kellyEnabled,
+      kellyLambda,
+      kellyFMax,
+      kellyEmaAlpha,
+      volEnabled,
+      volTarget,
+      volMin,
+      clampMin,
+      clampMax,
+      dailyLoss,
+      perNameCap,
+      rewardBase,
+      wDrawdown,
+      wTurnover,
+      wVol,
+      wLeverage,
+      saveTb,
+      saveActions,
+      saveRegime,
+    ]
+  );
+
+  const applyPayloadToState = (payload: TrainPayload) => {
+    const toNumber = (value: unknown): number | undefined => {
+      if (typeof value === "number") return value;
+      if (typeof value === "string" && value.trim() !== "") {
+        const num = Number(value);
+        return Number.isNaN(num) ? undefined : num;
+      }
+      return undefined;
+    };
+
+    if (payload?.dataset) {
+      if (Array.isArray(payload.dataset.symbols)) {
+        setSymbols(payload.dataset.symbols.map((s) => s.trim()).join(","));
+      }
+      if (typeof payload.dataset.start_date === "string") setStart(payload.dataset.start_date);
+      if (typeof payload.dataset.end_date === "string") setEnd(payload.dataset.end_date);
+      if (payload.dataset.interval) setInterval(payload.dataset.interval);
+      if (typeof payload.dataset.adjusted_prices === "boolean") setAdjusted(payload.dataset.adjusted_prices);
+      const lookbackVal = toNumber(payload.dataset.lookback);
+      if (lookbackVal !== undefined) setLookback(lookbackVal);
+      const evalWindowVal = toNumber(payload.dataset.eval_window_days);
+      setEvalWindow(evalWindowVal ?? 0);
+      if (payload.dataset.train_eval_split) setTrainSplit(payload.dataset.train_eval_split);
+    }
+
+    if (payload?.features) {
+      if (Array.isArray(payload.features.feature_set)) setFeatureSet([...payload.features.feature_set]);
+      if (typeof payload.features.data_source === "string") setDataSource(payload.features.data_source);
+      if ("ta_basic_opts" in payload.features) {
+        const opts = payload.features.ta_basic_opts ?? { rsi: false, macd: false, bbands: false };
+        setRsi(!!opts.rsi);
+        setMacd(!!opts.macd);
+        setBbands(!!opts.bbands);
+      }
+      if (typeof payload.features.normalize_observation === "boolean") {
+        setNormalizeObs(payload.features.normalize_observation);
+      }
+      const embargoVal = toNumber(payload.features.embargo_bars);
+      if (embargoVal !== undefined) setEmbargo(embargoVal);
+    }
+
+    if (payload?.costs) {
+      const commissionVal = toNumber(payload.costs.commission_per_share);
+      if (commissionVal !== undefined) setCommissionPerShare(commissionVal);
+      const takerVal = toNumber(payload.costs.taker_fee_bps);
+      if (takerVal !== undefined) setTakerFeeBps(takerVal);
+      const makerVal = toNumber(payload.costs.maker_rebate_bps);
+      if (makerVal !== undefined) setMakerRebateBps(makerVal);
+      const spreadVal = toNumber(payload.costs.half_spread_bps);
+      if (spreadVal !== undefined) setHalfSpreadBps(spreadVal);
+      const impactVal = toNumber(payload.costs.impact_k);
+      if (impactVal !== undefined) setImpactK(impactVal);
+    }
+
+    if (payload?.execution_model) {
+      if (payload.execution_model.fill_policy) setFillPolicy(payload.execution_model.fill_policy);
+      const vwapVal = toNumber(payload.execution_model.vwap_minutes);
+      if (vwapVal !== undefined) setVwapMinutes(vwapVal);
+      const maxPartVal = toNumber(payload.execution_model.max_participation);
+      if (maxPartVal !== undefined) setMaxParticipation(maxPartVal);
+    }
+
+    if (payload?.cv) {
+      const foldsVal = toNumber(payload.cv.n_folds);
+      if (foldsVal !== undefined) setCvFolds(foldsVal);
+      const cvEmbargoVal = toNumber(payload.cv.embargo_bars);
+      if (cvEmbargoVal !== undefined) setCvEmbargo(cvEmbargoVal);
+    }
+
+    if (payload?.regime) {
+      if (typeof payload.regime.enabled === "boolean") setRegimeEnabled(payload.regime.enabled);
+      const statesVal = toNumber(payload.regime.n_states);
+      if (statesVal !== undefined) setRegimeStates(statesVal);
+      if (Array.isArray(payload.regime.features)) {
+        setRegimeFeatures(payload.regime.features.map((f) => f.trim()).filter(Boolean).join(","));
+      }
+      if (typeof payload.regime.append_beliefs_to_obs === "boolean") {
+        setAppendBeliefs(payload.regime.append_beliefs_to_obs);
+      }
+    }
+
+    if (payload?.model) {
+      if (payload.model.policy) setPolicy(payload.model.policy);
+      const totalVal = toNumber(payload.model.total_timesteps);
+      if (totalVal !== undefined) setTotalTimesteps(totalVal);
+      const nStepsVal = toNumber(payload.model.n_steps);
+      if (nStepsVal !== undefined) setNSteps(nStepsVal);
+      const batchVal = toNumber(payload.model.batch_size);
+      if (batchVal !== undefined) setBatchSize(batchVal);
+      const lrVal = toNumber(payload.model.learning_rate);
+      if (lrVal !== undefined) setLearningRate(lrVal);
+      const gammaVal = toNumber(payload.model.gamma);
+      if (gammaVal !== undefined) setGamma(gammaVal);
+      const gaeVal = toNumber(payload.model.gae_lambda);
+      if (gaeVal !== undefined) setGaeLambda(gaeVal);
+      const clipVal = toNumber(payload.model.clip_range);
+      if (clipVal !== undefined) setClipRange(clipVal);
+      const entVal = toNumber(payload.model.ent_coef);
+      if (entVal !== undefined) setEntCoef(entVal);
+      const vfVal = toNumber(payload.model.vf_coef);
+      if (vfVal !== undefined) setVfCoef(vfVal);
+      const gradVal = toNumber(payload.model.max_grad_norm);
+      if (gradVal !== undefined) setMaxGradNorm(gradVal);
+      const dropoutVal = toNumber(payload.model.dropout);
+      if (dropoutVal !== undefined) setDropout(dropoutVal);
+      const seedVal = toNumber(payload.model.seed);
+      setSeed(seedVal);
+    }
+
+    if (payload?.sizing) {
+      if (payload.sizing.mapping_mode) setMappingMode(payload.sizing.mapping_mode);
+      const investVal = toNumber(payload.sizing.invest_max);
+      if (investVal !== undefined) setInvestMax(investVal);
+      const grossVal = toNumber(payload.sizing.gross_leverage_cap);
+      if (grossVal !== undefined) setGrossLevCap(grossVal);
+      const maxStepVal = toNumber(payload.sizing.max_step_change);
+      if (maxStepVal !== undefined) setMaxStepChange(maxStepVal);
+      const rebalanceVal = toNumber(payload.sizing.rebalance_eps);
+      if (rebalanceVal !== undefined) setRebalanceEps(rebalanceVal);
+      const minHoldVal = toNumber(payload.sizing.min_hold_bars);
+      if (minHoldVal !== undefined) setMinHoldBars(minHoldVal);
+      if (payload.sizing.kelly) {
+        if (typeof payload.sizing.kelly.enabled === "boolean") setKellyEnabled(payload.sizing.kelly.enabled);
+        const lambdaVal = toNumber(payload.sizing.kelly.lambda);
+        if (lambdaVal !== undefined) setKellyLambda(lambdaVal);
+        const fMaxVal = toNumber(payload.sizing.kelly.f_max);
+        if (fMaxVal !== undefined) setKellyFMax(fMaxVal);
+        const emaVal = toNumber(payload.sizing.kelly.ema_alpha);
+        if (emaVal !== undefined) setKellyEmaAlpha(emaVal);
+      }
+      if (payload.sizing.vol_target) {
+        if (typeof payload.sizing.vol_target.enabled === "boolean") setVolEnabled(payload.sizing.vol_target.enabled);
+        const annualVal = toNumber(payload.sizing.vol_target.annual_target);
+        if (annualVal !== undefined) setVolTarget(annualVal);
+        const minVolVal = toNumber(payload.sizing.vol_target.min_vol);
+        if (minVolVal !== undefined) setVolMin(minVolVal);
+        if (payload.sizing.vol_target.clamp) {
+          const clampMinVal = toNumber(payload.sizing.vol_target.clamp.min);
+          if (clampMinVal !== undefined) setClampMin(clampMinVal);
+          const clampMaxVal = toNumber(payload.sizing.vol_target.clamp.max);
+          if (clampMaxVal !== undefined) setClampMax(clampMaxVal);
+        }
+      }
+      if (payload.sizing.guards) {
+        const dailyVal = toNumber(payload.sizing.guards.daily_loss_limit_pct);
+        if (dailyVal !== undefined) setDailyLoss(dailyVal);
+        const perNameVal = toNumber(payload.sizing.guards.per_name_weight_cap);
+        if (perNameVal !== undefined) setPerNameCap(perNameVal);
+      }
+    }
+
+    if (payload?.reward) {
+      if (payload.reward.base) setRewardBase(payload.reward.base);
+      const drawdownVal = toNumber(payload.reward.w_drawdown);
+      if (drawdownVal !== undefined) setWDrawdown(drawdownVal);
+      const turnoverVal = toNumber(payload.reward.w_turnover);
+      if (turnoverVal !== undefined) setWTurnover(turnoverVal);
+      const volVal = toNumber(payload.reward.w_vol);
+      if (volVal !== undefined) setWVol(volVal);
+      const levVal = toNumber(payload.reward.w_leverage);
+      if (levVal !== undefined) setWLeverage(levVal);
+    }
+
+    if (payload?.artifacts) {
+      if (typeof payload.artifacts.save_tb === "boolean") setSaveTb(payload.artifacts.save_tb);
+      if (typeof payload.artifacts.save_action_hist === "boolean") setSaveActions(payload.artifacts.save_action_hist);
+      if (typeof payload.artifacts.save_regime_plots === "boolean") setSaveRegime(payload.artifacts.save_regime_plots);
+    }
+  };
+
+  useEffect(() => {
+    if (isJsonEditing) return;
+    const next = JSON.stringify(buildTrainPayload(gatherState()), null, 2);
+    setJsonPayload((prev) => (prev === next ? prev : next));
+    setJsonError(null);
+  }, [gatherState, isJsonEditing, showPayload]);
+
+  const handlePayloadChange = (value: string) => {
+    setJsonPayload(value);
+    if (!value.trim()) {
+      setJsonError("Payload cannot be empty");
+      return;
+    }
+    try {
+      const parsed = JSON.parse(value) as TrainPayload;
+      if (!parsed || typeof parsed !== "object") throw new Error("Invalid payload");
+      applyPayloadToState(parsed);
+      setJsonError(null);
+    } catch {
+      setJsonError("Invalid JSON payload");
+    }
+  };
+
   // ===== Submit =====
   const onSubmit = async () => {
     setSubmitting(true);
@@ -333,74 +677,14 @@ export default function NewTraining({
     }
 
     try {
-      const payload: TrainPayload = buildTrainPayload({
-        symbols: symbols.split(",").map(s => s.trim()).join(","), // normalize
-        start,
-        end,
-        interval,
-        adjusted,
-        lookback,
-        trainSplit,
-        featureSet,
-        dataSource,
-        rsi,
-        macd,
-        bbands,
-        normalizeObs,
-        embargo,
-        commissionPerShare,
-        takerFeeBps,
-        makerRebateBps,
-        halfSpreadBps,
-        impactK,
-        fillPolicy,
-        vwapMinutes,
-        maxParticipation,
-        cvFolds,
-        cvEmbargo,
-        regimeEnabled,
-        regimeStates,
-        regimeFeatures,
-        appendBeliefs,
-        policy,
-        totalTimesteps,
-        nSteps,
-        batchSize,
-        learningRate,
-        gamma,
-        gaeLambda,
-        clipRange,
-        entCoef,
-        vfCoef,
-        maxGradNorm,
-        dropout,
-        seed,
-        mappingMode,
-        investMax,
-        grossLevCap,
-        maxStepChange,
-        rebalanceEps,
-        minHoldBars,
-        kellyEnabled,
-        kellyLambda,
-        kellyFMax,
-        kellyEmaAlpha,
-        volEnabled,
-        volTarget,
-        volMin,
-        clampMin,
-        clampMax,
-        dailyLoss,
-        perNameCap,
-        rewardBase,
-        wDrawdown,
-        wTurnover,
-        wVol,
-        wLeverage,
-        saveTb,
-        saveActions,
-        saveRegime,
-      });
+      if (showPayload && jsonError) {
+        setError(jsonError);
+        setSubmitting(false);
+        setProgress(null);
+        return;
+      }
+      const state = gatherState();
+      const payload = buildTrainPayload(state);
 
       const { data: resp } = await api.post<{ job_id: string }>("/stockbot/train", payload);
       if (!resp?.job_id) throw new Error("No job_id returned");
@@ -456,6 +740,40 @@ export default function NewTraining({
       )}
       {error && <div className="text-sm text-red-600">{error}</div>}
 
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <Switch
+            id="view-json"
+            checked={showPayload}
+            onCheckedChange={(value) => {
+              setShowPayload(value);
+              if (value) {
+                const next = JSON.stringify(buildTrainPayload(gatherState()), null, 2);
+                setJsonPayload(next);
+                setJsonError(null);
+              } else {
+                setIsJsonEditing(false);
+                setJsonError(null);
+              }
+            }}
+          />
+          <Label htmlFor="view-json">View JSON payload</Label>
+        </div>
+        {showPayload && (
+          <div className="space-y-1">
+            <Textarea
+              className="font-mono text-xs h-64"
+              value={jsonPayload}
+              onChange={(e) => handlePayloadChange(e.target.value)}
+              onFocus={() => setIsJsonEditing(true)}
+              onBlur={() => setIsJsonEditing(false)}
+              spellCheck={false}
+            />
+            {jsonError && <div className="text-xs text-red-500">{jsonError}</div>}
+          </div>
+        )}
+      </div>
+
       <Accordion type="multiple" className="w-full">
         <DatasetSection
           symbols={symbols}
@@ -470,6 +788,8 @@ export default function NewTraining({
           setAdjusted={setAdjusted}
           lookback={lookback}
           setLookback={setLookback}
+          evalWindow={evalWindow}
+          setEvalWindow={setEvalWindow}
           trainEvalSplit={trainSplit}
           setTrainEvalSplit={setTrainSplit}
         />

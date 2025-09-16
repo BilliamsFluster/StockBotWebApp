@@ -14,36 +14,47 @@ def to_dt(s: str) -> datetime:
 
 
 def infer_split_from_cfg(cfg: EnvConfig) -> Split:
-    """Train/eval split inference (calendar-year or 80/20)."""
+    """Train/eval split inference with optional eval window override."""
     start = to_dt(cfg.start)
     end = to_dt(cfg.end)
 
-    span_days = (end - start).days
-    if span_days < 365:
-        split_point = start + timedelta(days=int(span_days * 0.8))
-        train = (start.strftime("%Y-%m-%d"), split_point.strftime("%Y-%m-%d"))
-        eval_ = (
-            (split_point + timedelta(days=1)).strftime("%Y-%m-%d"),
-            end.strftime("%Y-%m-%d"),
-        )
-        return Split(train=train, eval=eval_)
+    eval_window = getattr(cfg, "eval_window_days", None)
+    if eval_window:
+        eval_start = end - timedelta(days=int(eval_window) - 1)
+        if eval_start < start:
+            eval_start = start
+        train_end = eval_start - timedelta(days=1)
+        if train_end < start:
+            train_end = start
+        train = (start.strftime("%Y-%m-%d"), train_end.strftime("%Y-%m-%d"))
+        eval_ = (eval_start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+    else:
+        span_days = (end - start).days
+        if span_days < 365:
+            split_point = start + timedelta(days=int(span_days * 0.8))
+            train = (start.strftime("%Y-%m-%d"), split_point.strftime("%Y-%m-%d"))
+            eval_ = (
+                (split_point + timedelta(days=1)).strftime("%Y-%m-%d"),
+                end.strftime("%Y-%m-%d"),
+            )
+            return Split(train=train, eval=eval_)
 
-    last_year = end.year
-    eval_start = datetime(last_year, 1, 1)
-    eval_end = end
-    train_end = eval_start - timedelta(days=1)
+        last_year = end.year
+        eval_start = datetime(last_year, 1, 1)
+        eval_end = end
+        train_end = eval_start - timedelta(days=1)
 
-    if start.year >= last_year:
-        split_point = start + timedelta(days=int(span_days * 0.8))
-        train = (start.strftime("%Y-%m-%d"), split_point.strftime("%Y-%m-%d"))
-        eval_ = (
-            (split_point + timedelta(days=1)).strftime("%Y-%m-%d"),
-            end.strftime("%Y-%m-%d"),
-        )
-        return Split(train=train, eval=eval_)
+        if start.year >= last_year:
+            split_point = start + timedelta(days=int(span_days * 0.8))
+            train = (start.strftime("%Y-%m-%d"), split_point.strftime("%Y-%m-%d"))
+            eval_ = (
+                (split_point + timedelta(days=1)).strftime("%Y-%m-%d"),
+                end.strftime("%Y-%m-%d"),
+            )
+            return Split(train=train, eval=eval_)
 
-    train = (start.strftime("%Y-%m-%d"), train_end.strftime("%Y-%m-%d"))
-    eval_ = (eval_start.strftime("%Y-%m-%d"), eval_end.strftime("%Y-%m-%d"))
+        train = (start.strftime("%Y-%m-%d"), train_end.strftime("%Y-%m-%d"))
+        eval_ = (eval_start.strftime("%Y-%m-%d"), eval_end.strftime("%Y-%m-%d"))
 
     # Ensure the eval window has enough calendar days to fetch bars; if not,
     # back off to a rolling tail window ending at `end`.

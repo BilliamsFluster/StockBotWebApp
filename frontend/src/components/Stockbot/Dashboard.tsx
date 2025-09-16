@@ -103,8 +103,8 @@ export default function Dashboard({
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Card className="p-4">
           <h3 className="text-lg font-semibold mb-3">Training Runs</h3>
-          <div className="max-h-96 overflow-auto">
-            <Table containerClassName="max-h-96">
+          <ScrollArea className="h-96">
+            <Table containerClassName="overflow-visible">
               <TableHeader className="sticky top-0 bg-background z-10">
                 <TableRow>
                   <TableHead>Run ID</TableHead>
@@ -146,13 +146,13 @@ export default function Dashboard({
                 )}
               </TableBody>
             </Table>
-          </div>
+          </ScrollArea>
         </Card>
 
         <Card className="p-4">
           <h3 className="text-lg font-semibold mb-3">Backtests</h3>
-          <div className="max-h-96 overflow-auto">
-            <Table containerClassName="max-h-96">
+          <ScrollArea className="h-96">
+            <Table containerClassName="overflow-visible">
               <TableHeader className="sticky top-0 bg-background z-10">
                 <TableRow>
                   <TableHead>Run ID</TableHead>
@@ -193,14 +193,14 @@ export default function Dashboard({
                 )}
               </TableBody>
             </Table>
-          </div>
+          </ScrollArea>
         </Card>
       </div>
 
       <Card className="p-4">
         <h3 className="text-lg font-semibold mb-3">Saved Runs</h3>
-        <div className="max-h-96 overflow-auto">
-          <Table containerClassName="max-h-96">
+        <ScrollArea className="h-96">
+          <Table containerClassName="overflow-visible">
             <TableHeader className="sticky top-0 bg-background z-10">
             <TableRow>
               <TableHead>Run ID</TableHead>
@@ -243,7 +243,7 @@ export default function Dashboard({
             )}
           </TableBody>
           </Table>
-        </div>
+        </ScrollArea>
       </Card>
     </div>
   );
