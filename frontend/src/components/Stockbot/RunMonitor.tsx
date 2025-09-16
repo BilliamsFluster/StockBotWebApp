@@ -224,7 +224,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
         const resp = await fetch(telemUrl, { credentials: 'include' });
         if (resp.ok) {
           const txt = await resp.text();
-          const lines = txt.split('\n').filter(Boolean);
+          const lines = parseJsonLines(txt);
           const allBars: any[] = [];
           for (const ln of lines) {
             try { allBars.push(JSON.parse(ln)); } catch {}
@@ -241,7 +241,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
         const respE = await fetch(evUrl, { credentials: 'include' });
         if (respE.ok) {
           const txt = await respE.text();
-          const lines = txt.split('\n').filter(Boolean);
+          const lines = parseJsonLines(txt);
           const allEvents: any[] = [];
           for (const ln of lines) {
             try { allEvents.push(JSON.parse(ln)); } catch {}
@@ -263,7 +263,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
           const resp = await fetch(u, { credentials: 'include' });
           if (resp.ok) {
             const txt = await resp.text();
-            const lines = txt.split('\n').filter(Boolean);
+            const lines = parseJsonLines(txt);
             const start = telemSeenRef.current;
             for (let i = start; i < lines.length; i++) {
               try { const j = JSON.parse(lines[i]); lastRef.current = j; barsBufRef.current.push(j); } catch {}
@@ -276,7 +276,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
           const respE = await fetch(ue, { credentials: 'include' });
           if (respE.ok) {
             const txt = await respE.text();
-            const lines = txt.split('\n').filter(Boolean);
+            const lines = parseJsonLines(txt);
             const start = eventsSeenRef.current;
             for (let i = start; i < lines.length; i++) {
               try { const ev = JSON.parse(lines[i]); eventsBufRef.current.push(ev); } catch {}
@@ -310,9 +310,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
         const u = buildUrl(`/api/stockbot/runs/${runId}/files/live_audit`);
         const resp = await fetch(u, { credentials: 'include', signal: ctrl.signal });
         const txt = await resp.text();
-        const lines = txt
-          .split('\n')
-          .filter(Boolean)
+        const lines = parseJsonLines(txt)
           .map((ln) => { try { return JSON.parse(ln); } catch { return null; } })
           .filter(Boolean);
         setAudit(lines.slice(-20));
@@ -335,6 +333,13 @@ export default function RunMonitor({ runId }: { runId: string }) {
   }, [runId, isTerminal]);
 
   // -------- AI Insights --------
+  function parseJsonLines(txt: string): string[] {
+    return txt
+      .split(/\r?\n/)
+      .map((ln) => ln.trim())
+      .filter((ln) => ln.length > 0);
+  }
+
   const fetchArtifactText = async (name: string, maxChars = 6000): Promise<string> => {
     try {
       const u = buildUrl(`/api/stockbot/runs/${runId}/files/${encodeURIComponent(name)}`);
