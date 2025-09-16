@@ -25,6 +25,7 @@ from api.controllers.stockbot_controller import (
     bundle_zip,
     cancel_run,
     delete_run,
+    get_telemetry_tail,
 )
 from api.controllers.insights_controller import InsightsRequest, generate_insights
 from api.controllers.highlights_controller import HighlightsRequest, generate_highlights
@@ -89,6 +90,11 @@ def get_run_artifacts(run_id: str):
 @router.get("/runs/{run_id}/files/{name}")
 def get_run_artifact_file(run_id: str, name: str):
     return get_artifact_file(run_id, name)
+
+
+@router.get("/runs/{run_id}/telemetry/tail")
+def get_run_telemetry_tail(run_id: str, limit: int = 4000):
+    return get_telemetry_tail(run_id, limit=limit)
 
 
 @router.get("/runs/{run_id}/bundle")
