@@ -183,7 +183,12 @@ export async function getRunTelemetryTailProxy(req, res) {
       if (!rel) throw new Error("live telemetry mapping missing");
       const abs = path.join(RUNS_DIR, String(req.params.id), rel);
       if (!fs.existsSync(abs)) {
-        return res.status(404).json({ error: "Telemetry file not found" });
+        return res.json({
+          items: [],
+          returned: 0,
+          total: 0,
+          has_more: false,
+        });
       }
       const text = await fs.promises.readFile(abs, "utf-8");
       const lines = text

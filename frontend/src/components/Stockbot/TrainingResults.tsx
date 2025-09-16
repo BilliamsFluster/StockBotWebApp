@@ -546,15 +546,21 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
     return () => { if (raf != null) cancelAnimationFrame(raf); };
   }, [monitorOpen, monitorHover]);
 
-  const onMonitorWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+  useEffect(() => {
     const el = monitorRef.current;
     if (!el) return;
-    // Always consume the wheel so the page doesn't scroll
-    e.preventDefault();
-    e.stopPropagation();
-    userScrollRef.current = Date.now();
-    el.scrollTop += e.deltaY;
-  };
+    const handleWheel = (event: WheelEvent) => {
+      // Always consume the wheel so the page doesn't scroll the document
+      event.preventDefault();
+      event.stopPropagation();
+      userScrollRef.current = Date.now();
+      el.scrollTop += event.deltaY;
+    };
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      el.removeEventListener("wheel", handleWheel);
+    };
+  }, [monitorOpen]);
 
   const onMonitorPointer = () => {
     userInteractRef.current = Date.now();
@@ -1323,7 +1329,6 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
             onMouseLeave={() => setMonitorHover(false)}
             onMouseMoveCapture={onMonitorPointer}
             onPointerDownCapture={onMonitorPointer}
-            onWheelCapture={onMonitorWheel}
             data-lenis-prevent
             data-lenis-prevent-wheel
             data-lenis-prevent-touch
