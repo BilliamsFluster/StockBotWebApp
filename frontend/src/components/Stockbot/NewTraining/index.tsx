@@ -40,7 +40,9 @@ interface RangeSummary {
   end: string;
   calendarDays: number;
   businessDays: number;
-  bars: number;
+  tradingDays: number;
+  tradingBars: number;
+  effectiveBars: number;
 }
 
 interface ValidationResult {
@@ -51,6 +53,7 @@ interface ValidationResult {
     eval: RangeSummary;
   };
   requiredBars: number;
+  featureWarmup: number;
 }
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -59,6 +62,22 @@ const BARS_PER_DAY: Record<"1d" | "1h" | "15m", number> = {
   "1d": 1,
   "1h": 6.5,
   "15m": 26,
+};
+
+const TRADING_DAY_RATIO = 252 / 260; // ~3% buffer for US market holidays
+
+const FEATURE_SET_WARMUP: Record<string, number> = {
+  minimal: 20,
+  minimal_core: 20,
+  ohlcv: 0,
+  ohlcv_ta_basic: 32,
+  ohlcv_ta_rich: 64,
+};
+
+const INDICATOR_WARMUP: Record<string, number> = {
+  rsi: 14,
+  macd: 26,
+  bbands: 20,
 };
 
 const formatIso = (d: Date) => d.toISOString().slice(0, 10);
@@ -92,18 +111,44 @@ const countBusinessDays = (start: Date, end: Date) => {
   return count;
 };
 
-const summarizeRange = (start: Date, end: Date, interval: "1d" | "1h" | "15m"): RangeSummary => {
+const summarizeRange = (
+  start: Date,
+  end: Date,
+  interval: "1d" | "1h" | "15m",
+  featureWarmup: number
+): RangeSummary => {
   const calendarDays = diffCalendarDays(start, end) + 1; // inclusive span for display
   const businessDays = countBusinessDays(start, end);
+  const tradingDays = Math.max(0, Math.round(businessDays * TRADING_DAY_RATIO));
   const multiplier = BARS_PER_DAY[interval] ?? 1;
-  const bars = Math.max(0, Math.round(businessDays * multiplier));
+  const tradingBars = Math.max(0, Math.round(tradingDays * multiplier));
+  const effectiveBars = Math.max(0, tradingBars - Math.max(0, Math.floor(featureWarmup)));
   return {
     start: formatIso(start),
     end: formatIso(end),
     calendarDays,
     businessDays,
-    bars,
+    tradingDays,
+    tradingBars,
+    effectiveBars,
   };
+};
+
+const estimateFeatureWarmup = (state: any): number => {
+  const sets = Array.isArray(state.featureSet) ? state.featureSet : [];
+  let warmup = 0;
+  for (const set of sets) {
+    const key = typeof set === "string" ? set : String(set);
+    warmup = Math.max(warmup, FEATURE_SET_WARMUP[key] ?? 0);
+  }
+  if (state?.rsi) warmup = Math.max(warmup, INDICATOR_WARMUP.rsi);
+  if (state?.macd) warmup = Math.max(warmup, INDICATOR_WARMUP.macd);
+  if (state?.bbands) warmup = Math.max(warmup, INDICATOR_WARMUP.bbands);
+  const embargo = Number(state?.embargo);
+  if (!Number.isNaN(embargo) && embargo > 0) {
+    warmup = Math.max(warmup, embargo);
+  }
+  return warmup;
 };
 
 interface DeriveSplitInput {
@@ -241,6 +286,7 @@ const computeValidation = (state: any): ValidationResult => {
 
   const trainSplit = state.trainSplit || "last_year";
   const evalWindow = Number(state.evalWindow) || 0;
+  const featureWarmup = estimateFeatureWarmup(state);
   let splitSummary: ValidationResult["split"] | undefined;
 
   if (endDate >= startDate && lookback > 0) {
@@ -252,39 +298,39 @@ const computeValidation = (state: any): ValidationResult => {
       evalWindow,
       interval,
     });
-    const trainRange = summarizeRange(split.train.start, split.train.end, interval);
-    const evalRange = summarizeRange(split.eval.start, split.eval.end, interval);
+    const trainRange = summarizeRange(split.train.start, split.train.end, interval, featureWarmup);
+    const evalRange = summarizeRange(split.eval.start, split.eval.end, interval, featureWarmup);
     splitSummary = { train: trainRange, eval: evalRange };
 
     const requiredBars = lookback + 2;
     const warnThreshold = requiredBars + 10;
 
-    if (trainRange.bars < requiredBars) {
+    if (trainRange.effectiveBars < requiredBars) {
       issues.push({
         level: "error",
-        message: `Train window has ≈${trainRange.bars} bars but lookback requires at least ${requiredBars}.`,
-        detail: "Extend the training start date or lower the lookback.",
+        message: `Train window has ≈${trainRange.effectiveBars} usable bars but lookback requires at least ${requiredBars}.`,
+        detail: "Extend the training start date, reduce indicator warm-up, or lower the lookback.",
         blocking: true,
       });
-    } else if (trainRange.bars < warnThreshold) {
+    } else if (trainRange.effectiveBars < warnThreshold) {
       issues.push({
         level: "warning",
-        message: `Train window is tight (≈${trainRange.bars} bars vs required ${requiredBars}).`,
+        message: `Train window is tight (≈${trainRange.effectiveBars} usable bars vs required ${requiredBars}).`,
         detail: "Consider using a longer history for more stable training.",
       });
     }
 
-    if (evalRange.bars < requiredBars) {
+    if (evalRange.effectiveBars < requiredBars) {
       issues.push({
         level: "error",
-        message: `Eval window has ≈${evalRange.bars} bars but lookback requires at least ${requiredBars}.`,
+        message: `Eval window has ≈${evalRange.effectiveBars} usable bars but lookback requires at least ${requiredBars}.`,
         detail: "Increase eval window days, extend the end date, or reduce lookback.",
         blocking: true,
       });
-    } else if (evalRange.bars < warnThreshold) {
+    } else if (evalRange.effectiveBars < warnThreshold) {
       issues.push({
         level: "warning",
-        message: `Eval window is tight (≈${evalRange.bars} bars vs required ${requiredBars}).`,
+        message: `Eval window is tight (≈${evalRange.effectiveBars} usable bars vs required ${requiredBars}).`,
         detail: "Extend the evaluation window to avoid runtime errors.",
       });
     }
@@ -293,6 +339,14 @@ const computeValidation = (state: any): ValidationResult => {
       issues.push({
         level: "info",
         message: "Custom ranges selected — ensure payload JSON supplies explicit ranges (UI uses auto-split heuristics).",
+      });
+    }
+
+    if (featureWarmup > 0) {
+      issues.push({
+        level: "info",
+        message: `Indicator warm-up removes ≈${featureWarmup} bars before windows are usable.`,
+        detail: "Usable bars estimates subtract warm-up and a small holiday buffer.",
       });
     }
   }
@@ -333,6 +387,7 @@ const computeValidation = (state: any): ValidationResult => {
     blockingIssues,
     split: splitSummary,
     requiredBars: Math.max(0, lookback) + 2,
+    featureWarmup,
   };
 };
 
@@ -367,14 +422,20 @@ function ValidationSummaryCard({ validation }: { validation: ValidationResult })
         <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
           <div>
             <span className="font-semibold text-foreground">Train</span>: {validation.split.train.start} → {validation.split.train.end}
-            {" "}({validation.split.train.calendarDays} days, ≈{validation.split.train.bars} bars)
+            {" "}({validation.split.train.calendarDays} days, ≈{validation.split.train.tradingBars} trading bars, ≈{validation.split.train.effectiveBars} usable)
           </div>
           <div>
             <span className="font-semibold text-foreground">Eval</span>: {validation.split.eval.start} → {validation.split.eval.end}
-            {" "}({validation.split.eval.calendarDays} days, ≈{validation.split.eval.bars} bars)
+            {" "}({validation.split.eval.calendarDays} days, ≈{validation.split.eval.tradingBars} trading bars, ≈{validation.split.eval.effectiveBars} usable)
           </div>
           <div className="sm:col-span-2">
             Minimum bars required by lookback: {validation.requiredBars}.
+            {" "}
+            {validation.featureWarmup > 0 && (
+              <span>
+                Warm-up estimate subtracts ≈{validation.featureWarmup} bars plus a small holiday buffer.
+              </span>
+            )}
           </div>
         </div>
       )}
