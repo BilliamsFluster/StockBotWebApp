@@ -51,6 +51,8 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const eventsFallbackRef = useRef<boolean>(false);
   const telemSeenRef = useRef<number>(0);
   const eventsSeenRef = useRef<number>(0);
+  const liveTailPrimedRef = useRef<boolean>(false);
+
   const workerRef = useRef<Worker | null>(null);
   const workerSeqRef = useRef<number>(0);
   const workerAppliedSeqRef = useRef<number>(0);
@@ -156,6 +158,11 @@ export default function RunMonitor({ runId }: { runId: string }) {
     };
   }, []);
 
+  useEffect(() => {
+    liveTailPrimedRef.current = false;
+  }, [runId]);
+
+
   // Connect SSE for bars (buffered; disabled when terminal)
   useEffect(() => {
     if (!runId) return;
@@ -170,7 +177,38 @@ export default function RunMonitor({ runId }: { runId: string }) {
     eventsSeenRef.current = 0;
     lastTSeenRef.current = -Infinity;
 
-    const u = buildUrl(`/api/stockbot/runs/${runId}/telemetry?from_start=true`);
+    const abort = new AbortController();
+    const primeTail = async () => {
+      if (liveTailPrimedRef.current) return;
+      liveTailPrimedRef.current = true;
+      try {
+        const tailUrl = buildUrl(`/api/stockbot/runs/${runId}/telemetry/tail?limit=${MAX_LIVE_BARS}`);
+        const resp = await fetch(tailUrl, { credentials: 'include', signal: abort.signal });
+        if (!resp.ok) throw new Error(`tail ${resp.status}`);
+        const payload = await resp.json();
+        if (abort.signal.aborted) return;
+        const items: any[] = Array.isArray(payload?.items) ? payload.items : [];
+        if (items.length) {
+          const trimmed = items.slice(-MAX_LIVE_BARS);
+          setBars(trimmed);
+          const lastItem = trimmed[trimmed.length - 1] ?? null;
+          setLast(lastItem);
+          lastRef.current = lastItem;
+          const tt = parseTime((lastItem as any)?.t);
+          if (Number.isFinite(tt)) lastTSeenRef.current = tt;
+        }
+        telemSeenRef.current = items.length;
+      } catch (err) {
+        if (!abort.signal.aborted) {
+          liveTailPrimedRef.current = false;
+          console.error('Failed to prime telemetry tail', err);
+        }
+      }
+    };
+
+    primeTail();
+
+    const u = buildUrl(`/api/stockbot/runs/${runId}/telemetry?from_start=false`);
     const es = new EventSource(u, { withCredentials: true });
     esBarsRef.current = es;
     es.addEventListener("bar", (ev: any) => {
@@ -207,7 +245,12 @@ export default function RunMonitor({ runId }: { runId: string }) {
     };
     es2.onerror = () => { try { es2.close(); } catch {}; eventsFallbackRef.current = true; };
 
-    return () => { try { es.close(); } catch {}; try { es2.close(); } catch {}; };
+    return () => {
+      try { es.close(); } catch {}
+      try { es2.close(); } catch {}
+      abort.abort();
+      liveTailPrimedRef.current = false;
+    };
   }, [runId, isTerminal, isActive]);
 
   // Flush buffers at a controlled cadence

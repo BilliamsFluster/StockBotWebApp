@@ -12,6 +12,7 @@ import {
   getRunArtifactsProxy,
   getRunArtifactFileProxy,
   getRunBundleProxy,
+  getRunTelemetryTailProxy,
   streamRunTelemetryProxy,
   streamRunEventsProxy,
   streamRunStatusProxy,
@@ -49,6 +50,7 @@ router.get("/runs", protectRoute, listRunsProxy);
 router.get("/runs/:id", protectRoute, getRunProxy);
 router.delete("/runs/:id", protectRoute, deleteRunProxy);
 router.get("/runs/:id/artifacts", protectRoute, getRunArtifactsProxy);
+router.get("/runs/:id/telemetry/tail", protectRoute, getRunTelemetryTailProxy);
 router.get("/runs/:id/telemetry", protectRoute, streamRunTelemetryProxy);
 router.get("/runs/:id/events", protectRoute, streamRunEventsProxy);
 

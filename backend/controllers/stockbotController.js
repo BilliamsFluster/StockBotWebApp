@@ -165,6 +165,58 @@ export async function getRunArtifactsProxy(req, res) {
   }
 }
 
+/** GET /api/stockbot/runs/:id/telemetry/tail */
+export async function getRunTelemetryTailProxy(req, res) {
+  const raw = Array.isArray(req.query?.limit) ? req.query.limit[0] : req.query?.limit;
+  let limit = Number.parseInt(raw ?? "", 10);
+  if (!Number.isFinite(limit)) limit = 4000;
+  if (limit <= 0) limit = 1;
+  if (limit > 10000) limit = 10000;
+
+  try {
+    const url = `${STOCKBOT_URL}/api/stockbot/runs/${encodeURIComponent(req.params.id)}/telemetry/tail`;
+    const { data } = await axios.get(url, { params: { limit } });
+    return res.json(data);
+  } catch (e) {
+    try {
+      const rel = SAFE_NAME_MAP.live_telemetry;
+      if (!rel) throw new Error("live telemetry mapping missing");
+      const abs = path.join(RUNS_DIR, String(req.params.id), rel);
+      if (!fs.existsSync(abs)) {
+        return res.status(404).json({ error: "Telemetry file not found" });
+      }
+      const text = await fs.promises.readFile(abs, "utf-8");
+      const lines = text
+        .split(/\r?\n/)
+        .map((ln) => ln.trim())
+        .filter((ln) => ln.length > 0);
+      const total = lines.length;
+      const start = Math.max(0, total - limit);
+      const items = [];
+      for (let i = start; i < total; i += 1) {
+        const line = lines[i];
+        try {
+          items.push(JSON.parse(line));
+        } catch {
+          items.push({ raw: line });
+        }
+      }
+      return res.json({
+        items,
+        returned: items.length,
+        total,
+        has_more: total > items.length,
+      });
+    } catch (fallbackErr) {
+      if (axios.isAxiosError(e)) {
+        const { status, body } = safeErrorBody(e, e.response?.status ?? 502);
+        return res.status(status).json(body);
+      }
+      return res.status(500).json({ error: errMsg(fallbackErr) });
+    }
+  }
+}
+
 /** GET /api/stockbot/runs/:id/files/:name -> stream file */
 export async function getRunArtifactFileProxy(req, res) {
   try {
