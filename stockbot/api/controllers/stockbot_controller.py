@@ -9,6 +9,7 @@ from tempfile import NamedTemporaryFile
 from pathlib import Path
 from datetime import datetime
 from typing import Any, List, Optional, Dict, Literal
+from collections import deque
 import secrets
 import yaml
 import shutil
@@ -805,6 +806,49 @@ SAFE_NAME_MAP = {
     "live_rollups": "live_rollups.jsonl",
     "live_audit": "live_audit.jsonl",
 }
+
+def get_telemetry_tail(run_id: str, limit: int = 4000):
+    r = RUN_MANAGER.get(run_id)
+    try:
+        limit = int(limit)
+    except Exception:
+        limit = 4000
+    if limit <= 0:
+        limit = 1
+    limit = min(limit, 10000)
+
+    rel = SAFE_NAME_MAP.get("live_telemetry")
+    if not rel:
+        raise HTTPException(status_code=404, detail="Telemetry mapping missing")
+
+    path = Path(r.out_dir) / rel
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Telemetry file not found")
+
+    total = 0
+    buf: deque[Any] = deque(maxlen=limit)
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                total += 1
+                try:
+                    obj = json.loads(stripped)
+                except Exception:
+                    obj = {"raw": stripped}
+                buf.append(obj)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read telemetry: {e}")
+
+    items = list(buf)
+    return JSONResponse({
+        "items": items,
+        "returned": len(items),
+        "total": total,
+        "has_more": total > len(items),
+    })
 
 def get_artifact_file(run_id: str, name: str):
     r = RUN_MANAGER.get(run_id)

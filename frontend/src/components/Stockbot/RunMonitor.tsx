@@ -11,6 +11,12 @@ import api, { buildUrl } from "@/api/client";
 import { askJarvisLite, fetchAvailableModels } from "@/api/jarvisApi";
 import { formatPct, formatSigned } from "./lib/formats";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, ReferenceLine, ReferenceDot, Tooltip } from "recharts";
+import type { TelemetryWorkerRequest, TelemetryWorkerResponse, TelemetryWorkerResult } from "@/workers/telemetryWorkerTypes";
+
+const MAX_LIVE_POINTS = 4000;
+const MAX_TERMINAL_POINTS = 4000;
+const MAX_LIVE_BARS = 4000;
+const TELEMETRY_TAIL_LIMIT = 4000;
 
 type TelemetryBar = any;
 type TelemetryEvent = any;
@@ -45,6 +51,11 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const eventsFallbackRef = useRef<boolean>(false);
   const telemSeenRef = useRef<number>(0);
   const eventsSeenRef = useRef<number>(0);
+  const liveTailPrimedRef = useRef<boolean>(false);
+  const workerRef = useRef<Worker | null>(null);
+  const workerSeqRef = useRef<number>(0);
+  const workerAppliedSeqRef = useRef<number>(0);
+  const [seriesState, setSeriesState] = useState<TelemetryWorkerResult>({ pnl: [], expo: [], slip: [], tMin: 0, tMax: 1 });
   // Audit polling controls
   const auditTimerRef = useRef<any>(null);
   const auditAbortRef = useRef<AbortController | null>(null);
@@ -119,6 +130,37 @@ export default function RunMonitor({ runId }: { runId: string }) {
     return s === 'RUNNING';
   })();
 
+  // Initialize telemetry processing worker once on the client
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (workerRef.current) return;
+    const worker = new Worker(new URL('../../workers/telemetryWorker.ts', import.meta.url));
+    workerRef.current = worker;
+    worker.onmessage = (event: MessageEvent<TelemetryWorkerResponse>) => {
+      const msg = event.data;
+      if (!msg || msg.type !== 'SERIES_READY') return;
+      if (msg.seq < workerAppliedSeqRef.current) return;
+      workerAppliedSeqRef.current = msg.seq;
+      const payload = msg.payload || { pnl: [], expo: [], slip: [], tMin: 0, tMax: 1 };
+      setSeriesState({
+        pnl: Array.isArray(payload.pnl) ? payload.pnl : [],
+        expo: Array.isArray(payload.expo) ? payload.expo : [],
+        slip: Array.isArray(payload.slip) ? payload.slip : [],
+        tMin: Number.isFinite(payload.tMin) ? payload.tMin : 0,
+        tMax: Number.isFinite(payload.tMax) ? payload.tMax : 1,
+      });
+    };
+    worker.onerror = () => {};
+    return () => {
+      try { worker.terminate(); } catch {}
+      workerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    liveTailPrimedRef.current = false;
+  }, [runId]);
+
   // Connect SSE for bars (buffered; disabled when terminal)
   useEffect(() => {
     if (!runId) return;
@@ -133,7 +175,38 @@ export default function RunMonitor({ runId }: { runId: string }) {
     eventsSeenRef.current = 0;
     lastTSeenRef.current = -Infinity;
 
-    const u = buildUrl(`/api/stockbot/runs/${runId}/telemetry?from_start=true`);
+    const abort = new AbortController();
+    const primeTail = async () => {
+      if (liveTailPrimedRef.current) return;
+      liveTailPrimedRef.current = true;
+      try {
+        const tailUrl = buildUrl(`/api/stockbot/runs/${runId}/telemetry/tail?limit=${MAX_LIVE_BARS}`);
+        const resp = await fetch(tailUrl, { credentials: 'include', signal: abort.signal });
+        if (!resp.ok) throw new Error(`tail ${resp.status}`);
+        const payload = await resp.json();
+        if (abort.signal.aborted) return;
+        const items: any[] = Array.isArray(payload?.items) ? payload.items : [];
+        if (items.length) {
+          const trimmed = items.slice(-MAX_LIVE_BARS);
+          setBars(trimmed);
+          const lastItem = trimmed[trimmed.length - 1] ?? null;
+          setLast(lastItem);
+          lastRef.current = lastItem;
+          const tt = parseTime((lastItem as any)?.t);
+          if (Number.isFinite(tt)) lastTSeenRef.current = tt;
+        }
+        telemSeenRef.current = items.length;
+      } catch (err) {
+        if (!abort.signal.aborted) {
+          liveTailPrimedRef.current = false;
+          console.error('Failed to prime telemetry tail', err);
+        }
+      }
+    };
+
+    primeTail();
+
+    const u = buildUrl(`/api/stockbot/runs/${runId}/telemetry?from_start=false`);
     const es = new EventSource(u, { withCredentials: true });
     esBarsRef.current = es;
     es.addEventListener("bar", (ev: any) => {
@@ -170,7 +243,12 @@ export default function RunMonitor({ runId }: { runId: string }) {
     };
     es2.onerror = () => { try { es2.close(); } catch {}; eventsFallbackRef.current = true; };
 
-    return () => { try { es.close(); } catch {}; try { es2.close(); } catch {}; };
+    return () => {
+      try { es.close(); } catch {}
+      try { es2.close(); } catch {}
+      abort.abort();
+      liveTailPrimedRef.current = false;
+    };
   }, [runId, isTerminal, isActive]);
 
   // Flush buffers at a controlled cadence
@@ -194,7 +272,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
             }
             const merged = fresh.length ? prev.concat(fresh) : prev;
             barsBufRef.current = [];
-            return merged.length > 2000 ? merged.slice(-1500) : merged;
+            return merged.length > MAX_LIVE_BARS ? merged.slice(-MAX_LIVE_BARS) : merged;
           });
           setLast(lastRef.current);
         }
@@ -219,19 +297,17 @@ export default function RunMonitor({ runId }: { runId: string }) {
     if (!isTerminal) return;
     (async () => {
       try {
-        // Load full telemetry history
-        const telemUrl = buildUrl(`/api/stockbot/runs/${runId}/files/live_telemetry`);
+        const telemUrl = buildUrl(`/api/stockbot/runs/${runId}/telemetry/tail?limit=${TELEMETRY_TAIL_LIMIT}`);
         const resp = await fetch(telemUrl, { credentials: 'include' });
         if (resp.ok) {
-          const txt = await resp.text();
-          const lines = parseJsonLines(txt);
-          const allBars: any[] = [];
-          for (const ln of lines) {
-            try { allBars.push(JSON.parse(ln)); } catch {}
-          }
-          if (allBars.length) {
-            setBars(allBars);
-            setLast(allBars[allBars.length - 1]);
+          const payload = await resp.json();
+          const items: any[] = Array.isArray(payload?.items) ? payload.items : [];
+          if (items.length) {
+            setBars(items);
+            const lastItem = items[items.length - 1] ?? null;
+            setLast(lastItem);
+            lastRef.current = lastItem;
+            barsBufRef.current = [];
           }
         }
       } catch {}
@@ -259,16 +335,27 @@ export default function RunMonitor({ runId }: { runId: string }) {
     const poll = async () => {
       try {
         if (telemFallbackRef.current && !isTerminal) {
-          const u = buildUrl(`/api/stockbot/runs/${runId}/files/live_telemetry`);
+          const u = buildUrl(`/api/stockbot/runs/${runId}/telemetry/tail?limit=${MAX_LIVE_BARS}`);
           const resp = await fetch(u, { credentials: 'include' });
           if (resp.ok) {
-            const txt = await resp.text();
-            const lines = parseJsonLines(txt);
-            const start = telemSeenRef.current;
-            for (let i = start; i < lines.length; i++) {
-              try { const j = JSON.parse(lines[i]); lastRef.current = j; barsBufRef.current.push(j); } catch {}
+            const payload = await resp.json();
+            const items: any[] = Array.isArray(payload?.items) ? payload.items : [];
+            const parseT = (t: any) => {
+              if (t == null) return NaN;
+              if (typeof t === 'number') return t;
+              const parsed = Date.parse(t);
+              if (!Number.isNaN(parsed)) return parsed;
+              const num = Number(t);
+              return Number.isNaN(num) ? NaN : num;
+            };
+            for (const item of items) {
+              const tt = parseT(item?.t);
+              if (!Number.isFinite(tt) || tt <= lastTSeenRef.current) continue;
+              lastRef.current = item;
+              barsBufRef.current.push(item);
+              lastTSeenRef.current = tt;
             }
-            telemSeenRef.current = lines.length;
+            telemSeenRef.current = items.length;
           }
         }
         if (eventsFallbackRef.current && !isTerminal) {
@@ -521,6 +608,30 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
     return cleanMonotonic(raw);
   }, [bars]);
 
+  useEffect(() => {
+    const worker = workerRef.current;
+    if (!worker) return;
+    const seq = workerSeqRef.current + 1;
+    workerSeqRef.current = seq;
+    const message: TelemetryWorkerRequest = {
+      type: 'PROCESS_SERIES',
+      seq,
+      payload: {
+        pnlSeries,
+        expoSeries,
+        slipSeries: slipTurnSeries,
+        isTerminal,
+        maxLivePoints: MAX_LIVE_POINTS,
+        maxTerminalPoints: MAX_TERMINAL_POINTS,
+      },
+    };
+    try {
+      worker.postMessage(message);
+    } catch (error) {
+      console.error('Failed to post telemetry payload to worker', error);
+    }
+  }, [pnlSeries, expoSeries, slipTurnSeries, isTerminal]);
+
   // Axis domains with padding
   const domainOf = (vals: number[], padFrac = 0.05, forceZeroTop = false): [number, number] => {
     let min = Infinity;
@@ -634,45 +745,13 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
       if (Number.isFinite(min) && Number.isFinite(max)) setToDomain(padDomain(min, max, 0.15));
     }
   }, [slipTurnSeries.length]);
-  // Use a shared time domain across all charts to ensure sync
-  const tMin = useMemo(() => {
-    let min = Infinity;
-    for (const d of pnlSeries) {
-      const v = Number(d?.t);
-      if (!Number.isFinite(v)) continue;
-      if (v < min) min = v;
-    }
-    for (const d of expoSeries) {
-      const v = Number(d?.t);
-      if (!Number.isFinite(v)) continue;
-      if (v < min) min = v;
-    }
-    for (const d of slipTurnSeries) {
-      const v = Number(d?.t);
-      if (!Number.isFinite(v)) continue;
-      if (v < min) min = v;
-    }
-    return Number.isFinite(min) ? min : 0;
-  }, [pnlSeries, expoSeries, slipTurnSeries]);
-  const tMax = useMemo(() => {
-    let max = -Infinity;
-    for (const d of pnlSeries) {
-      const v = Number(d?.t);
-      if (!Number.isFinite(v)) continue;
-      if (v > max) max = v;
-    }
-    for (const d of expoSeries) {
-      const v = Number(d?.t);
-      if (!Number.isFinite(v)) continue;
-      if (v > max) max = v;
-    }
-    for (const d of slipTurnSeries) {
-      const v = Number(d?.t);
-      if (!Number.isFinite(v)) continue;
-      if (v > max) max = v;
-    }
-    return Number.isFinite(max) ? max : 1;
-  }, [pnlSeries, expoSeries, slipTurnSeries]);
+  const safeTMin = Number.isFinite(seriesState.tMin) ? seriesState.tMin : 0;
+  const safeTMax = Number.isFinite(seriesState.tMax) ? seriesState.tMax : safeTMin + 1;
+  const tMin = safeTMin;
+  const tMax = safeTMax > safeTMin ? safeTMax : safeTMin + 1;
+  const pnlD = Array.isArray(seriesState.pnl) ? seriesState.pnl : [];
+  const expoD = Array.isArray(seriesState.expo) ? seriesState.expo : [];
+  const slipD = Array.isArray(seriesState.slip) ? seriesState.slip : [];
 
   const barsT = useMemo(() => bars.map((b) => parseTime(b?.t)), [bars]);
   const viewBar = useMemo(() => {
@@ -684,66 +763,6 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
     }
     return last;
   }, [viewIndex, bars, last, hoverTs, barsT]);
-  // Decimate series for readability (bumped density)
-  const decimate = <T,>(arr: T[], maxPoints = 3000): T[] => {
-    const n = arr.length; if (n <= maxPoints) return arr;
-    const step = Math.ceil(n / maxPoints); const out: T[] = [];
-    for (let i = 0; i < n; i += step) out.push(arr[i]);
-    if (out[out.length - 1] !== arr[n - 1]) out.push(arr[n - 1]);
-    return out;
-  };
-  // LTTB decimator for terminal (large) datasets
-  function lttb<T>(data: T[], threshold: number, getX: (p: T) => number, getY: (p: T) => number): T[] {
-    const n = data.length;
-    if (threshold >= n || threshold <= 2) return data.slice();
-    const sampled: T[] = [];
-    let a = 0;
-    sampled.push(data[a]);
-    const every = (n - 2) / (threshold - 2);
-    for (let i = 0; i < threshold - 2; i++) {
-      let avgX = 0, avgY = 0;
-      let avgRangeStart = Math.floor((i + 1) * every) + 1;
-      let avgRangeEnd = Math.floor((i + 2) * every) + 1;
-      if (avgRangeEnd > n) avgRangeEnd = n;
-      const avgRangeLength = Math.max(1, avgRangeEnd - avgRangeStart);
-      for (let idx = avgRangeStart; idx < avgRangeEnd; idx++) {
-        avgX += getX(data[idx]);
-        avgY += getY(data[idx]);
-      }
-      avgX /= avgRangeLength; avgY /= avgRangeLength;
-      let rangeOffs = Math.floor((i + 0) * every) + 1;
-      let rangeTo = Math.floor((i + 1) * every) + 1;
-      let maxArea = -1;
-      let nextA = rangeOffs;
-      let maxAreaPoint = data[rangeOffs] ?? data[a];
-      const ax = getX(data[a]);
-      const ay = getY(data[a]);
-      for (; rangeOffs < rangeTo && rangeOffs < n; rangeOffs++) {
-        const bx = getX(data[rangeOffs]);
-        const by = getY(data[rangeOffs]);
-        const area = Math.abs((ax - avgX) * (by - ay) - (ax - bx) * (avgY - ay)) * 0.5;
-        if (area > maxArea) { maxArea = area; maxAreaPoint = data[rangeOffs]; nextA = rangeOffs; }
-      }
-      sampled.push(maxAreaPoint);
-      a = nextA;
-    }
-    sampled.push(data[n - 1]);
-    return sampled;
-  }
-  const MAX_LIVE = 3000;      // live view (already trimmed upstream)
-  const MAX_TERMINAL = 4000;  // terminal view (full history)
-  const pnlD = useMemo(() => {
-    if (isTerminal) return pnlSeries.length > MAX_TERMINAL ? lttb(pnlSeries, MAX_TERMINAL, p => p.t, p => p.cum) : pnlSeries;
-    return decimate(pnlSeries, MAX_LIVE);
-  }, [pnlSeries, isTerminal]);
-  const expoD = useMemo(() => {
-    if (isTerminal) return expoSeries.length > MAX_TERMINAL ? lttb(expoSeries, MAX_TERMINAL, p => p.t, p => p.gross) : expoSeries;
-    return decimate(expoSeries, MAX_LIVE);
-  }, [expoSeries, isTerminal]);
-  const slipD = useMemo(() => {
-    if (isTerminal) return slipTurnSeries.length > MAX_TERMINAL ? lttb(slipTurnSeries, MAX_TERMINAL, p => p.t, p => p.slip) : slipTurnSeries;
-    return decimate(slipTurnSeries, MAX_LIVE);
-  }, [slipTurnSeries, isTerminal]);
   // Nearest point helpers for legends at hovered x
   function nearestIndex(arr: Array<{ t: number }>, t?: number): number {
     if (!arr.length) return -1;
