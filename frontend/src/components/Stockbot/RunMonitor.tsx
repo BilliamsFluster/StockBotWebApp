@@ -523,10 +523,14 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
 
   // Axis domains with padding
   const domainOf = (vals: number[], padFrac = 0.05, forceZeroTop = false): [number, number] => {
-    const arr = vals.filter((v) => Number.isFinite(v));
-    if (!arr.length) return [0, 1];
-    let min = Math.min(...arr);
-    let max = Math.max(...arr);
+    let min = Infinity;
+    let max = -Infinity;
+    for (const v of vals) {
+      if (!Number.isFinite(v)) continue;
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 1];
     const range = Math.max(1e-9, max - min);
     const pad = range * padFrac;
     if (forceZeroTop) return [min - pad, Math.max(0, max) + pad];
@@ -551,71 +555,123 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
     return [min - pad, (forceZeroTop ? Math.max(0, max) : max) + pad];
   };
   useEffect(() => {
-    const vals = pnlSeries.map(d => d.cum).filter(v => Number.isFinite(v));
-    if (vals.length) {
-      const vmin = Math.min(...vals), vmax = Math.max(...vals);
-      if (vmin < ext.current.pnlCum.min) ext.current.pnlCum.min = vmin;
-      if (vmax > ext.current.pnlCum.max) ext.current.pnlCum.max = vmax;
+    let localMin = Infinity;
+    let localMax = -Infinity;
+    for (const d of pnlSeries) {
+      const v = Number(d?.cum);
+      if (!Number.isFinite(v)) continue;
+      if (v < localMin) localMin = v;
+      if (v > localMax) localMax = v;
+    }
+    if (localMin !== Infinity && localMax !== -Infinity) {
+      if (localMin < ext.current.pnlCum.min) ext.current.pnlCum.min = localMin;
+      if (localMax > ext.current.pnlCum.max) ext.current.pnlCum.max = localMax;
       const { min, max } = ext.current.pnlCum;
       if (Number.isFinite(min) && Number.isFinite(max)) setPnlCumDomain(padDomain(min, max, 0.10));
     }
   }, [pnlSeries.length]);
   useEffect(() => {
-    const vals = pnlSeries.map(d => d.dd).filter(v => Number.isFinite(v));
-    if (vals.length) {
-      const vmin = Math.min(...vals), vmax = Math.max(...vals);
-      if (vmin < ext.current.pnlDd.min) ext.current.pnlDd.min = vmin;
-      if (vmax > ext.current.pnlDd.max) ext.current.pnlDd.max = vmax;
+    let localMin = Infinity;
+    let localMax = -Infinity;
+    for (const d of pnlSeries) {
+      const v = Number(d?.dd);
+      if (!Number.isFinite(v)) continue;
+      if (v < localMin) localMin = v;
+      if (v > localMax) localMax = v;
+    }
+    if (localMin !== Infinity && localMax !== -Infinity) {
+      if (localMin < ext.current.pnlDd.min) ext.current.pnlDd.min = localMin;
+      if (localMax > ext.current.pnlDd.max) ext.current.pnlDd.max = localMax;
       const { min, max } = ext.current.pnlDd;
       if (Number.isFinite(min) && Number.isFinite(max)) setPnlDdDomain(padDomain(min, max, 0.10, true));
     }
   }, [pnlSeries.length]);
   useEffect(() => {
-    const vals = expoSeries.map(d => d.gross).filter(v => Number.isFinite(v));
-    if (vals.length) {
-      const vmin = Math.min(...vals), vmax = Math.max(...vals);
-      if (vmin < ext.current.expo.min) ext.current.expo.min = vmin;
-      if (vmax > ext.current.expo.max) ext.current.expo.max = vmax;
+    let localMin = Infinity;
+    let localMax = -Infinity;
+    for (const d of expoSeries) {
+      const v = Number(d?.gross);
+      if (!Number.isFinite(v)) continue;
+      if (v < localMin) localMin = v;
+      if (v > localMax) localMax = v;
+    }
+    if (localMin !== Infinity && localMax !== -Infinity) {
+      if (localMin < ext.current.expo.min) ext.current.expo.min = localMin;
+      if (localMax > ext.current.expo.max) ext.current.expo.max = localMax;
       const { min, max } = ext.current.expo;
       if (Number.isFinite(min) && Number.isFinite(max)) setExpoDomain(padDomain(min, max, 0.05));
     }
   }, [expoSeries.length]);
   useEffect(() => {
-    const vals = slipTurnSeries.map(d => d.slip).filter(v => Number.isFinite(v));
-    if (vals.length) {
-      const vmin = Math.min(...vals), vmax = Math.max(...vals);
-      if (vmin < ext.current.slip.min) ext.current.slip.min = vmin;
-      if (vmax > ext.current.slip.max) ext.current.slip.max = vmax;
+    let localMin = Infinity;
+    let localMax = -Infinity;
+    for (const d of slipTurnSeries) {
+      const v = Number(d?.slip);
+      if (!Number.isFinite(v)) continue;
+      if (v < localMin) localMin = v;
+      if (v > localMax) localMax = v;
+    }
+    if (localMin !== Infinity && localMax !== -Infinity) {
+      if (localMin < ext.current.slip.min) ext.current.slip.min = localMin;
+      if (localMax > ext.current.slip.max) ext.current.slip.max = localMax;
       const { min, max } = ext.current.slip;
       if (Number.isFinite(min) && Number.isFinite(max)) setSlipDomain(padDomain(min, max, 0.15));
     }
   }, [slipTurnSeries.length]);
   useEffect(() => {
-    const vals = slipTurnSeries.map(d => d.to).filter(v => Number.isFinite(v));
-    if (vals.length) {
-      const vmin = Math.min(...vals), vmax = Math.max(...vals);
-      if (vmin < ext.current.to.min) ext.current.to.min = vmin;
-      if (vmax > ext.current.to.max) ext.current.to.max = vmax;
+    let localMin = Infinity;
+    let localMax = -Infinity;
+    for (const d of slipTurnSeries) {
+      const v = Number(d?.to);
+      if (!Number.isFinite(v)) continue;
+      if (v < localMin) localMin = v;
+      if (v > localMax) localMax = v;
+    }
+    if (localMin !== Infinity && localMax !== -Infinity) {
+      if (localMin < ext.current.to.min) ext.current.to.min = localMin;
+      if (localMax > ext.current.to.max) ext.current.to.max = localMax;
       const { min, max } = ext.current.to;
       if (Number.isFinite(min) && Number.isFinite(max)) setToDomain(padDomain(min, max, 0.15));
     }
   }, [slipTurnSeries.length]);
   // Use a shared time domain across all charts to ensure sync
   const tMin = useMemo(() => {
-    const arr = ([] as number[])
-      .concat(pnlSeries.map(d => d.t))
-      .concat(expoSeries.map(d => d.t))
-      .concat(slipTurnSeries.map(d => d.t))
-      .filter((x) => Number.isFinite(x));
-    return arr.length ? Math.min(...arr) : 0;
+    let min = Infinity;
+    for (const d of pnlSeries) {
+      const v = Number(d?.t);
+      if (!Number.isFinite(v)) continue;
+      if (v < min) min = v;
+    }
+    for (const d of expoSeries) {
+      const v = Number(d?.t);
+      if (!Number.isFinite(v)) continue;
+      if (v < min) min = v;
+    }
+    for (const d of slipTurnSeries) {
+      const v = Number(d?.t);
+      if (!Number.isFinite(v)) continue;
+      if (v < min) min = v;
+    }
+    return Number.isFinite(min) ? min : 0;
   }, [pnlSeries, expoSeries, slipTurnSeries]);
   const tMax = useMemo(() => {
-    const arr = ([] as number[])
-      .concat(pnlSeries.map(d => d.t))
-      .concat(expoSeries.map(d => d.t))
-      .concat(slipTurnSeries.map(d => d.t))
-      .filter((x) => Number.isFinite(x));
-    return arr.length ? Math.max(...arr) : 1;
+    let max = -Infinity;
+    for (const d of pnlSeries) {
+      const v = Number(d?.t);
+      if (!Number.isFinite(v)) continue;
+      if (v > max) max = v;
+    }
+    for (const d of expoSeries) {
+      const v = Number(d?.t);
+      if (!Number.isFinite(v)) continue;
+      if (v > max) max = v;
+    }
+    for (const d of slipTurnSeries) {
+      const v = Number(d?.t);
+      if (!Number.isFinite(v)) continue;
+      if (v > max) max = v;
+    }
+    return Number.isFinite(max) ? max : 1;
   }, [pnlSeries, expoSeries, slipTurnSeries]);
 
   const barsT = useMemo(() => bars.map((b) => parseTime(b?.t)), [bars]);
