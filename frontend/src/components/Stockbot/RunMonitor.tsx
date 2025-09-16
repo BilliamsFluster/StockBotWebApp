@@ -52,6 +52,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const telemSeenRef = useRef<number>(0);
   const eventsSeenRef = useRef<number>(0);
   const liveTailPrimedRef = useRef<boolean>(false);
+
   const workerRef = useRef<Worker | null>(null);
   const workerSeqRef = useRef<number>(0);
   const workerAppliedSeqRef = useRef<number>(0);
@@ -160,6 +161,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
   useEffect(() => {
     liveTailPrimedRef.current = false;
   }, [runId]);
+
 
   // Connect SSE for bars (buffered; disabled when terminal)
   useEffect(() => {
