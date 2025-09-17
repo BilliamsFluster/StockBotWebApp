@@ -104,11 +104,39 @@ function downsampleSeries(series: PnlPoint[] | ExpoPoint[] | SlipPoint[], payloa
   return decimate(series, maxLive);
 }
 
+type WorkerSeriesState = {
+  pnl: PnlPoint[];
+  expo: ExpoPoint[];
+  slip: SlipPoint[];
+};
+
+const seriesStateStore: WorkerSeriesState = { pnl: [], expo: [], slip: [] };
+
+function cloneSeries<T>(src: T[] | undefined | null): T[] {
+  if (!Array.isArray(src) || src.length === 0) return [];
+  return src.slice();
+}
+
+function appendSeries<T>(dest: T[], src: T[] | undefined | null): void {
+  if (!Array.isArray(src) || src.length === 0) return;
+  dest.push(...src);
+}
+
 function processPayload(payload: TelemetryWorkerPayload): TelemetryWorkerResult {
-  const pnl = downsampleSeries(payload.pnlSeries, payload) as PnlPoint[];
-  const expo = downsampleSeries(payload.expoSeries, payload) as ExpoPoint[];
-  const slip = downsampleSeries(payload.slipSeries, payload) as SlipPoint[];
-  const { min, max } = computeTimeDomain([payload.pnlSeries, payload.expoSeries, payload.slipSeries]);
+  if (payload.reset) {
+    seriesStateStore.pnl = cloneSeries(payload.pnlSeries as PnlPoint[]);
+    seriesStateStore.expo = cloneSeries(payload.expoSeries as ExpoPoint[]);
+    seriesStateStore.slip = cloneSeries(payload.slipSeries as SlipPoint[]);
+  } else {
+    appendSeries(seriesStateStore.pnl, payload.pnlSeries as PnlPoint[]);
+    appendSeries(seriesStateStore.expo, payload.expoSeries as ExpoPoint[]);
+    appendSeries(seriesStateStore.slip, payload.slipSeries as SlipPoint[]);
+  }
+
+  const pnl = downsampleSeries(seriesStateStore.pnl, payload) as PnlPoint[];
+  const expo = downsampleSeries(seriesStateStore.expo, payload) as ExpoPoint[];
+  const slip = downsampleSeries(seriesStateStore.slip, payload) as SlipPoint[];
+  const { min, max } = computeTimeDomain([seriesStateStore.pnl, seriesStateStore.expo, seriesStateStore.slip]);
   return {
     pnl,
     expo,

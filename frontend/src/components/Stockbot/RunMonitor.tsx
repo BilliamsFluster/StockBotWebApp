@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Card } from "@/components/ui/card";
@@ -18,7 +18,6 @@ import type { TelemetryWorkerRequest, TelemetryWorkerResponse, TelemetryWorkerRe
 const MAX_LIVE_POINTS = 4000;
 const MAX_TERMINAL_POINTS = 4000;
 const MAX_LIVE_BARS = 4000;
-const TELEMETRY_TAIL_LIMIT = 4000;
 
 type TelemetryBar = any;
 type TelemetryEvent = any;
@@ -61,13 +60,19 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const statusPollRef = useRef<any>(null);
   const barsBufRef = useRef<TelemetryBar[]>([]);
   const eventsBufRef = useRef<TelemetryEvent[]>([]);
+  const allBarsRef = useRef<TelemetryBar[]>([]);
+  const allTimesRef = useRef<number[]>([]);
   const lastRef = useRef<TelemetryBar | null>(null);
   const lastTSeenRef = useRef<number>(-Infinity);
+  const lastSeriesTimeRef = useRef<number>(-Infinity);
   const telemFallbackRef = useRef<boolean>(false);
   const eventsFallbackRef = useRef<boolean>(false);
   const telemSeenRef = useRef<number>(0);
   const eventsSeenRef = useRef<number>(0);
   const liveTailPrimedRef = useRef<boolean>(false);
+  const [dataVersion, setDataVersion] = useState<number>(0);
+  const fullSnapshotLoadedRef = useRef<boolean>(false);
+  const fullSnapshotLoadingRef = useRef<boolean>(false);
 
   const workerRef = useRef<Worker | null>(null);
   const workerSeqRef = useRef<number>(0);
@@ -178,6 +183,174 @@ export default function RunMonitor({ runId }: { runId: string }) {
     liveTailPrimedRef.current = false;
   }, [runId]);
 
+  type SeriesAppendOutcome = {
+    pnlPoints: PnlPoint[];
+    expoPoints: ExpoPoint[];
+    slipPoints: SlipPoint[];
+    reset: boolean;
+  };
+
+  const appendTelemetryBars = useCallback(
+    (items: TelemetryBar[], reset = false): SeriesAppendOutcome | null => {
+      if (!Array.isArray(items) || items.length === 0) return null;
+      if (reset) {
+        allBarsRef.current = [];
+        allTimesRef.current = [];
+        lastSeriesTimeRef.current = -Infinity;
+      }
+      const pnlPoints: PnlPoint[] = [];
+      const expoPoints: ExpoPoint[] = [];
+      const slipPoints: SlipPoint[] = [];
+      let appended = false;
+      let lastTime = lastSeriesTimeRef.current;
+      for (const raw of items) {
+        const tt = parseTime((raw as any)?.t);
+        if (!Number.isFinite(tt)) continue;
+        if (tt <= lastTime) continue;
+        appended = true;
+        allBarsRef.current.push(raw);
+        allTimesRef.current.push(tt);
+        const pnlPoint: PnlPoint = {
+          t: tt,
+          cum: Number(raw?.pnl?.cum_pct ?? 0),
+          dd: Number(raw?.pnl?.dd_pct ?? 0),
+        };
+        if (!Number.isFinite(pnlPoint.cum)) pnlPoint.cum = 0;
+        if (!Number.isFinite(pnlPoint.dd)) pnlPoint.dd = 0;
+        if (pnlPoint.dd > 1) pnlPoint.dd = 1;
+        if (pnlPoint.dd < -1) pnlPoint.dd = -1;
+        pnlPoints.push(pnlPoint);
+        const expoPoint: ExpoPoint = {
+          t: tt,
+          gross: Number(raw?.leverage?.gross ?? raw?.gross_leverage ?? raw?.info?.gross_leverage ?? 0),
+        };
+        if (!Number.isFinite(expoPoint.gross)) expoPoint.gross = 0;
+        expoPoints.push(expoPoint);
+        const slipPoint: SlipPoint = {
+          t: tt,
+          slip: Number(raw?.slippage_bps?.arrival ?? 0),
+          to: Number(raw?.turnover?.bar_pct ?? 0),
+        };
+        if (!Number.isFinite(slipPoint.slip)) slipPoint.slip = 0;
+        if (!Number.isFinite(slipPoint.to)) slipPoint.to = 0;
+        slipPoints.push(slipPoint);
+        lastTime = tt;
+      }
+      if (!appended) {
+        if (reset) {
+          lastSeriesTimeRef.current = lastTime;
+          return { pnlPoints, expoPoints, slipPoints, reset };
+        }
+        return null;
+      }
+      lastSeriesTimeRef.current = lastTime;
+      return { pnlPoints, expoPoints, slipPoints, reset };
+    },
+    []
+  );
+
+  const sendWorkerPayload = useCallback(
+    (update: SeriesAppendOutcome | null) => {
+      if (!update) return;
+      const worker = workerRef.current;
+      if (!worker) return;
+      const seq = workerSeqRef.current + 1;
+      workerSeqRef.current = seq;
+      const message: TelemetryWorkerRequest = {
+        type: 'PROCESS_SERIES',
+        seq,
+        payload: {
+          pnlSeries: update.pnlPoints,
+          expoSeries: update.expoPoints,
+          slipSeries: update.slipPoints,
+          isTerminal,
+          maxLivePoints: MAX_LIVE_POINTS,
+          maxTerminalPoints: MAX_TERMINAL_POINTS,
+          reset: update.reset,
+        },
+      };
+      try {
+        worker.postMessage(message);
+      } catch (error) {
+        console.error('Failed to post telemetry payload to worker', error);
+      }
+    },
+    [isTerminal]
+  );
+
+  const applyAppendOutcome = useCallback(
+    (outcome: SeriesAppendOutcome | null) => {
+      if (!outcome) return;
+      const total = allBarsRef.current.length;
+      const trimmed =
+        total > MAX_LIVE_BARS
+          ? allBarsRef.current.slice(total - MAX_LIVE_BARS)
+          : allBarsRef.current.slice();
+      setBars(trimmed);
+      const lastBar = allBarsRef.current[allBarsRef.current.length - 1] ?? null;
+      setLast(lastBar);
+      lastRef.current = lastBar;
+      lastTSeenRef.current = lastSeriesTimeRef.current;
+      setDataVersion((v) => v + 1);
+      sendWorkerPayload(outcome);
+    },
+    [sendWorkerPayload]
+  );
+
+  const requestFullTelemetrySnapshot = useCallback(
+    async (opts?: { force?: boolean }) => {
+      if (!runId) return;
+      if (fullSnapshotLoadingRef.current) return;
+      if (!opts?.force && fullSnapshotLoadedRef.current) return;
+      fullSnapshotLoadingRef.current = true;
+      try {
+        const url = buildUrl(`/api/stockbot/runs/${runId}/files/live_telemetry`);
+        const resp = await fetch(url, { credentials: 'include' });
+        if (!resp.ok) return;
+        const txt = await resp.text();
+        const lines = parseJsonLines(txt);
+        const parsed: TelemetryBar[] = [];
+        for (const ln of lines) {
+          try {
+            parsed.push(JSON.parse(ln));
+          } catch {}
+        }
+        const outcome = appendTelemetryBars(parsed, true);
+        applyAppendOutcome(outcome);
+        if (parsed.length) {
+          fullSnapshotLoadedRef.current = true;
+        }
+      } catch (error) {
+        console.error('Failed to load full telemetry snapshot', error);
+      } finally {
+        fullSnapshotLoadingRef.current = false;
+      }
+    },
+    [appendTelemetryBars, applyAppendOutcome, runId]
+  );
+
+  useEffect(() => {
+    allBarsRef.current = [];
+    allTimesRef.current = [];
+    lastSeriesTimeRef.current = -Infinity;
+    lastRef.current = null;
+    lastTSeenRef.current = -Infinity;
+    barsBufRef.current = [];
+    eventsBufRef.current = [];
+    fullSnapshotLoadedRef.current = false;
+    setEvents([]);
+    setViewIndex(-1);
+    setJobLog(null);
+    setAudit([]);
+    const outcome = appendTelemetryBars([], true);
+    applyAppendOutcome(outcome);
+  }, [runId, appendTelemetryBars, applyAppendOutcome]);
+
+  useEffect(() => {
+    sendWorkerPayload({ pnlPoints: [], expoPoints: [], slipPoints: [], reset: false });
+  }, [isTerminal, sendWorkerPayload]);
+
+
 
   // Connect SSE for bars (buffered; disabled when terminal)
   useEffect(() => {
@@ -204,16 +377,16 @@ export default function RunMonitor({ runId }: { runId: string }) {
         const payload = await resp.json();
         if (abort.signal.aborted) return;
         const items: any[] = Array.isArray(payload?.items) ? payload.items : [];
-        if (items.length) {
-          const trimmed = items.slice(-MAX_LIVE_BARS);
-          setBars(trimmed);
-          const lastItem = trimmed[trimmed.length - 1] ?? null;
-          setLast(lastItem);
-          lastRef.current = lastItem;
-          const tt = parseTime((lastItem as any)?.t);
-          if (Number.isFinite(tt)) lastTSeenRef.current = tt;
-        }
+        const outcome = appendTelemetryBars(items, true);
+        applyAppendOutcome(outcome);
         telemSeenRef.current = items.length;
+        const hasMore = Boolean(payload?.has_more);
+        if (hasMore) {
+          fullSnapshotLoadedRef.current = false;
+          requestFullTelemetrySnapshot();
+        } else if (items.length) {
+          fullSnapshotLoadedRef.current = true;
+        }
       } catch (err) {
         if (!abort.signal.aborted) {
           liveTailPrimedRef.current = false;
@@ -267,7 +440,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
       abort.abort();
       liveTailPrimedRef.current = false;
     };
-  }, [runId, isTerminal, isActive]);
+  }, [runId, isTerminal, isActive, appendTelemetryBars, applyAppendOutcome, requestFullTelemetrySnapshot]);
 
   // Flush buffers at a controlled cadence
   useEffect(() => {
@@ -278,21 +451,9 @@ export default function RunMonitor({ runId }: { runId: string }) {
         const b = barsBufRef.current;
         const e = eventsBufRef.current;
         if (b.length) {
-          setBars((prev) => {
-            // append only strictly-forward-in-time bars to keep series monotonic and stable
-            const fresh: TelemetryBar[] = [];
-            for (const j of b) {
-              const tt = parseTime((j as any)?.t);
-              if (Number.isFinite(tt) && tt > lastTSeenRef.current) {
-                fresh.push(j);
-                lastTSeenRef.current = tt;
-              }
-            }
-            const merged = fresh.length ? prev.concat(fresh) : prev;
-            barsBufRef.current = [];
-            return merged.length > MAX_LIVE_BARS ? merged.slice(-MAX_LIVE_BARS) : merged;
-          });
-          setLast(lastRef.current);
+          barsBufRef.current = [];
+          const outcome = appendTelemetryBars(b);
+          applyAppendOutcome(outcome);
         }
         if (e.length) {
           setEvents((prev) => {
@@ -307,7 +468,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
     };
     t = setTimeout(flush, Math.max(200, updateMs));
     return () => { if (t) clearTimeout(t); };
-  }, [runId, updateMs]);
+  }, [runId, updateMs, appendTelemetryBars, applyAppendOutcome]);
 
   // When the run is terminal, load the complete historical data once
   useEffect(() => {
@@ -315,19 +476,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
     if (!isTerminal) return;
     (async () => {
       try {
-        const telemUrl = buildUrl(`/api/stockbot/runs/${runId}/telemetry/tail?limit=${TELEMETRY_TAIL_LIMIT}`);
-        const resp = await fetch(telemUrl, { credentials: 'include' });
-        if (resp.ok) {
-          const payload = await resp.json();
-          const items: any[] = Array.isArray(payload?.items) ? payload.items : [];
-          if (items.length) {
-            setBars(items);
-            const lastItem = items[items.length - 1] ?? null;
-            setLast(lastItem);
-            lastRef.current = lastItem;
-            barsBufRef.current = [];
-          }
-        }
+        await requestFullTelemetrySnapshot({ force: true });
       } catch {}
       try {
         // Load full events history
@@ -344,7 +493,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
         }
       } catch {}
     })();
-  }, [runId, isTerminal]);
+  }, [runId, isTerminal, requestFullTelemetrySnapshot]);
 
   // Fallback polling when SSE fails: read last lines of telemetry/events files
   useEffect(() => {
@@ -358,21 +507,8 @@ export default function RunMonitor({ runId }: { runId: string }) {
           if (resp.ok) {
             const payload = await resp.json();
             const items: any[] = Array.isArray(payload?.items) ? payload.items : [];
-            const parseT = (t: any) => {
-              if (t == null) return NaN;
-              if (typeof t === 'number') return t;
-              const parsed = Date.parse(t);
-              if (!Number.isNaN(parsed)) return parsed;
-              const num = Number(t);
-              return Number.isNaN(num) ? NaN : num;
-            };
-            for (const item of items) {
-              const tt = parseT(item?.t);
-              if (!Number.isFinite(tt) || tt <= lastTSeenRef.current) continue;
-              lastRef.current = item;
-              barsBufRef.current.push(item);
-              lastTSeenRef.current = tt;
-            }
+            const outcome = appendTelemetryBars(items);
+            applyAppendOutcome(outcome);
             telemSeenRef.current = items.length;
           }
         }
@@ -395,7 +531,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
     };
     poll();
     return () => { if (timer) clearTimeout(timer); };
-  }, [runId, isTerminal, updateMs]);
+  }, [runId, isTerminal, updateMs, appendTelemetryBars, applyAppendOutcome]);
 
   // Periodically fetch audit log (paused when terminal)
   useEffect(() => {
@@ -568,87 +704,12 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
   
 
   // Derived series for charts (cleaned, monotonic by time)
-  const parseTime = (t: any): number => {
+  function parseTime(t: any): number {
     if (t == null) return 0;
     if (typeof t === "number") return t;
     const parsed = Date.parse(t);
     return Number.isNaN(parsed) ? Number(t) || 0 : parsed;
-  };
-
-  const cleanMonotonic = <T extends { t: number }>(arr: T[]): T[] => {
-    // Input arrives in-order; drop non-finite and any backward/duplicate time without sorting
-    const out: T[] = [];
-    let lastT = -Infinity;
-    for (const p of arr) {
-      const tt = Number(p?.t);
-      if (!Number.isFinite(tt)) continue;
-      if (tt <= lastT) continue;
-      out.push(p);
-      lastT = tt;
-    }
-    return out;
-  };
-
-  const pnlSeries = useMemo(() => {
-    const raw = bars.map((b) => ({
-      t: parseTime(b?.t),
-      cum: Number(b?.pnl?.cum_pct ?? 0),
-      dd: Number(b?.pnl?.dd_pct ?? 0),
-    }));
-    // clamp extreme values to avoid axis blowups
-    for (const p of raw) {
-      if (!Number.isFinite(p.cum)) p.cum = 0;
-      if (!Number.isFinite(p.dd)) p.dd = 0;
-      if (p.dd > 1) p.dd = 1; if (p.dd < -1) p.dd = -1;
-    }
-    return cleanMonotonic(raw);
-  }, [bars]);
-
-  const expoSeries = useMemo(() => {
-    const raw = bars.map((b) => ({
-      t: parseTime(b?.t),
-      gross: Number(b?.leverage?.gross ?? b?.gross_leverage ?? b?.info?.gross_leverage ?? 0),
-    }));
-    for (const p of raw) if (!Number.isFinite(p.gross)) p.gross = 0;
-    return cleanMonotonic(raw);
-  }, [bars]);
-
-  const slipTurnSeries = useMemo(() => {
-    const raw = bars.map((b) => ({
-      t: parseTime(b?.t),
-      slip: Number(b?.slippage_bps?.arrival ?? 0),
-      to: Number(b?.turnover?.bar_pct ?? 0),
-    }));
-    for (const p of raw) {
-      if (!Number.isFinite(p.slip)) p.slip = 0;
-      if (!Number.isFinite(p.to)) p.to = 0;
-    }
-    return cleanMonotonic(raw);
-  }, [bars]);
-
-  useEffect(() => {
-    const worker = workerRef.current;
-    if (!worker) return;
-    const seq = workerSeqRef.current + 1;
-    workerSeqRef.current = seq;
-    const message: TelemetryWorkerRequest = {
-      type: 'PROCESS_SERIES',
-      seq,
-      payload: {
-        pnlSeries,
-        expoSeries,
-        slipSeries: slipTurnSeries,
-        isTerminal,
-        maxLivePoints: MAX_LIVE_POINTS,
-        maxTerminalPoints: MAX_TERMINAL_POINTS,
-      },
-    };
-    try {
-      worker.postMessage(message);
-    } catch (error) {
-      console.error('Failed to post telemetry payload to worker', error);
-    }
-  }, [pnlSeries, expoSeries, slipTurnSeries, isTerminal]);
+  }
 
   // Axis domains with padding
   const domainOf = (vals: number[], padFrac = 0.05, forceZeroTop = false): [number, number] => {
@@ -684,9 +745,10 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
     return [min - pad, (forceZeroTop ? Math.max(0, max) : max) + pad];
   };
   useEffect(() => {
+    const data = Array.isArray(seriesState.pnl) ? seriesState.pnl : [];
     let localMin = Infinity;
     let localMax = -Infinity;
-    for (const d of pnlSeries) {
+    for (const d of data) {
       const v = Number(d?.cum);
       if (!Number.isFinite(v)) continue;
       if (v < localMin) localMin = v;
@@ -698,11 +760,12 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
       const { min, max } = ext.current.pnlCum;
       if (Number.isFinite(min) && Number.isFinite(max)) setPnlCumDomain(padDomain(min, max, 0.10));
     }
-  }, [pnlSeries.length]);
+  }, [seriesState.pnl]);
   useEffect(() => {
+    const data = Array.isArray(seriesState.pnl) ? seriesState.pnl : [];
     let localMin = Infinity;
     let localMax = -Infinity;
-    for (const d of pnlSeries) {
+    for (const d of data) {
       const v = Number(d?.dd);
       if (!Number.isFinite(v)) continue;
       if (v < localMin) localMin = v;
@@ -714,11 +777,12 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
       const { min, max } = ext.current.pnlDd;
       if (Number.isFinite(min) && Number.isFinite(max)) setPnlDdDomain(padDomain(min, max, 0.10, true));
     }
-  }, [pnlSeries.length]);
+  }, [seriesState.pnl]);
   useEffect(() => {
+    const data = Array.isArray(seriesState.expo) ? seriesState.expo : [];
     let localMin = Infinity;
     let localMax = -Infinity;
-    for (const d of expoSeries) {
+    for (const d of data) {
       const v = Number(d?.gross);
       if (!Number.isFinite(v)) continue;
       if (v < localMin) localMin = v;
@@ -730,11 +794,12 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
       const { min, max } = ext.current.expo;
       if (Number.isFinite(min) && Number.isFinite(max)) setExpoDomain(padDomain(min, max, 0.05));
     }
-  }, [expoSeries.length]);
+  }, [seriesState.expo]);
   useEffect(() => {
+    const data = Array.isArray(seriesState.slip) ? seriesState.slip : [];
     let localMin = Infinity;
     let localMax = -Infinity;
-    for (const d of slipTurnSeries) {
+    for (const d of data) {
       const v = Number(d?.slip);
       if (!Number.isFinite(v)) continue;
       if (v < localMin) localMin = v;
@@ -746,11 +811,12 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
       const { min, max } = ext.current.slip;
       if (Number.isFinite(min) && Number.isFinite(max)) setSlipDomain(padDomain(min, max, 0.15));
     }
-  }, [slipTurnSeries.length]);
+  }, [seriesState.slip]);
   useEffect(() => {
+    const data = Array.isArray(seriesState.slip) ? seriesState.slip : [];
     let localMin = Infinity;
     let localMax = -Infinity;
-    for (const d of slipTurnSeries) {
+    for (const d of data) {
       const v = Number(d?.to);
       if (!Number.isFinite(v)) continue;
       if (v < localMin) localMin = v;
@@ -762,7 +828,7 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
       const { min, max } = ext.current.to;
       if (Number.isFinite(min) && Number.isFinite(max)) setToDomain(padDomain(min, max, 0.15));
     }
-  }, [slipTurnSeries.length]);
+  }, [seriesState.slip]);
   const safeTMin = Number.isFinite(seriesState.tMin) ? seriesState.tMin : 0;
   const safeTMax = Number.isFinite(seriesState.tMax) ? seriesState.tMax : safeTMin + 1;
   const tMin = safeTMin;
@@ -771,16 +837,36 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
   const expoD = Array.isArray(seriesState.expo) ? seriesState.expo : [];
   const slipD = Array.isArray(seriesState.slip) ? seriesState.slip : [];
 
-  const barsT = useMemo(() => bars.map((b) => parseTime(b?.t)), [bars]);
   const viewBar = useMemo(() => {
     if (viewIndex >= 0 && viewIndex < bars.length) return bars[viewIndex];
     if (hoverTs != null) {
-      const objs = barsT.map((t) => ({ t }));
-      const i = nearestIndex(objs, hoverTs);
-      return i >= 0 ? bars[i] : last;
+      const times = allTimesRef.current;
+      const fullBars = allBarsRef.current;
+      if (times.length && fullBars.length === times.length) {
+        let lo = 0;
+        let hi = times.length - 1;
+        let idx = -1;
+        if (hoverTs <= times[0]) {
+          idx = 0;
+        } else if (hoverTs >= times[hi]) {
+          idx = hi;
+        } else {
+          while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (times[mid] < hoverTs) lo = mid + 1;
+            else hi = mid;
+          }
+          const candidate = lo;
+          const prev = Math.max(0, candidate - 1);
+          idx = Math.abs(times[candidate] - hoverTs) < Math.abs(times[prev] - hoverTs) ? candidate : prev;
+        }
+        if (idx >= 0 && idx < fullBars.length) return fullBars[idx];
+      }
     }
-    return last;
-  }, [viewIndex, bars, last, hoverTs, barsT]);
+    if (last) return last;
+    const fullBars = allBarsRef.current;
+    return fullBars.length ? fullBars[fullBars.length - 1] : null;
+  }, [viewIndex, bars, last, hoverTs, dataVersion]);
   // Nearest point helpers for legends at hovered x
   function nearestIndex(arr: Array<{ t: number }>, t?: number): number {
     if (!arr.length) return -1;
