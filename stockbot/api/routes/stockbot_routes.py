@@ -27,6 +27,13 @@ from api.controllers.stockbot_controller import (
     delete_run,
     get_telemetry_tail,
     get_telemetry_chunk,
+    get_metrics_json,
+    get_summary_json,
+    get_rolling_metrics_json,
+    get_series_data,
+    list_run_events,
+    list_run_trades,
+    get_state_snapshot_at,
 )
 from api.controllers.insights_controller import InsightsRequest, generate_insights
 from api.controllers.highlights_controller import HighlightsRequest, generate_highlights
@@ -86,6 +93,47 @@ def get_run_status(run_id: str):
 @router.get("/runs/{run_id}/artifacts")
 def get_run_artifacts(run_id: str):
     return get_artifacts(run_id)
+
+
+@router.get("/runs/{run_id}/files/metrics")
+def get_run_metrics_file(run_id: str):
+    return get_metrics_json(run_id)
+
+
+@router.get("/runs/{run_id}/files/summary")
+def get_run_summary_file(run_id: str):
+    return get_summary_json(run_id)
+
+
+@router.get("/runs/{run_id}/files/rolling_metrics")
+def get_run_rolling_metrics(run_id: str):
+    return get_rolling_metrics_json(run_id)
+
+
+@router.get("/runs/{run_id}/series/{series_key}")
+def get_run_series(
+    run_id: str,
+    series_key: str,
+    from_ts: str | None = None,
+    to_ts: str | None = None,
+    maxPoints: int | None = None,
+):
+    return get_series_data(run_id, series_key, from_ts=from_ts, to_ts=to_ts, max_points=maxPoints)
+
+
+@router.get("/runs/{run_id}/events")
+def get_run_events(run_id: str, cursor: str | None = None, limit: int = 500):
+    return list_run_events(run_id, cursor=cursor, limit=limit)
+
+
+@router.get("/runs/{run_id}/trades")
+def get_run_trades(run_id: str, cursor: str | None = None, limit: int = 500):
+    return list_run_trades(run_id, cursor=cursor, limit=limit)
+
+
+@router.get("/runs/{run_id}/state")
+def get_run_state_snapshot(run_id: str, ts: str):
+    return get_state_snapshot_at(run_id, ts)
 
 
 @router.get("/runs/{run_id}/files/{name}")
@@ -327,7 +375,7 @@ async def stream_run_telemetry(run_id: str, from_start: bool = False):
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
-@router.get("/runs/{run_id}/events")
+@router.get("/runs/{run_id}/events/stream")
 async def stream_run_events(run_id: str, from_start: bool = True):
     out_dir = _resolve_out_dir_for_run(run_id)
     if out_dir is None:

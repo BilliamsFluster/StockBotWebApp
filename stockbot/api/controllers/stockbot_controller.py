@@ -5,15 +5,19 @@ import sys
 import shlex
 import subprocess
 import zipfile
+import math
 from tempfile import NamedTemporaryFile
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, List, Optional, Dict, Literal
 from collections import deque
 import secrets
 import yaml
 import shutil
 import json
+
+import numpy as np
+import pandas as pd
 
 from fastapi import BackgroundTasks, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
@@ -797,13 +801,290 @@ def get_artifacts(run_id: str):
         return f"/api/stockbot/runs/{run_id}/files/{name}" if p.exists() else None
     return {k: mkapi(k, v) for k, v in paths.items()}
 
+
+def get_metrics_json(run_id: str):
+    _rec, out_dir = _resolve_run_context(run_id)
+    if out_dir is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    rel = SAFE_NAME_MAP.get("metrics")
+    if not rel:
+        raise HTTPException(status_code=404, detail="Artifact mapping missing")
+    data = _read_json_file(out_dir / rel)
+    return JSONResponse(data)
+
+
+def get_summary_json(run_id: str):
+    _rec, out_dir = _resolve_run_context(run_id)
+    if out_dir is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    rel = SAFE_NAME_MAP.get("summary")
+    if not rel:
+        raise HTTPException(status_code=404, detail="Artifact mapping missing")
+    data = _read_json_file(out_dir / rel)
+    return JSONResponse(data)
+
+
+def get_rolling_metrics_json(run_id: str):
+    _rec, out_dir = _resolve_run_context(run_id)
+    if out_dir is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    df = _load_dataframe(out_dir, ROLLING_FILE_CANDIDATES)
+    df = df.copy()
+    try:
+        df["ts"] = _coerce_ts_column(df, "ts")
+    except HTTPException:
+        pass
+    if "ts" in df.columns:
+        df = df.sort_values("ts")
+    records = []
+    for rec in df.to_dict(orient="records"):
+        row: dict[str, Any] = {}
+        for k, v in rec.items():
+            if k == "ts":
+                row[k] = _epoch_ms_from_any(v)
+            elif isinstance(v, (np.floating, np.integer)):
+                row[k] = float(v)
+            else:
+                row[k] = v
+        records.append(row)
+    return JSONResponse({
+        "items": records,
+        "returned": len(records),
+        "total": len(records),
+    })
+
+
+def get_series_data(
+    run_id: str,
+    key: str,
+    from_ts: str | None = None,
+    to_ts: str | None = None,
+    max_points: int | None = None,
+):
+    _rec, out_dir = _resolve_run_context(run_id)
+    if out_dir is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    candidates = SERIES_FILE_CANDIDATES.get(key)
+    if not candidates:
+        raise HTTPException(status_code=404, detail="Unknown series key")
+    df = _load_dataframe(out_dir, candidates)
+    df = df.copy()
+    if "ts" in df.columns:
+        try:
+            df["ts"] = _coerce_ts_column(df, "ts")
+        except HTTPException:
+            pass
+    if "ts" not in df.columns:
+        raise HTTPException(status_code=400, detail="Series requires a 'ts' column")
+    df = df.dropna(subset=["ts"]).sort_values("ts")
+
+    start_dt = _parse_time_param(from_ts)
+    end_dt = _parse_time_param(to_ts)
+    if start_dt is not None:
+        df = df[df["ts"] >= start_dt]
+    if end_dt is not None:
+        df = df[df["ts"] <= end_dt]
+
+    total = len(df)
+    if total == 0:
+        return JSONResponse({
+            "items": [],
+            "returned": 0,
+            "total": 0,
+            "t_min": None,
+            "t_max": None,
+            "downsampled": False,
+        })
+
+    try:
+        max_pts = int(max_points) if max_points is not None else 1500
+    except Exception:
+        max_pts = 1500
+    max_pts = max(100, min(max_pts, 10000))
+
+    if key == "cash" and "cash" in df.columns:
+        keep = ["ts", "cash", "equity"] if "equity" in df.columns else ["ts", "cash"]
+        df = df[keep]
+
+    value_col = "equity" if "equity" in df.columns else None
+    if value_col is None:
+        for col in df.columns:
+            if col == "ts":
+                continue
+            if pd.api.types.is_numeric_dtype(df[col]):
+                value_col = col
+                break
+    downsampled = False
+    if value_col and len(df) > max_pts:
+        ts_arr = df["ts"].astype("int64").to_numpy(dtype=float)
+        vals = (
+            pd.to_numeric(df[value_col], errors="coerce")
+            .fillna(method="ffill")
+            .fillna(method="bfill")
+            .fillna(0.0)
+        )
+        val_arr = vals.to_numpy(dtype=float)
+        idx = _largest_triangle_three_buckets(ts_arr, val_arr, max_pts)
+        df = df.iloc[idx]
+        downsampled = True
+
+    df = df.sort_values("ts")
+    rows: list[dict[str, Any]] = []
+    for rec in df.to_dict(orient="records"):
+        row: dict[str, Any] = {}
+        for k, v in rec.items():
+            if k == "ts":
+                row[k] = _epoch_ms_from_any(v)
+            elif isinstance(v, (np.floating, np.integer)):
+                row[k] = float(v)
+            else:
+                row[k] = v
+        rows.append(row)
+
+    t_min = rows[0]["ts"] if rows else None
+    t_max = rows[-1]["ts"] if rows else None
+
+    return JSONResponse({
+        "items": rows,
+        "returned": len(rows),
+        "total": total,
+        "t_min": t_min,
+        "t_max": t_max,
+        "downsampled": downsampled,
+    })
+
+
+def list_run_events(run_id: str, cursor: str | None = None, limit: int = 500):
+    _rec, out_dir = _resolve_run_context(run_id)
+    if out_dir is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    rel = SAFE_NAME_MAP.get("live_events")
+    if not rel:
+        raise HTTPException(status_code=404, detail="Artifact mapping missing")
+    path = out_dir / rel
+    if not path.exists():
+        return JSONResponse({
+            "items": [],
+            "cursor": 0,
+            "next_cursor": 0,
+            "returned": 0,
+            "has_more": False,
+            "file_size": 0,
+        })
+    try:
+        limit_val = int(limit)
+    except Exception:
+        limit_val = 500
+    limit_val = max(1, min(limit_val, 2000))
+    cursor_val = 0
+    if cursor is not None:
+        try:
+            cursor_val = int(cursor)
+        except Exception:
+            cursor_val = 0
+        if cursor_val < 0:
+            try:
+                file_size = path.stat().st_size
+                cursor_val = max(file_size + cursor_val, 0)
+            except Exception:
+                cursor_val = 0
+    payload = _paginate_jsonl(path, cursor_val, limit_val)
+    payload["returned"] = len(payload.get("items", []))
+    return JSONResponse(payload)
+
+
+def list_run_trades(run_id: str, cursor: str | None = None, limit: int = 500):
+    _rec, out_dir = _resolve_run_context(run_id)
+    if out_dir is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    df = _load_dataframe(out_dir, TRADES_FILE_CANDIDATES)
+    df = df.copy()
+    if "ts" in df.columns:
+        df["ts"] = pd.to_datetime(df["ts"], utc=True, errors="coerce")
+        df = df.dropna(subset=["ts"]).sort_values("ts")
+    total = len(df)
+    try:
+        start = int(cursor) if cursor is not None else 0
+    except Exception:
+        start = 0
+    if start < 0:
+        start = max(total + start, 0)
+    try:
+        limit_val = int(limit)
+    except Exception:
+        limit_val = 500
+    limit_val = max(1, min(limit_val, 2000))
+    end = min(start + limit_val, total)
+    window = df.iloc[start:end]
+    rows: list[dict[str, Any]] = []
+    for rec in window.to_dict(orient="records"):
+        row: dict[str, Any] = {}
+        for k, v in rec.items():
+            if k == "ts":
+                row[k] = _epoch_ms_from_any(v)
+            elif isinstance(v, (np.floating, np.integer)):
+                row[k] = float(v)
+            else:
+                row[k] = v
+        rows.append(row)
+    return JSONResponse({
+        "items": rows,
+        "cursor": start,
+        "next_cursor": end if end < total else end,
+        "returned": len(rows),
+        "total": total,
+        "has_more": end < total,
+    })
+
+
+def get_state_snapshot_at(run_id: str, ts: str):
+    _rec, out_dir = _resolve_run_context(run_id)
+    if out_dir is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    target = _parse_time_param(ts)
+    if target is None:
+        raise HTTPException(status_code=400, detail="Invalid timestamp")
+    candidates = SERIES_FILE_CANDIDATES.get("state_snapshots")
+    if not candidates:
+        raise HTTPException(status_code=404, detail="Snapshot mapping missing")
+    try:
+        df = _load_dataframe(out_dir, candidates)
+    except HTTPException:
+        df = _load_dataframe(out_dir, SERIES_FILE_CANDIDATES["equity"])
+    df = df.copy()
+    if "ts" not in df.columns:
+        raise HTTPException(status_code=400, detail="Snapshot data missing 'ts'")
+    df["ts"] = pd.to_datetime(df["ts"], utc=True, errors="coerce")
+    df = df.dropna(subset=["ts"])
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No snapshot data available")
+    diff = (df["ts"] - target).abs()
+    idx = int(diff.idxmin())
+    record = df.loc[idx].to_dict()
+    payload: dict[str, Any] = {}
+    for k, v in record.items():
+        if k == "ts":
+            payload[k] = _epoch_ms_from_any(v)
+        elif isinstance(v, (np.floating, np.integer)):
+            payload[k] = float(v)
+        else:
+            payload[k] = v
+    payload["requested_ts"] = _epoch_ms_from_any(target)
+    return JSONResponse(payload)
+
 SAFE_NAME_MAP = {
     "metrics": "report/metrics.json",
     "equity":  "report/equity.csv",
+    "equity_parquet": "report/equity.parquet",
     "orders":  "report/orders.csv",
+    "orders_parquet": "report/orders.parquet",
     "trades":  "report/trades.csv",
+    "trades_parquet": "report/trades.parquet",
+    "trades_jsonl": "report/trades.jsonl",
     "rolling_metrics": "report/rolling_metrics.csv",
+    "rolling_metrics_parquet": "report/rolling_metrics.parquet",
     "summary": "report/summary.json",
+    "state_snapshots": "report/state_snapshots.parquet",
     "cv_report": "cv_report.json",
     "stress_report": "stress_report.json",
     # Regime artifacts (best-effort; may not exist)
@@ -820,6 +1101,214 @@ SAFE_NAME_MAP = {
     "live_rollups": "live_rollups.jsonl",
     "live_audit": "live_audit.jsonl",
 }
+
+SERIES_FILE_CANDIDATES: Dict[str, tuple[str, ...]] = {
+    "equity": ("report/equity.parquet", "report/equity.csv"),
+    "cash": ("report/equity.parquet", "report/equity.csv"),
+    "state_snapshots": (
+        "report/state_snapshots.parquet",
+        "report/equity.parquet",
+        "report/equity.csv",
+    ),
+}
+
+ROLLING_FILE_CANDIDATES = (
+    "report/rolling_metrics.parquet",
+    "report/rolling_metrics.csv",
+)
+
+TRADES_FILE_CANDIDATES = (
+    "report/trades.parquet",
+    "report/trades.csv",
+)
+
+
+def _read_json_file(path: Path) -> dict:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File not found") from None
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read file: {exc}") from exc
+    try:
+        return json.loads(text or "{}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to parse JSON: {exc}") from exc
+
+
+def _load_dataframe(out_dir: Path, candidates: tuple[str, ...]) -> pd.DataFrame:
+    last_error: Exception | None = None
+    for rel in candidates:
+        path = out_dir / rel
+        if not path.exists():
+            continue
+        try:
+            if path.suffix == ".parquet":
+                return pd.read_parquet(path)
+            return pd.read_csv(path)
+        except Exception as exc:
+            last_error = exc
+            continue
+    if last_error is not None:
+        raise HTTPException(status_code=500, detail=f"Failed to load data: {last_error}") from last_error
+    raise HTTPException(status_code=404, detail="Artifact not found")
+
+
+def _coerce_ts_column(df: pd.DataFrame, column: str = "ts") -> pd.Series:
+    if column not in df.columns:
+        raise HTTPException(status_code=400, detail=f"Column '{column}' missing from data")
+    series = pd.to_datetime(df[column], utc=True, errors="coerce")
+    if series.isna().all():
+        raise HTTPException(status_code=400, detail=f"Failed to parse timestamps in '{column}' column")
+    return series
+
+
+def _epoch_ms_from_any(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, (pd.Timestamp, )):
+        ts = value.tz_convert("UTC") if value.tzinfo else value.tz_localize("UTC")
+        return int(ts.value // 1_000_000)
+    if isinstance(value, datetime):
+        ts = value.astimezone(timezone.utc)
+        return int(ts.timestamp() * 1000)
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return 0
+        try:
+            return int(float(value))
+        except Exception:
+            try:
+                ts = pd.to_datetime(value, utc=True)
+                if pd.isna(ts):
+                    return 0
+                return int(ts.value // 1_000_000)
+            except Exception:
+                return 0
+    return 0
+
+
+def _parse_time_param(val: str | None) -> Optional[pd.Timestamp]:
+    if val is None:
+        return None
+    sval = str(val).strip()
+    if not sval:
+        return None
+    try:
+        return pd.to_datetime(float(sval), unit="ms", utc=True)
+    except Exception:
+        pass
+    try:
+        return pd.to_datetime(sval, utc=True)
+    except Exception:
+        return None
+
+
+def _largest_triangle_three_buckets(ts: np.ndarray, values: np.ndarray, threshold: int) -> np.ndarray:
+    length = len(ts)
+    if threshold <= 0 or length <= threshold:
+        return np.arange(length)
+    if length <= 2:
+        return np.arange(length)
+
+    bucket_size = (length - 2) / float(threshold - 2)
+    sampled = [0]
+    a = 0
+
+    for i in range(threshold - 2):
+        range_start = int(math.floor((i + 1) * bucket_size)) + 1
+        range_end = int(math.floor((i + 2) * bucket_size)) + 1
+        range_end = min(range_end, length)
+        if range_end <= range_start:
+            continue
+
+        avg_range_start = range_start
+        avg_range_end = int(math.floor((i + 2) * bucket_size)) + 1
+        avg_range_end = min(avg_range_end, length)
+        if avg_range_end <= avg_range_start:
+            avg_x = ts[range_start]
+            avg_y = values[range_start]
+        else:
+            avg_x = float(np.mean(ts[avg_range_start:avg_range_end]))
+            avg_y = float(np.mean(values[avg_range_start:avg_range_end]))
+
+        seg_x = ts[range_start:range_end]
+        seg_y = values[range_start:range_end]
+        a_x = ts[a]
+        a_y = values[a]
+        area = np.abs((a_x - avg_x) * (seg_y - a_y) - (a_y - avg_y) * (seg_x - a_x))
+        if area.size == 0:
+            continue
+        idx = int(np.argmax(area))
+        a = range_start + idx
+        sampled.append(a)
+
+    sampled.append(length - 1)
+    return np.unique(np.asarray(sampled, dtype=int))
+
+
+def _paginate_jsonl(path: Path, cursor: int, limit: int) -> dict:
+    try:
+        file_size = path.stat().st_size
+    except Exception:
+        file_size = None
+
+    cursor_val = max(0, int(cursor))
+    items: list[Any] = []
+    start_cursor = cursor_val
+    next_cursor = cursor_val
+    eof = False
+
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as fh:
+            if cursor_val > 0:
+                try:
+                    fh.seek(cursor_val)
+                except OSError:
+                    fh.seek(0)
+                fh.readline()
+            start_cursor = fh.tell()
+            while len(items) < limit:
+                line = fh.readline()
+                if not line:
+                    eof = True
+                    break
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    obj = json.loads(stripped)
+                except Exception:
+                    obj = {"raw": stripped}
+                items.append(obj)
+            next_cursor = fh.tell()
+    except FileNotFoundError:
+        return {
+            "items": [],
+            "cursor": 0,
+            "next_cursor": 0,
+            "has_more": False,
+            "file_size": 0,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read file: {exc}") from exc
+
+    has_more = bool(items) and not eof
+    if not has_more and file_size is not None and next_cursor < file_size:
+        has_more = True
+
+    return {
+        "items": items,
+        "cursor": start_cursor,
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "file_size": file_size,
+    }
 
 def _resolve_run_context(run_id: str) -> tuple[RunRecord | None, Path | None]:
     """Return (run_record, out_dir) for *run_id* without raising if missing."""
@@ -1012,7 +1501,7 @@ def get_artifact_file(run_id: str, name: str):
     # Live, growing files can cause Content-Length mismatches with FileResponse
     # when the file size changes between header calculation and body send.
     # For these, serve a static text snapshot instead of a direct file handle.
-    LIVE_TEXT_NAMES = {"live_telemetry", "live_events", "live_rollups", "live_audit", "job_log"}
+    LIVE_TEXT_NAMES = {"live_telemetry", "live_events", "live_rollups", "live_audit", "job_log", "trades_jsonl"}
     if name in LIVE_TEXT_NAMES:
         try:
             iterator = _iter_file_bytes(path)
