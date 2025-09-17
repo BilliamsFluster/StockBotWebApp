@@ -821,8 +821,54 @@ SAFE_NAME_MAP = {
     "live_audit": "live_audit.jsonl",
 }
 
+def _resolve_run_context(run_id: str) -> tuple[RunRecord | None, Path | None]:
+    """Return (run_record, out_dir) for *run_id* without raising if missing."""
+
+    record: RunRecord | None = None
+    try:
+        record = RUN_MANAGER.get(run_id)
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        record = None
+    except Exception:
+        record = None
+
+    if record and getattr(record, "out_dir", None):
+        out_path = Path(record.out_dir)
+        if out_path.exists():
+            return record, out_path
+
+    fallback = RUNS_DIR / run_id
+    if fallback.exists():
+        return record, fallback
+
+    return record, None
+
+
+def _empty_tail_response():
+    return JSONResponse({
+        "items": [],
+        "returned": 0,
+        "total": 0,
+        "has_more": False,
+    })
+
+
+def _empty_chunk_response(file_size: int | None = None):
+    return JSONResponse({
+        "items": [],
+        "cursor": 0,
+        "next_cursor": 0,
+        "has_more": False,
+        "file_size": file_size if file_size is not None else 0,
+    })
+
+
 def get_telemetry_tail(run_id: str, limit: int = 4000):
-    r = RUN_MANAGER.get(run_id)
+    _rec, out_dir = _resolve_run_context(run_id)
+    if out_dir is None:
+        raise HTTPException(status_code=404, detail="Run not found")
     try:
         limit = int(limit)
     except Exception:
@@ -835,9 +881,9 @@ def get_telemetry_tail(run_id: str, limit: int = 4000):
     if not rel:
         raise HTTPException(status_code=404, detail="Telemetry mapping missing")
 
-    path = Path(r.out_dir) / rel
+    path = out_dir / rel
     if not path.exists():
-        raise HTTPException(status_code=404, detail="Telemetry file not found")
+        return _empty_tail_response()
 
     total = 0
     buf: deque[Any] = deque(maxlen=limit)
@@ -857,6 +903,9 @@ def get_telemetry_tail(run_id: str, limit: int = 4000):
         raise HTTPException(status_code=500, detail=f"Failed to read telemetry: {e}")
 
     items = list(buf)
+    if total == 0:
+        return _empty_tail_response()
+
     return JSONResponse({
         "items": items,
         "returned": len(items),
@@ -866,14 +915,16 @@ def get_telemetry_tail(run_id: str, limit: int = 4000):
 
 
 def get_telemetry_chunk(run_id: str, cursor: int | None = None, limit: int = 1000):
-    r = RUN_MANAGER.get(run_id)
+    _rec, out_dir = _resolve_run_context(run_id)
+    if out_dir is None:
+        raise HTTPException(status_code=404, detail="Run not found")
     rel = SAFE_NAME_MAP.get("live_telemetry")
     if not rel:
         raise HTTPException(status_code=404, detail="Telemetry mapping missing")
 
-    path = Path(r.out_dir) / rel
+    path = out_dir / rel
     if not path.exists():
-        raise HTTPException(status_code=404, detail="Telemetry file not found")
+        return _empty_chunk_response(file_size=0)
 
     try:
         limit = int(limit)
@@ -937,6 +988,9 @@ def get_telemetry_chunk(run_id: str, cursor: int | None = None, limit: int = 100
     has_more = not eof_reached and len(items) >= limit
     if not has_more and file_size is not None and next_cursor < file_size:
         has_more = True
+
+    if not items and start_cursor == 0 and (file_size is None or file_size == 0):
+        return _empty_chunk_response(file_size=file_size)
 
     payload = {
         "items": items,
