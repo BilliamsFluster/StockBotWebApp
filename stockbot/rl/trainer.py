@@ -313,6 +313,10 @@ class PPOTrainer:
                 eqdf = base_df
             eqdf = eqdf.sort_values("ts")
             eqdf.to_csv(report_dir / "equity.csv", index=False)
+            try:
+                eqdf.to_parquet(report_dir / "equity.parquet", index=False)
+            except Exception:
+                pass
         except Exception as _e:
             # Fallback to minimal equity-only CSV if rich logging fails
             try:
@@ -354,5 +358,10 @@ class PPOTrainer:
             report_dir.mkdir(parents=True, exist_ok=True)
             (report_dir / "summary.json").write_text(json.dumps(summary, indent=2))
             (report_dir / "metrics.json").write_text(json.dumps(summary, indent=2))
+            try:
+                import pandas as pd
+                pd.DataFrame([summary]).to_parquet(report_dir / "metrics.parquet", index=False)
+            except Exception:
+                pass
         except Exception:
             pass

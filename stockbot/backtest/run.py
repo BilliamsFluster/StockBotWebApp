@@ -552,8 +552,25 @@ def main():
 
     # Save ledgers
     eqdf.to_csv(out_dir / "equity.csv", index=False)
+    try:
+        eqdf.to_parquet(out_dir / "equity.parquet", index=False)
+    except Exception:
+        pass
+
     odf.to_csv(out_dir / "orders.csv", index=False)
+    try:
+        if not odf.empty:
+            odf.to_parquet(out_dir / "orders.parquet", index=False)
+    except Exception:
+        pass
+
     trades_df.to_csv(out_dir / "trades.csv", index=False)
+    try:
+        if not trades_df.empty:
+            trades_df.to_parquet(out_dir / "trades.parquet", index=False)
+            trades_df.to_json(out_dir / "trades.jsonl", orient="records", lines=True)
+    except Exception:
+        pass
 
     # Rolling metrics (63-day sharpe/vol, 252-day max drawdown)
     try:
@@ -575,6 +592,18 @@ def main():
             "roll_maxdd_252": roll_dd,
         })
         rmdf.to_csv(out_dir / "rolling_metrics.csv", index=False)
+        try:
+            rmdf.to_parquet(out_dir / "rolling_metrics.parquet", index=False)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    # Persist state snapshots for drill-downs (exposures, leverage, etc.)
+    try:
+        snap_cols = [c for c in eqdf.columns if c not in {"pen_turnover", "pen_drawdown", "pen_vol", "pen_leverage"}]
+        snap_df = eqdf[snap_cols].copy()
+        snap_df.to_parquet(out_dir / "state_snapshots.parquet", index=False)
     except Exception:
         pass
 
