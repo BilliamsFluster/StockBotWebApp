@@ -9,6 +9,7 @@ export type TelemetryWorkerPayload = {
   isTerminal: boolean;
   maxLivePoints: number;
   maxTerminalPoints: number;
+  reset?: boolean;
 };
 
 export type TelemetryWorkerRequest = {
