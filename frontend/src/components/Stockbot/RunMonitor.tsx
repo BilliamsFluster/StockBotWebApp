@@ -20,25 +20,11 @@ const MAX_LIVE_POINTS = 4000;
 const MAX_TERMINAL_POINTS = 4000;
 const MAX_LIVE_BARS = 4000;
 const MAX_SNAPSHOT_LINES = 8000;
-const MAX_SNAPSHOT_BYTES = 5 * 1024 * 1024; // 5 MB safety cap
 
 type TelemetryBar = any;
 type TelemetryEvent = any;
 type TelemetryTailMeta = { total: number | null; returned: number; hasMore: boolean };
 type TelemetryNotice = { message: string; severity: "info" | "warning" };
-
-function formatBytes(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return "unknown size";
-  const units = ["B", "KB", "MB", "GB"];
-  let idx = 0;
-  let current = value;
-  while (current >= 1024 && idx < units.length - 1) {
-    current /= 1024;
-    idx += 1;
-  }
-  const precision = current >= 10 || idx === 0 ? 0 : 1;
-  return `${current.toFixed(precision)} ${units[idx]}`;
-}
 
 const pnlChartConfig: ChartConfig = {
   cum: { label: "Cum P&L (%)", color: "#2563eb" },
@@ -356,52 +342,72 @@ export default function RunMonitor({ runId }: { runId: string }) {
       fullSnapshotLoadingRef.current = true;
       setFullSnapshotLoading(true);
       try {
-        const url = buildUrl(`/api/stockbot/runs/${runId}/files/live_telemetry`);
-        const resp = await fetch(url, { credentials: 'include' });
-        if (!resp.ok) {
+        const aggregated: TelemetryBar[] = [];
+        let cursor: number | null = 0;
+        let hasMore = false;
+        let guard = 0;
+        while (cursor !== null && aggregated.length < MAX_SNAPSHOT_LINES && guard < 100) {
+          const remaining = MAX_SNAPSHOT_LINES - aggregated.length;
+          const limit = Math.min(remaining, 1000);
+          const params = new URLSearchParams({ limit: String(limit) });
+          if (cursor > 0) params.set('cursor', String(cursor));
+          const chunkUrl = buildUrl(`/api/stockbot/runs/${runId}/telemetry/chunk?${params.toString()}`);
+          const resp = await fetch(chunkUrl, { credentials: 'include' });
+          if (!resp.ok) {
+            throw new Error(`chunk ${resp.status}`);
+          }
+          const payload = await resp.json();
+          const items: TelemetryBar[] = Array.isArray(payload?.items) ? payload.items : [];
+          if (items.length > 0) {
+            aggregated.push(...items);
+          }
+          const nextCursorRaw = payload?.next_cursor;
+          const nextCursor = Number.isFinite(Number(nextCursorRaw)) ? Number(nextCursorRaw) : null;
+          hasMore = Boolean(payload?.has_more);
+          if (!hasMore || nextCursor === null || nextCursor === cursor) {
+            cursor = null;
+          } else {
+            cursor = nextCursor;
+          }
+          if (!items.length && !hasMore) {
+            break;
+          }
+          guard += 1;
+        }
+
+        if (!aggregated.length) {
           setTelemetryNotice({
             severity: 'warning',
-            message: `Failed to load full telemetry snapshot (${resp.status}).`,
+            message: 'No telemetry history is available for this run.',
           });
+          const emptyMeta: TelemetryTailMeta = { total: 0, returned: 0, hasMore: false };
+          lastTailMetaRef.current = emptyMeta;
+          setTelemetryTailMeta(emptyMeta);
+          fullSnapshotLoadedRef.current = true;
           return;
         }
-        const contentLengthHeader = resp.headers.get('content-length');
-        const contentLength = contentLengthHeader ? Number.parseInt(contentLengthHeader, 10) : NaN;
-        const tooManyLines = totalHint != null && totalHint > MAX_SNAPSHOT_LINES;
-        const tooLarge = Number.isFinite(contentLength) && contentLength > MAX_SNAPSHOT_BYTES;
-        if (tooManyLines || tooLarge) {
-          const parts: string[] = [];
-          if (tooManyLines && totalHint != null) parts.push(`${totalHint.toLocaleString()} bars`);
-          if (tooLarge) parts.push(`${formatBytes(contentLength)} snapshot`);
-          const reason = parts.length ? parts.join(' / ') : 'size';
-          const prefix = opts?.manual ? 'Unable to load full telemetry snapshot' : 'Skipped loading full telemetry snapshot';
-          setTelemetryNotice({
-            severity: 'warning',
-            message: `${prefix} because it exceeds the safe limit (${reason}). Download the raw live_telemetry.jsonl file instead.`,
-          });
-          try { await resp.body?.cancel?.(); } catch {}
-          return;
-        }
-        const txt = await resp.text();
-        const lines = parseJsonLines(txt);
-        const parsed: TelemetryBar[] = [];
-        for (const ln of lines) {
-          try {
-            parsed.push(JSON.parse(ln));
-          } catch {}
-        }
-        const outcome = appendTelemetryBars(parsed, true);
+
+        const outcome = appendTelemetryBars(aggregated, true);
         applyAppendOutcome(outcome);
-        const total = parsed.length;
-        lastTailMetaRef.current = { total, returned: total, hasMore: false };
-        setTelemetryTailMeta({ total, returned: total, hasMore: false });
+        const total = aggregated.length;
+        const truncated = hasMore || total >= MAX_SNAPSHOT_LINES;
+        const meta: TelemetryTailMeta = { total, returned: total, hasMore: truncated };
+        lastTailMetaRef.current = meta;
+        setTelemetryTailMeta(meta);
         fullSnapshotLoadedRef.current = true;
-        setTelemetryNotice(null);
+        setTelemetryNotice(
+          truncated
+            ? {
+                severity: 'warning',
+                message: `Loaded ${total.toLocaleString()} telemetry bars. History is truncated; download the raw live_telemetry.jsonl file for the full dataset.`,
+              }
+            : null
+        );
       } catch (error) {
-        console.error('Failed to load full telemetry snapshot', error);
+        console.error('Failed to load telemetry history', error);
         setTelemetryNotice({
           severity: 'warning',
-          message: 'Failed to load full telemetry snapshot.',
+          message: 'Failed to load telemetry history.',
         });
       } finally {
         fullSnapshotLoadingRef.current = false;
@@ -1153,7 +1159,7 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
                 disabled={fullSnapshotLoading || exceedsLineLimit}
                 onClick={() => requestFullTelemetrySnapshot({ force: true, totalHint: totalEstimate ?? undefined, manual: true })}
               >
-                {fullSnapshotLoading ? 'Loading…' : 'Load full history'}
+                {fullSnapshotLoading ? 'Loading…' : 'Load history snapshot'}
               </Button>
               {exceedsLineLimit && (
                 <span className="text-xs text-muted-foreground">
