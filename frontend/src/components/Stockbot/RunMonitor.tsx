@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import api, { buildUrl } from "@/api/client";
 import { askJarvisLite, fetchAvailableModels } from "@/api/jarvisApi";
@@ -18,9 +19,26 @@ import type { TelemetryWorkerRequest, TelemetryWorkerResponse, TelemetryWorkerRe
 const MAX_LIVE_POINTS = 4000;
 const MAX_TERMINAL_POINTS = 4000;
 const MAX_LIVE_BARS = 4000;
+const MAX_SNAPSHOT_LINES = 8000;
+const MAX_SNAPSHOT_BYTES = 5 * 1024 * 1024; // 5 MB safety cap
 
 type TelemetryBar = any;
 type TelemetryEvent = any;
+type TelemetryTailMeta = { total: number | null; returned: number; hasMore: boolean };
+type TelemetryNotice = { message: string; severity: "info" | "warning" };
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "unknown size";
+  const units = ["B", "KB", "MB", "GB"];
+  let idx = 0;
+  let current = value;
+  while (current >= 1024 && idx < units.length - 1) {
+    current /= 1024;
+    idx += 1;
+  }
+  const precision = current >= 10 || idx === 0 ? 0 : 1;
+  return `${current.toFixed(precision)} ${units[idx]}`;
+}
 
 const pnlChartConfig: ChartConfig = {
   cum: { label: "Cum P&L (%)", color: "#2563eb" },
@@ -45,6 +63,9 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const [viewIndex, setViewIndex] = useState<number>(-1);
   const [runStatus, setRunStatus] = useState<{ status?: string; type?: string } | null>(null);
   const [updateMs, setUpdateMs] = useState<number>(250);
+  const [telemetryTailMeta, setTelemetryTailMeta] = useState<TelemetryTailMeta | null>(null);
+  const [telemetryNotice, setTelemetryNotice] = useState<TelemetryNotice | null>(null);
+  const [fullSnapshotLoading, setFullSnapshotLoading] = useState<boolean>(false);
   const [showSeries, setShowSeries] = useState<{ pnl: boolean; dd: boolean; gross: boolean; slip: boolean; to: boolean }>({
     pnl: true,
     dd: true,
@@ -73,6 +94,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const [dataVersion, setDataVersion] = useState<number>(0);
   const fullSnapshotLoadedRef = useRef<boolean>(false);
   const fullSnapshotLoadingRef = useRef<boolean>(false);
+  const lastTailMetaRef = useRef<TelemetryTailMeta | null>(null);
 
   const workerRef = useRef<Worker | null>(null);
   const workerSeqRef = useRef<number>(0);
@@ -297,16 +319,53 @@ export default function RunMonitor({ runId }: { runId: string }) {
     [sendWorkerPayload]
   );
 
+  const updateTailMetaFromPayload = useCallback((payload: any, itemsLength: number) => {
+    const totalValue = Number(payload?.total);
+    const total = Number.isFinite(totalValue) ? totalValue : null;
+    const meta: TelemetryTailMeta = {
+      total,
+      returned: itemsLength,
+      hasMore: Boolean(payload?.has_more),
+    };
+    lastTailMetaRef.current = meta;
+    setTelemetryTailMeta(meta);
+  }, []);
+
   const requestFullTelemetrySnapshot = useCallback(
-    async (opts?: { force?: boolean }) => {
+    async (opts?: { force?: boolean; totalHint?: number; manual?: boolean }) => {
       if (!runId) return;
       if (fullSnapshotLoadingRef.current) return;
       if (!opts?.force && fullSnapshotLoadedRef.current) return;
       fullSnapshotLoadingRef.current = true;
+      setFullSnapshotLoading(true);
       try {
         const url = buildUrl(`/api/stockbot/runs/${runId}/files/live_telemetry`);
         const resp = await fetch(url, { credentials: 'include' });
-        if (!resp.ok) return;
+        if (!resp.ok) {
+          setTelemetryNotice({
+            severity: 'warning',
+            message: `Failed to load full telemetry snapshot (${resp.status}).`,
+          });
+          return;
+        }
+        const totalHint = Number.isFinite(opts?.totalHint ?? NaN) ? Number(opts?.totalHint) : null;
+        const contentLengthHeader = resp.headers.get('content-length');
+        const contentLength = contentLengthHeader ? Number.parseInt(contentLengthHeader, 10) : NaN;
+        const tooManyLines = totalHint != null && totalHint > MAX_SNAPSHOT_LINES;
+        const tooLarge = Number.isFinite(contentLength) && contentLength > MAX_SNAPSHOT_BYTES;
+        if (tooManyLines || tooLarge) {
+          const parts: string[] = [];
+          if (tooManyLines && totalHint != null) parts.push(`${totalHint.toLocaleString()} bars`);
+          if (tooLarge) parts.push(`${formatBytes(contentLength)} snapshot`);
+          const reason = parts.length ? parts.join(' / ') : 'size';
+          const prefix = opts?.manual ? 'Unable to load full telemetry snapshot' : 'Skipped loading full telemetry snapshot';
+          setTelemetryNotice({
+            severity: 'warning',
+            message: `${prefix} because it exceeds the safe limit (${reason}). Download the raw live_telemetry.jsonl file instead.`,
+          });
+          try { await resp.body?.cancel?.(); } catch {}
+          return;
+        }
         const txt = await resp.text();
         const lines = parseJsonLines(txt);
         const parsed: TelemetryBar[] = [];
@@ -317,13 +376,20 @@ export default function RunMonitor({ runId }: { runId: string }) {
         }
         const outcome = appendTelemetryBars(parsed, true);
         applyAppendOutcome(outcome);
-        if (parsed.length) {
-          fullSnapshotLoadedRef.current = true;
-        }
+        const total = parsed.length;
+        lastTailMetaRef.current = { total, returned: total, hasMore: false };
+        setTelemetryTailMeta({ total, returned: total, hasMore: false });
+        fullSnapshotLoadedRef.current = true;
+        setTelemetryNotice(null);
       } catch (error) {
         console.error('Failed to load full telemetry snapshot', error);
+        setTelemetryNotice({
+          severity: 'warning',
+          message: 'Failed to load full telemetry snapshot.',
+        });
       } finally {
         fullSnapshotLoadingRef.current = false;
+        setFullSnapshotLoading(false);
       }
     },
     [appendTelemetryBars, applyAppendOutcome, runId]
@@ -338,6 +404,11 @@ export default function RunMonitor({ runId }: { runId: string }) {
     barsBufRef.current = [];
     eventsBufRef.current = [];
     fullSnapshotLoadedRef.current = false;
+    fullSnapshotLoadingRef.current = false;
+    lastTailMetaRef.current = null;
+    setTelemetryTailMeta(null);
+    setTelemetryNotice(null);
+    setFullSnapshotLoading(false);
     setEvents([]);
     setViewIndex(-1);
     setJobLog(null);
@@ -380,13 +451,9 @@ export default function RunMonitor({ runId }: { runId: string }) {
         const outcome = appendTelemetryBars(items, true);
         applyAppendOutcome(outcome);
         telemSeenRef.current = items.length;
+        updateTailMetaFromPayload(payload, items.length);
         const hasMore = Boolean(payload?.has_more);
-        if (hasMore) {
-          fullSnapshotLoadedRef.current = false;
-          requestFullTelemetrySnapshot();
-        } else if (items.length) {
-          fullSnapshotLoadedRef.current = true;
-        }
+        fullSnapshotLoadedRef.current = !hasMore;
       } catch (err) {
         if (!abort.signal.aborted) {
           liveTailPrimedRef.current = false;
@@ -440,7 +507,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
       abort.abort();
       liveTailPrimedRef.current = false;
     };
-  }, [runId, isTerminal, isActive, appendTelemetryBars, applyAppendOutcome, requestFullTelemetrySnapshot]);
+  }, [runId, isTerminal, isActive, appendTelemetryBars, applyAppendOutcome, updateTailMetaFromPayload]);
 
   // Flush buffers at a controlled cadence
   useEffect(() => {
@@ -476,7 +543,8 @@ export default function RunMonitor({ runId }: { runId: string }) {
     if (!isTerminal) return;
     (async () => {
       try {
-        await requestFullTelemetrySnapshot({ force: true });
+        const totalHint = lastTailMetaRef.current?.total ?? undefined;
+        await requestFullTelemetrySnapshot({ force: true, totalHint });
       } catch {}
       try {
         // Load full events history
@@ -510,6 +578,8 @@ export default function RunMonitor({ runId }: { runId: string }) {
             const outcome = appendTelemetryBars(items);
             applyAppendOutcome(outcome);
             telemSeenRef.current = items.length;
+            updateTailMetaFromPayload(payload, items.length);
+            fullSnapshotLoadedRef.current = !Boolean(payload?.has_more);
           }
         }
         if (eventsFallbackRef.current && !isTerminal) {
@@ -531,7 +601,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
     };
     poll();
     return () => { if (timer) clearTimeout(timer); };
-  }, [runId, isTerminal, updateMs, appendTelemetryBars, applyAppendOutcome]);
+  }, [runId, isTerminal, updateMs, appendTelemetryBars, applyAppendOutcome, updateTailMetaFromPayload]);
 
   // Periodically fetch audit log (paused when terminal)
   useEffect(() => {
@@ -981,6 +1051,15 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
     }
   };
 
+  const truncatedTelemetry = telemetryTailMeta?.hasMore ?? false;
+  const totalEstimate = telemetryTailMeta?.total ?? null;
+  const returnedEstimate = telemetryTailMeta?.returned ?? 0;
+  const totalIsFinite = typeof totalEstimate === 'number' && Number.isFinite(totalEstimate);
+  const totalLabel = totalIsFinite ? totalEstimate.toLocaleString() : 'many';
+  const returnedLabel = returnedEstimate ? returnedEstimate.toLocaleString() : '0';
+  const exceedsLineLimit = totalIsFinite && totalEstimate > MAX_SNAPSHOT_LINES;
+  const showTelemetryAlert = truncatedTelemetry || Boolean(telemetryNotice);
+
   return (
     <div className="space-y-6">
       {/* Status strip */}
@@ -1040,6 +1119,43 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
           </select>
         </div>
       </Card>
+
+      {showTelemetryAlert && (
+        <Alert className="border-amber-500/40 bg-amber-500/10 text-amber-900 dark:border-amber-400/40 dark:bg-amber-900/30 dark:text-amber-100">
+          <AlertTitle>Telemetry history truncated</AlertTitle>
+          <AlertDescription className="space-y-2">
+            {truncatedTelemetry && (
+              <p>
+                Showing latest {returnedLabel} of {totalLabel} telemetry bars. Older history is omitted to keep the live view responsive.
+              </p>
+            )}
+            {telemetryNotice?.message && <p>{telemetryNotice.message}</p>}
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={fullSnapshotLoading || exceedsLineLimit}
+                onClick={() => requestFullTelemetrySnapshot({ force: true, totalHint: totalEstimate ?? undefined, manual: true })}
+              >
+                {fullSnapshotLoading ? 'Loading…' : 'Load full history'}
+              </Button>
+              {exceedsLineLimit && (
+                <span className="text-xs text-muted-foreground">
+                  Snapshot capped at {MAX_SNAPSHOT_LINES.toLocaleString()} bars; download the raw file instead.
+                </span>
+              )}
+              <a
+                className="text-xs underline"
+                href={buildUrl(`/api/stockbot/runs/${runId}/files/live_telemetry`)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Download live_telemetry.jsonl
+              </a>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div className="flex flex-wrap items-center gap-2 text-xs min-h-14">
         <span className="text-muted-foreground">At Cursor:</span>
