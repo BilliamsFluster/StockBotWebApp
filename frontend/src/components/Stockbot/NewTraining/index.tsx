@@ -1,14 +1,12 @@
 // src/components/Stockbot/NewTraining/index.tsx
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "react-hot-toast";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Accordion } from "@/components/ui/accordion";
-import api, { buildUrl } from "@/api/client";
+import api from "@/api/client";
 import { addRecentRun } from "../lib/runs";
-import type { JobStatusResponse, RunArtifacts } from "../lib/types";
 import { DatasetSection } from "./DatasetSection";
 import { FeaturesSection } from "./FeaturesSection";
 import { CostsExecutionSection } from "./CostsExecutionSection";
@@ -16,447 +14,15 @@ import { CVStressSection } from "./CVStressSection";
 import { RegimeSection } from "./RegimeSection";
 import { ModelSection } from "./ModelSection";
 import { SizingSection, DEFAULT_SIZING } from "./SizingSection";
-import { RewardLoggingSection, DEFAULT_REWARD  } from "./RewardLoggingSection";
+import { RewardLoggingSection, DEFAULT_REWARD } from "./RewardLoggingSection";
 import { DownloadsSection } from "./DownloadsSection";
 import { buildTrainPayload, type TrainPayload } from "./payload";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-
-const TERMINAL: Array<JobStatusResponse["status"]> = ["SUCCEEDED", "FAILED", "CANCELLED"];
-const ppoDivisible = (n: number, b: number) => n > 0 && b > 0 && n % b === 0;
-
-type ValidationLevel = "error" | "warning" | "info";
-
-interface ValidationIssue {
-  level: ValidationLevel;
-  message: string;
-  detail?: string;
-  blocking?: boolean;
-}
-
-interface RangeSummary {
-  start: string;
-  end: string;
-  calendarDays: number;
-  businessDays: number;
-  tradingDays: number;
-  tradingBars: number;
-  effectiveBars: number;
-}
-
-interface ValidationResult {
-  issues: ValidationIssue[];
-  blockingIssues: ValidationIssue[];
-  split?: {
-    train: RangeSummary;
-    eval: RangeSummary;
-  };
-  requiredBars: number;
-  featureWarmup: number;
-}
-
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-const BARS_PER_DAY: Record<"1d" | "1h" | "15m", number> = {
-  "1d": 1,
-  "1h": 6.5,
-  "15m": 26,
-};
-
-const TRADING_DAY_RATIO = 252 / 260; // ~3% buffer for US market holidays
-
-const FEATURE_SET_WARMUP: Record<string, number> = {
-  minimal: 20,
-  minimal_core: 20,
-  ohlcv: 0,
-  ohlcv_ta_basic: 32,
-  ohlcv_ta_rich: 64,
-};
-
-const INDICATOR_WARMUP: Record<string, number> = {
-  rsi: 14,
-  macd: 26,
-  bbands: 20,
-};
-
-const formatIso = (d: Date) => d.toISOString().slice(0, 10);
-
-const parseIsoDate = (value: string | undefined | null): Date | null => {
-  if (!value || typeof value !== "string") return null;
-  const parts = value.split("-").map((x) => Number(x));
-  if (parts.length !== 3 || parts.some((x) => Number.isNaN(x))) return null;
-  const [y, m, day] = parts;
-  return new Date(Date.UTC(y, m - 1, day));
-};
-
-const addUtcDays = (d: Date, days: number) => {
-  const next = new Date(d.getTime());
-  next.setUTCDate(next.getUTCDate() + days);
-  return next;
-};
-
-const diffCalendarDays = (start: Date, end: Date) => {
-  if (end < start) return 0;
-  return Math.floor((end.getTime() - start.getTime()) / MS_PER_DAY);
-};
-
-const countBusinessDays = (start: Date, end: Date) => {
-  if (end < start) return 0;
-  let count = 0;
-  for (let d = new Date(start.getTime()); d.getTime() <= end.getTime(); d.setUTCDate(d.getUTCDate() + 1)) {
-    const day = d.getUTCDay();
-    if (day !== 0 && day !== 6) count += 1;
-  }
-  return count;
-};
-
-const summarizeRange = (
-  start: Date,
-  end: Date,
-  interval: "1d" | "1h" | "15m",
-  featureWarmup: number
-): RangeSummary => {
-  const calendarDays = diffCalendarDays(start, end) + 1; // inclusive span for display
-  const businessDays = countBusinessDays(start, end);
-  const tradingDays = Math.max(0, Math.round(businessDays * TRADING_DAY_RATIO));
-  const multiplier = BARS_PER_DAY[interval] ?? 1;
-  const tradingBars = Math.max(0, Math.round(tradingDays * multiplier));
-  const effectiveBars = Math.max(0, tradingBars - Math.max(0, Math.floor(featureWarmup)));
-  return {
-    start: formatIso(start),
-    end: formatIso(end),
-    calendarDays,
-    businessDays,
-    tradingDays,
-    tradingBars,
-    effectiveBars,
-  };
-};
-
-const estimateFeatureWarmup = (state: any): number => {
-  const sets = Array.isArray(state.featureSet) ? state.featureSet : [];
-  let warmup = 0;
-  for (const set of sets) {
-    const key = typeof set === "string" ? set : String(set);
-    warmup = Math.max(warmup, FEATURE_SET_WARMUP[key] ?? 0);
-  }
-  if (state?.rsi) warmup = Math.max(warmup, INDICATOR_WARMUP.rsi);
-  if (state?.macd) warmup = Math.max(warmup, INDICATOR_WARMUP.macd);
-  if (state?.bbands) warmup = Math.max(warmup, INDICATOR_WARMUP.bbands);
-  const embargo = Number(state?.embargo);
-  if (!Number.isNaN(embargo) && embargo > 0) {
-    warmup = Math.max(warmup, embargo);
-  }
-  return warmup;
-};
-
-interface DeriveSplitInput {
-  start: Date;
-  end: Date;
-  interval: "1d" | "1h" | "15m";
-  lookback: number;
-  trainSplit: string;
-  evalWindow: number;
-}
-
-const deriveSplit = ({ start, end, lookback, trainSplit, evalWindow }: DeriveSplitInput) => {
-  const spanDays = diffCalendarDays(start, end);
-  let trainStart = new Date(start.getTime());
-  let trainEnd = new Date(end.getTime());
-  let evalStart = new Date(start.getTime());
-  let evalEnd = new Date(end.getTime());
-
-  const enforceMinEvalWindow = () => {
-    const minEvalDays = Math.max(100, Math.floor(lookback) + 40);
-    const evalSpan = diffCalendarDays(evalStart, evalEnd);
-    if (evalSpan < minEvalDays) {
-      let newEvalStart = addUtcDays(end, -minEvalDays);
-      if (newEvalStart < start) newEvalStart = new Date(start.getTime());
-      evalStart = newEvalStart;
-      const newTrainEnd = addUtcDays(evalStart, -1);
-      if (newTrainEnd >= start) {
-        trainEnd = newTrainEnd;
-      }
-    }
-  };
-
-  if (evalWindow && evalWindow > 0) {
-    evalEnd = new Date(end.getTime());
-    let candidate = addUtcDays(end, -(evalWindow - 1));
-    if (candidate < start) candidate = new Date(start.getTime());
-    evalStart = candidate;
-    const trainCandidate = addUtcDays(evalStart, -1);
-    trainStart = new Date(start.getTime());
-    trainEnd = trainCandidate >= start ? trainCandidate : new Date(start.getTime());
-    enforceMinEvalWindow();
-  } else if (trainSplit === "80_20" || spanDays < 365) {
-    const splitOffset = Math.floor(spanDays * 0.8);
-    const splitPoint = addUtcDays(start, splitOffset);
-    trainEnd = splitPoint >= start ? splitPoint : new Date(start.getTime());
-    evalStart = addUtcDays(trainEnd, 1);
-    evalEnd = new Date(end.getTime());
-    if (evalStart > evalEnd) {
-      evalStart = new Date(end.getTime());
-    }
-    enforceMinEvalWindow();
-  } else {
-    const lastYear = end.getUTCFullYear();
-    const janFirst = new Date(Date.UTC(lastYear, 0, 1));
-    if (start.getUTCFullYear() >= lastYear) {
-      const splitOffset = Math.floor(spanDays * 0.8);
-      const splitPoint = addUtcDays(start, splitOffset);
-      trainEnd = splitPoint >= start ? splitPoint : new Date(start.getTime());
-      evalStart = addUtcDays(trainEnd, 1);
-      evalEnd = new Date(end.getTime());
-    } else {
-      evalStart = janFirst < start ? new Date(start.getTime()) : janFirst;
-      evalEnd = new Date(end.getTime());
-      const candidateTrainEnd = addUtcDays(evalStart, -1);
-      trainEnd = candidateTrainEnd >= start ? candidateTrainEnd : new Date(start.getTime());
-    }
-    enforceMinEvalWindow();
-  }
-
-  if (trainEnd < trainStart) trainEnd = new Date(trainStart.getTime());
-  if (evalStart < start) evalStart = new Date(start.getTime());
-  if (evalEnd < evalStart) evalEnd = new Date(evalStart.getTime());
-
-  return {
-    train: { start: trainStart, end: trainEnd },
-    eval: { start: evalStart, end: evalEnd },
-  };
-};
-
-const computeValidation = (state: any): ValidationResult => {
-  const issues: ValidationIssue[] = [];
-  const symbols = String(state.symbols || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-  if (symbols.length === 0) {
-    issues.push({
-      level: "error",
-      message: "Add at least one symbol to train on.",
-      blocking: true,
-    });
-  }
-
-  const interval = (state.interval as "1d" | "1h" | "15m") || "1d";
-  const startDate = parseIsoDate(state.start);
-  const endDate = parseIsoDate(state.end);
-  if (!startDate || !endDate) {
-    issues.push({
-      level: "error",
-      message: "Provide valid ISO dates for start and end (YYYY-MM-DD).",
-      blocking: true,
-    });
-    return {
-      issues,
-      blockingIssues: issues.filter((i) => i.level === "error" && i.blocking),
-      requiredBars: Math.max(0, Number(state.lookback) || 0) + 2,
-    };
-  }
-
-  if (endDate < startDate) {
-    issues.push({
-      level: "error",
-      message: "End date must be after start date.",
-      blocking: true,
-    });
-  }
-
-  const lookback = Number(state.lookback) || 0;
-  if (lookback <= 0) {
-    issues.push({
-      level: "error",
-      message: "Lookback must be a positive number of bars.",
-      blocking: true,
-    });
-  }
-
-  if (!Array.isArray(state.featureSet) || state.featureSet.length === 0) {
-    issues.push({
-      level: "error",
-      message: "Select at least one feature set.",
-      blocking: true,
-    });
-  }
-
-  const trainSplit = state.trainSplit || "last_year";
-  const evalWindow = Number(state.evalWindow) || 0;
-  const featureWarmup = estimateFeatureWarmup(state);
-  let splitSummary: ValidationResult["split"] | undefined;
-
-  if (endDate >= startDate && lookback > 0) {
-    const split = deriveSplit({
-      start: startDate,
-      end: endDate,
-      lookback,
-      trainSplit,
-      evalWindow,
-      interval,
-    });
-    const trainRange = summarizeRange(split.train.start, split.train.end, interval, featureWarmup);
-    const evalRange = summarizeRange(split.eval.start, split.eval.end, interval, featureWarmup);
-    splitSummary = { train: trainRange, eval: evalRange };
-
-    const requiredBars = lookback + 2;
-    const warnThreshold = requiredBars + 10;
-
-    if (trainRange.effectiveBars < requiredBars) {
-      issues.push({
-        level: "error",
-        message: `Train window has ≈${trainRange.effectiveBars} usable bars but lookback requires at least ${requiredBars}.`,
-        detail: "Extend the training start date, reduce indicator warm-up, or lower the lookback.",
-        blocking: true,
-      });
-    } else if (trainRange.effectiveBars < warnThreshold) {
-      issues.push({
-        level: "warning",
-        message: `Train window is tight (≈${trainRange.effectiveBars} usable bars vs required ${requiredBars}).`,
-        detail: "Consider using a longer history for more stable training.",
-      });
-    }
-
-    if (evalRange.effectiveBars < requiredBars) {
-      issues.push({
-        level: "error",
-        message: `Eval window has ≈${evalRange.effectiveBars} usable bars but lookback requires at least ${requiredBars}.`,
-        detail: "Increase eval window days, extend the end date, or reduce lookback.",
-        blocking: true,
-      });
-    } else if (evalRange.effectiveBars < warnThreshold) {
-      issues.push({
-        level: "warning",
-        message: `Eval window is tight (≈${evalRange.effectiveBars} usable bars vs required ${requiredBars}).`,
-        detail: "Extend the evaluation window to avoid runtime errors.",
-      });
-    }
-
-    if (trainSplit === "custom_ranges") {
-      issues.push({
-        level: "info",
-        message: "Custom ranges selected — ensure payload JSON supplies explicit ranges (UI uses auto-split heuristics).",
-      });
-    }
-
-    if (featureWarmup > 0) {
-      issues.push({
-        level: "info",
-        message: `Indicator warm-up removes ≈${featureWarmup} bars before windows are usable.`,
-        detail: "Usable bars estimates subtract warm-up and a small holiday buffer.",
-      });
-    }
-  }
-
-  const nSteps = Number(state.nSteps) || 0;
-  const batchSize = Number(state.batchSize) || 0;
-  if (!ppoDivisible(nSteps, batchSize)) {
-    issues.push({
-      level: "error",
-      message: "PPO expects batch_size to divide n_steps (per environment).",
-      detail: "Adjust n_steps or batch_size so n_steps % batch_size = 0.",
-      blocking: true,
-    });
-  }
-
-  if (state.volEnabled && Number(state.clampMin) === 0 && Number(state.clampMax) === 0) {
-    issues.push({
-      level: "error",
-      message: "Vol target clamps are 0/0 — exposure will pin near zero.",
-      detail: "Use wider clamps such as min 0.25 / max 2.0.",
-      blocking: true,
-    });
-  }
-
-  if (state.mappingMode === "tanh_leverage" && Number(state.grossLevCap) <= 1.0) {
-    issues.push({
-      level: "error",
-      message: "tanh_leverage mapping works best with gross_leverage_cap > 1.0.",
-      detail: "Increase the leverage cap or switch mapping modes.",
-      blocking: true,
-    });
-  }
-
-  const blockingIssues = issues.filter((i) => i.level === "error" && i.blocking);
-
-  return {
-    issues,
-    blockingIssues,
-    split: splitSummary,
-    requiredBars: Math.max(0, lookback) + 2,
-    featureWarmup,
-  };
-};
-
-const levelColors: Record<ValidationLevel, string> = {
-  error: "text-red-600 dark:text-red-400",
-  warning: "text-amber-600 dark:text-amber-400",
-  info: "text-sky-600 dark:text-sky-400",
-};
-
-const statusColor = (validation: ValidationResult) => {
-  if (validation.blockingIssues.length > 0) return "text-red-600 dark:text-red-400";
-  if (validation.issues.some((issue) => issue.level === "warning")) return "text-amber-600 dark:text-amber-400";
-  return "text-emerald-600 dark:text-emerald-400";
-};
-
-const statusLabel = (validation: ValidationResult) => {
-  if (validation.blockingIssues.length > 0) return "Fix blocking issues";
-  if (validation.issues.some((issue) => issue.level === "warning")) return "Review warnings";
-  return "Ready to train";
-};
-
-function ValidationSummaryCard({ validation }: { validation: ValidationResult }) {
-  return (
-    <div className="rounded-md border border-border/60 bg-muted/40 p-4 space-y-3">
-      <div className="flex items-center justify-between gap-2 text-sm">
-        <div className="font-medium text-foreground">Configuration checks</div>
-        <span className={`text-xs font-semibold uppercase tracking-wide ${statusColor(validation)}`}>
-          {statusLabel(validation)}
-        </span>
-      </div>
-      {validation.split && (
-        <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
-          <div>
-            <span className="font-semibold text-foreground">Train</span>: {validation.split.train.start} → {validation.split.train.end}
-            {" "}({validation.split.train.calendarDays} days, ≈{validation.split.train.tradingBars} trading bars, ≈{validation.split.train.effectiveBars} usable)
-          </div>
-          <div>
-            <span className="font-semibold text-foreground">Eval</span>: {validation.split.eval.start} → {validation.split.eval.end}
-            {" "}({validation.split.eval.calendarDays} days, ≈{validation.split.eval.tradingBars} trading bars, ≈{validation.split.eval.effectiveBars} usable)
-          </div>
-          <div className="sm:col-span-2">
-            Minimum bars required by lookback: {validation.requiredBars}.
-            {" "}
-            {validation.featureWarmup > 0 && (
-              <span>
-                Warm-up estimate subtracts ≈{validation.featureWarmup} bars plus a small holiday buffer.
-              </span>
-            )}
-          </div>
-        </div>
-      )}
-      <div className="space-y-2">
-        {validation.issues.length === 0 && (
-          <div className="text-xs text-muted-foreground">
-            No issues detected. You're good to start training.
-          </div>
-        )}
-        {validation.issues.map((issue, idx) => (
-          <div key={idx} className={`text-sm leading-snug ${levelColors[issue.level]}`}>
-            <div>
-              <span className="font-medium capitalize">{issue.level}:</span> {issue.message}
-            </div>
-            {issue.detail && <div className="text-xs text-muted-foreground">{issue.detail}</div>}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+import ValidationSummaryCard from "./ValidationSummaryCard";
+import { computeValidation } from "./validation";
+import { TERMINAL_STATUSES, useTrainingRun } from "./useTrainingRun";
 
 export default function NewTraining({
   onJobCreated,
@@ -571,179 +137,23 @@ export default function NewTraining({
   const [isJsonEditing, setIsJsonEditing] = useState(false);
   const [jsonError, setJsonError] = useState<string | null>(null);
 
-  // ===== Run state =====
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [status, setStatus] = useState<JobStatusResponse | null>(null);
-  const [artifacts, setArtifacts] = useState<RunArtifacts | null>(null);
-  const [includeModel, setIncludeModel] = useState(true);
+  const {
+    jobId,
+    status,
+    artifacts,
+    progress,
+    setProgress,
+    beginRun,
+    reset,
+    cancelRun,
+    includeModel,
+    setIncludeModel,
+    isRunning,
+  } = useTrainingRun();
 
   // ===== Submit state =====
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
-  const [progress, setProgress] = useState<string | null>(null);
-  const toastRef = useRef<string | null>(null);
-  useEffect(() => {
-    return () => {
-      if (toastRef.current) {
-        toast.dismiss(toastRef.current);
-        toastRef.current = null;
-      }
-    };
-  }, []);
-
-  // Global toast: kick off when submitting and when job id is assigned
-  useEffect(() => {
-    if (progress && progress.toLowerCase().startsWith("submitting") && !toastRef.current) {
-      toastRef.current = toast.loading("Submitting training…", { duration: Infinity });
-    }
-  }, [progress]);
-
-  useEffect(() => {
-    if (jobId && !toastRef.current) {
-      toastRef.current = toast.loading(`Queued ${jobId}`, { duration: Infinity });
-    }
-  }, [jobId]);
-
-  // Global toast updates on status transitions
-  useEffect(() => {
-    if (!jobId || !status) return;
-    const st = status.status;
-    if (st === "RUNNING" && toastRef.current) {
-      toast.loading(`Training ${jobId} running…`, { id: toastRef.current, duration: Infinity });
-    }
-    if (["SUCCEEDED", "FAILED", "CANCELLED"].includes(st) && toastRef.current) {
-      if (st === "SUCCEEDED") {
-        toast.success(`Training ${jobId} completed`, { id: toastRef.current, duration: 4000 });
-      } else if (st === "FAILED") {
-        toast.error(`Training ${jobId} failed`, { id: toastRef.current, duration: 6000 });
-      } else {
-        toast(`Training ${jobId} cancelled`, { id: toastRef.current, duration: 4000 });
-      }
-      toastRef.current = null;
-    }
-  }, [status, jobId]);
-
-  const isRunning = useMemo(() => !!status && !TERMINAL.includes(status.status), [status]);
-
-  // Dismiss queue toast when job starts running
-  useEffect(() => {
-    if (!jobId || !status) return;
-    if (status.status === "RUNNING" && toastRef.current) {
-      toast.dismiss(toastRef.current);
-      toastRef.current = null;
-    }
-  }, [status, jobId]);
-
-  // ===== Poller =====
-  useEffect(() => {
-    if (!jobId) return;
-    let timer: any;
-    let delay = 5000;
-    let running = true;
-    let busy = false;
-    let es: EventSource | null = null;
-    let ws: WebSocket | null = null;
-
-    const schedule = (ms: number) => {
-      if (!running) return;
-      clearTimeout(timer);
-      timer = setTimeout(tick, ms);
-    };
-
-    const tick = async () => {
-      if (!running || busy) return schedule(delay);
-      busy = true;
-      try {
-        const { data: st } = await api.get<JobStatusResponse>(`/stockbot/runs/${jobId}`);
-        setStatus(st);
-        if (TERMINAL.includes(st.status)) {
-          setProgress(st.status === "SUCCEEDED" ? "Run complete." : `Run ${st.status.toLowerCase()}.`);
-          try {
-            const { data: a } = await api.get<RunArtifacts>(`/stockbot/runs/${jobId}/artifacts`);
-            setArtifacts(a);
-          } catch {}
-          running = false;
-          return;
-        }
-        delay = 5000;
-        schedule(delay);
-      } catch {
-        delay = Math.min(delay * 1.7, 60000);
-        schedule(delay);
-      } finally {
-        busy = false;
-      }
-    };
-
-    try {
-      // Prefer SSE first to avoid WS proxy issues (e.g., TLS terminators on port 5001)
-      const url = buildUrl(`/api/stockbot/runs/${jobId}/stream`);
-      es = new EventSource(url, { withCredentials: true });
-      es.onmessage = (ev) => {
-        try {
-          const st = JSON.parse(ev.data);
-          setStatus(st);
-          if (TERMINAL.includes(st.status)) {
-            setProgress(st.status === "SUCCEEDED" ? "Run complete." : `Run ${st.status.toLowerCase()}.`);
-            (async () => {
-              try {
-                const { data: a } = await api.get<RunArtifacts>(`/stockbot/runs/${jobId}/artifacts`);
-                setArtifacts(a);
-              } catch {}
-            })();
-            es && es.close();
-            running = false;
-          }
-        } catch {}
-      };
-      es.onerror = () => {
-        try { es && es.close(); } catch {}
-        // Optional WS fallback only when backend likely supports it (avoid :5001)
-        const wsUrl = buildUrl(`/api/stockbot/runs/${jobId}/ws`).replace(/^http/, "ws");
-        if (/:5001\//.test(wsUrl)) { schedule(0); return; }
-        try {
-          ws = new WebSocket(wsUrl);
-          ws.onmessage = (ev) => {
-            try {
-              const st = JSON.parse(ev.data);
-              setStatus(st);
-              if (TERMINAL.includes(st.status)) {
-                setProgress(st.status === "SUCCEEDED" ? "Run complete." : `Run ${st.status.toLowerCase()}.`);
-                (async () => {
-                  try {
-                    const { data: a } = await api.get<RunArtifacts>(`/stockbot/runs/${jobId}/artifacts`);
-                    setArtifacts(a);
-                  } catch {}
-                })();
-                try { ws && ws.close(); } catch {}
-                running = false;
-              }
-            } catch {}
-          };
-          ws.onerror = () => { try { ws && ws.close(); } catch {}; schedule(0); };
-        } catch { schedule(0); }
-      };
-    } catch { schedule(0); }
-
-    return () => {
-      running = false;
-      clearTimeout(timer);
-      try {
-        es && es.close();
-      } catch {}
-      try {
-        ws && ws.close();
-      } catch {}
-    };
-  }, [jobId]);
-
-  const cancelThisRun = async () => {
-    if (!jobId) return;
-    try {
-      await api.post(`/stockbot/runs/${jobId}/cancel`);
-      if (toastRef.current) toast(`Training ${jobId} cancelled`, { id: toastRef.current, duration: 4000 });
-    } catch {}
-  };
 
   const gatherState = useCallback(
     () => ({
@@ -1085,10 +495,8 @@ export default function NewTraining({
   const onSubmit = async () => {
     setSubmitting(true);
     setError(undefined);
+    reset();
     setProgress("Submitting…");
-    setArtifacts(null);
-    setStatus(null);
-    setJobId(null);
 
     // ---- Preflight guards ----
     if (validation.blockingIssues.length > 0) {
@@ -1110,10 +518,9 @@ export default function NewTraining({
 
       const { data: resp } = await api.post<{ job_id: string }>("/stockbot/train", payload);
       if (!resp?.job_id) throw new Error("No job_id returned");
-      setJobId(resp.job_id);
+      beginRun(resp.job_id);
       setProgress("Job started. Polling status…");
       addRecentRun({ id: resp.job_id, type: "train", status: "QUEUED", created_at: new Date().toISOString() });
-      if (toastRef.current) { toast.dismiss(toastRef.current); toastRef.current = null; }
       onJobCreated(resp.job_id);
     } catch (e: any) {
       setError(e?.message ?? String(e));
@@ -1133,7 +540,7 @@ export default function NewTraining({
           <Button
             variant="ghost"
             onClick={onCancel}
-            disabled={submitting && !TERMINAL.includes(status?.status as any)}
+            disabled={submitting && !TERMINAL_STATUSES.includes(status?.status as any)}
           >
             Cancel
           </Button>
@@ -1155,8 +562,8 @@ export default function NewTraining({
         <div className="rounded-md bg-muted p-3 text-sm space-y-2">
           <div className="flex items-center justify-between">
             <div className="font-medium">Status</div>
-            {status?.status && !TERMINAL.includes(status.status) && (
-              <Button size="sm" variant="outline" onClick={cancelThisRun}>
+            {status?.status && !TERMINAL_STATUSES.includes(status.status) && (
+              <Button size="sm" variant="outline" onClick={cancelRun}>
                 Cancel Run
               </Button>
             )}
@@ -1362,7 +769,7 @@ export default function NewTraining({
         />
       </Accordion>
 
-      {jobId && TERMINAL.includes(status?.status as any) && (
+      {jobId && TERMINAL_STATUSES.includes(status?.status as any) && (
         <DownloadsSection
           includeModel={includeModel}
           setIncludeModel={setIncludeModel}
