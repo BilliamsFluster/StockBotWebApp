@@ -14,7 +14,7 @@ import { formatPct, formatSigned } from "./lib/formats";
 import { Line, XAxis, YAxis, CartesianGrid, ReferenceLine, ReferenceDot } from "recharts";
 import { ChartTooltip, type ChartConfig } from "@/components/ui/chart";
 import { LineChart as MonitorLineChart } from "@/components/ui/line-chart";
-import type { TelemetryWorkerRequest, TelemetryWorkerResponse, TelemetryWorkerResult } from "@/workers/telemetryWorkerTypes";
+import type { ExpoPoint, PnlPoint, SlipPoint, TelemetryWorkerRequest, TelemetryWorkerResponse, TelemetryWorkerResult } from "@/workers/telemetryWorkerTypes";
 
 const MAX_LIVE_POINTS = 4000;
 const MAX_TERMINAL_POINTS = 4000;
