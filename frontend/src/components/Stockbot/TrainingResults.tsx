@@ -22,7 +22,6 @@ import { formatPct, formatSigned } from "./lib/formats";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   ResponsiveContainer,
-  LineChart,
   Line,
   XAxis,
   YAxis,
@@ -39,7 +38,9 @@ import {
   ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
+  type ChartConfig,
 } from "@/components/ui/chart";
+import { LineChart } from "@/components/ui/line-chart";
 
 type TBTags = { scalars: string[]; histograms: string[] };
 type TBPoint = { step: number; wall_time: number; value: number };
@@ -59,6 +60,8 @@ const statTriple = (arr: number[]) => {
   const q3 = s[Math.floor((s.length - 1) * 3 / 4)];
   return { median, q1, q3 };
 };
+
+const OVERLAY_COLORS = ["#2563eb", "#16a34a", "#ef4444", "#f59e0b"] as const;
 
 // Lazily load heavy Plotly component with retry to avoid transient ChunkLoadError during dev/HMR
 // and when using HTTPS + proxies. Falls back to a tiny loading stub.
@@ -593,6 +596,16 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
       return dataFull.slice(Math.max(0, a), Math.min(dataFull.length - 1, b) + 1);
     }, [dataFull, timeRange]);
     const [hover, setHover] = useState<{ step: number; value: number; time: number } | null>(null);
+    const chartConfig = useMemo(
+      () =>
+        ({
+          value: {
+            label: title,
+            color: color || "hsl(var(--chart-1))",
+          },
+        }) satisfies ChartConfig,
+      [color, title]
+    );
 
     useEffect(() => {
       if (data.length) {
@@ -607,26 +620,41 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
       <Card className="p-4 space-y-2">
         <TooltipLabel className="font-semibold" tooltip={tip || title}>{title}</TooltipLabel>
         <div className="h-56">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart
-              data={data}
-              onMouseMove={(st: any) => {
-                const p = st?.activePayload?.[0]?.payload;
-                if (p) setHover({ step: p.step, value: p.value, time: p.wall_time });
-              }}
-              onMouseLeave={() => {
-                if (data.length) {
-                  const last = data[data.length - 1];
-                  setHover({ step: last.step, value: last.value, time: last.wall_time });
-                }
-              }}
-            >
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="step" tickFormatter={fmtStep} />
-              <YAxis allowDecimals tickFormatter={(v: any) => String(v)} />
-              <Line type="monotone" dataKey="value" stroke={color || "#8884d8"} dot={false} isAnimationActive={false} />
-            </LineChart>
-          </ResponsiveContainer>
+          <LineChart
+            data={data}
+            config={chartConfig}
+            height="100%"
+            onMouseMove={(st: any) => {
+              const p = st?.activePayload?.[0]?.payload;
+              if (p) setHover({ step: p.step, value: p.value, time: p.wall_time });
+            }}
+            onMouseLeave={() => {
+              if (data.length) {
+                const last = data[data.length - 1];
+                setHover({ step: last.step, value: last.value, time: last.wall_time });
+              }
+            }}
+          >
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="step" tickFormatter={fmtStep} />
+            <YAxis allowDecimals tickFormatter={(v: any) => String(v)} />
+            <ChartTooltip
+              cursor={false}
+              content={
+                <ChartTooltipContent
+                  labelFormatter={(label) => `step ${label}`}
+                  formatter={(value) => fmtVal(Number(value))}
+                />
+              }
+            />
+            <Line
+              type="monotone"
+              dataKey="value"
+              stroke="var(--color-value)"
+              dot={false}
+              isAnimationActive={false}
+            />
+          </LineChart>
         </div>
         {hover && (
           <div className="text-xs font-mono flex justify-between">
@@ -747,6 +775,62 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
       setTimeRange(null);
     }
   };
+
+  const overviewEquityConfig = useMemo(
+    () =>
+      ({
+        equity: {
+          label: "Equity",
+          color: "#10b981",
+        },
+      }) satisfies ChartConfig,
+    []
+  );
+
+  const perfEquityConfig = useMemo(
+    () =>
+      ({
+        equity: {
+          label: "Equity",
+          color: "#10b981",
+        },
+      }) satisfies ChartConfig,
+    []
+  );
+
+  const seedEntropyConfig = useMemo(
+    () =>
+      ({
+        median: {
+          label: "Entropy (median)",
+          color: "#3b82f6",
+        },
+        q1: {
+          label: "Entropy (Q1)",
+          color: "#94a3b8",
+        },
+        q3: {
+          label: "Entropy (Q3)",
+          color: "#94a3b8",
+        },
+      }) satisfies ChartConfig,
+    []
+  );
+
+  const artifactEquityConfig = useMemo(
+    () =>
+      ({
+        equity: {
+          label: "Equity (Base=100)",
+          color: "hsl(var(--chart-1))",
+        },
+        dd: {
+          label: "Drawdown (%)",
+          color: "hsl(var(--chart-2))",
+        },
+      }) satisfies ChartConfig,
+    []
+  );
 
   // Decimation: LTTB for smoother big charts in terminal view
   function lttb<T>(data: T[], threshold: number, getX: (p: T) => number, getY: (p: T) => number): T[] {
@@ -948,18 +1032,39 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="h-24">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={filteredEquity}>
-                          <XAxis dataKey="step" hide />
-                          <YAxis hide />
-                          <Tooltip formatter={(v:any)=>fmtVal(Number(v))} />
-                          <Line type="monotone" dataKey="equity" stroke="#10b981" dot={false} isAnimationActive={false} />
-                          <Brush dataKey="step" onChange={handleBrush} height={10} />
-                          {overlayEquityKeys.map((id, i) => (
-                            <Line key={id} type="monotone" dataKey="equity" data={compareEquity[id]} stroke={["#2563eb","#16a34a","#ef4444","#f59e0b"][i%4]} dot={false} isAnimationActive={false} />
-                          ))}
-                        </LineChart>
-                      </ResponsiveContainer>
+                      <LineChart data={filteredEquity} config={overviewEquityConfig} height="100%">
+                        <XAxis dataKey="step" hide />
+                        <YAxis hide />
+                        <ChartTooltip
+                          content={
+                            <ChartTooltipContent
+                              labelFormatter={(label) => `step ${label}`}
+                              formatter={(value) => fmtVal(Number(value))}
+                            />
+                          }
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="equity"
+                          name="Equity"
+                          stroke="var(--color-equity)"
+                          dot={false}
+                          isAnimationActive={false}
+                        />
+                        <Brush dataKey="step" onChange={handleBrush} height={10} />
+                        {overlayEquityKeys.map((id, i) => (
+                          <Line
+                            key={id}
+                            type="monotone"
+                            dataKey="equity"
+                            data={compareEquity[id]}
+                            name={id}
+                            stroke={OVERLAY_COLORS[i % OVERLAY_COLORS.length]}
+                            dot={false}
+                            isAnimationActive={false}
+                          />
+                        ))}
+                      </LineChart>
                     </div>
                     <div className="h-24">
                       <ResponsiveContainer width="100%" height="100%">
@@ -997,18 +1102,39 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
                   <TooltipLabel className="font-semibold" tooltip="Net-of-cost equity curve and drawdown.">Net Performance</TooltipLabel>
                   <div className="grid gap-6" style={{ gridTemplateColumns: perfCols === 2 ? 'repeat(2, minmax(0, 1fr))' : 'repeat(1, minmax(0, 1fr))' }}>
                     <div className="h-56">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={perfEquityD}>
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="step" tickFormatter={fmtStep} />
-                          <YAxis tickFormatter={(v: any) => String(v)} />
-                          <Tooltip labelFormatter={(l) => `step ${l}`} formatter={(v: any) => fmtVal(Number(v))} />
-                          <Line type="monotone" dataKey="equity" stroke="#10b981" dot={false} isAnimationActive={false} />
-                          {overlayEquityKeys.map((id, i) => (
-                            <Line key={id} type="monotone" dataKey={`r_${i}` as any} data={compareEquity[id]} stroke={["#2563eb","#16a34a","#ef4444","#f59e0b"][i%4]} dot={false} isAnimationActive={false} />
-                          ))}
-                        </LineChart>
-                      </ResponsiveContainer>
+                      <LineChart data={perfEquityD} config={perfEquityConfig} height="100%">
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="step" tickFormatter={fmtStep} />
+                        <YAxis tickFormatter={(v: any) => String(v)} />
+                        <ChartTooltip
+                          content={
+                            <ChartTooltipContent
+                              labelFormatter={(label) => `step ${label}`}
+                              formatter={(value) => fmtVal(Number(value))}
+                            />
+                          }
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="equity"
+                          name="Equity"
+                          stroke="var(--color-equity)"
+                          dot={false}
+                          isAnimationActive={false}
+                        />
+                        {overlayEquityKeys.map((id, i) => (
+                          <Line
+                            key={id}
+                            type="monotone"
+                            dataKey="equity"
+                            data={compareEquity[id]}
+                            name={id}
+                            stroke={OVERLAY_COLORS[i % OVERLAY_COLORS.length]}
+                            dot={false}
+                            isAnimationActive={false}
+                          />
+                        ))}
+                      </LineChart>
                     </div>
                     <div className="h-56">
                       <ResponsiveContainer width="100%" height="100%">
@@ -1145,17 +1271,32 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
                         )}
                         {seedAgg.entropy && (
                           <div className="h-56">
-                            <ResponsiveContainer width="100%" height="100%">
-                              <LineChart data={seedAgg.entropy}>
-                                <CartesianGrid strokeDasharray="3 3" />
-                                <XAxis dataKey="step" tickFormatter={fmtStep} />
-                                <YAxis />
-                                <Tooltip labelFormatter={(l)=>`step ${l}`} formatter={(v:any)=>fmtVal(Number(v))} />
-                                <Line dataKey="median" stroke="#3b82f6" dot={false} />
-                                <Line dataKey="q1" stroke="#94a3b8" dot={false} strokeDasharray="4 4" />
-                                <Line dataKey="q3" stroke="#94a3b8" dot={false} strokeDasharray="4 4" />
-                              </LineChart>
-                            </ResponsiveContainer>
+                            <LineChart data={seedAgg.entropy} config={seedEntropyConfig} height="100%">
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis dataKey="step" tickFormatter={fmtStep} />
+                              <YAxis />
+                              <ChartTooltip
+                                content={
+                                  <ChartTooltipContent
+                                    labelFormatter={(label) => `step ${label}`}
+                                    formatter={(value) => fmtVal(Number(value))}
+                                  />
+                                }
+                              />
+                              <Line dataKey="median" stroke="var(--color-median)" dot={false} />
+                              <Line
+                                dataKey="q1"
+                                stroke="var(--color-q1)"
+                                dot={false}
+                                strokeDasharray="4 4"
+                              />
+                              <Line
+                                dataKey="q3"
+                                stroke="var(--color-q3)"
+                                dot={false}
+                                strokeDasharray="4 4"
+                              />
+                            </LineChart>
                           </div>
                         )}
                         {seedAgg.actionHist && (
@@ -1274,20 +1415,20 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
                     <div className="grid md:grid-cols-2 gap-4">
                       <div className="rounded-lg border p-3">
                         <div className="text-sm font-medium mb-2">Equity & Drawdown</div>
-                        <ChartContainer
-                          config={{ equity: { label: "Equity (Base=100)", color: "hsl(var(--chart-1))" }, dd: { label: "Drawdown (%)", color: "hsl(var(--chart-2))" } }}
+                        <LineChart
+                          data={equity.map((e, i) => ({ step: e.step, equity: e.equity, dd: drawdown[i]?.dd ?? 0 }))}
+                          config={artifactEquityConfig}
+                          height={220}
                           className="h-[220px]"
                         >
-                          <LineChart data={equity.map((e, i) => ({ step: e.step, equity: e.equity, dd: drawdown[i]?.dd ?? 0 }))}>
-                            <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="step" />
-                            <YAxis yAxisId="left" tickFormatter={(v: any) => String(v)} />
-                            <YAxis yAxisId="right" orientation="right" tickFormatter={(v: any) => `${v}%`} domain={["auto", 0]} />
-                            <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
-                            <Line yAxisId="left" dataKey="equity" type="monotone" stroke="var(--color-equity)" dot={false} />
-                            <Line yAxisId="right" dataKey="dd" type="monotone" stroke="var(--color-dd)" dot={false} />
-                          </LineChart>
-                        </ChartContainer>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="step" />
+                          <YAxis yAxisId="left" tickFormatter={(v: any) => String(v)} />
+                          <YAxis yAxisId="right" orientation="right" tickFormatter={(v: any) => `${v}%`} domain={["auto", 0]} />
+                          <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+                          <Line yAxisId="left" dataKey="equity" type="monotone" stroke="var(--color-equity)" dot={false} />
+                          <Line yAxisId="right" dataKey="dd" type="monotone" stroke="var(--color-dd)" dot={false} />
+                        </LineChart>
                       </div>
                       <div className="rounded-lg border p-3">
                         <div className="text-sm font-medium mb-2">Turnover & Leverage</div>
@@ -1422,15 +1563,26 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="h-24">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={filteredEquity}>
-                  <XAxis dataKey="step" hide />
-                  <YAxis hide />
-                  <Tooltip formatter={(v:any)=>fmtVal(Number(v))} />
-                  <Line type="monotone" dataKey="equity" stroke="#10b981" dot={false} isAnimationActive={false} />
-                  <Brush dataKey="step" onChange={handleBrush} height={10} />
-                </LineChart>
-              </ResponsiveContainer>
+              <LineChart data={filteredEquity} config={overviewEquityConfig} height="100%">
+                <XAxis dataKey="step" hide />
+                <YAxis hide />
+                <ChartTooltip
+                  content={
+                    <ChartTooltipContent
+                      labelFormatter={(label) => `step ${label}`}
+                      formatter={(value) => fmtVal(Number(value))}
+                    />
+                  }
+                />
+                <Line
+                  type="monotone"
+                  dataKey="equity"
+                  stroke="var(--color-equity)"
+                  dot={false}
+                  isAnimationActive={false}
+                />
+                <Brush dataKey="step" onChange={handleBrush} height={10} />
+              </LineChart>
             </div>
             <div className="h-24">
               <ResponsiveContainer width="100%" height="100%">
@@ -1452,15 +1604,26 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
           </TooltipLabel>
           <div className="grid lg:grid-cols-2 gap-6">
             <div className="h-56">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={filteredEquity}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="step" tickFormatter={fmtStep} />
-                  <YAxis tickFormatter={(v: any) => String(v)} />
-                  <Tooltip labelFormatter={(l) => `step ${l}`} formatter={(v: any) => fmtVal(Number(v))} />
-                  <Line type="monotone" dataKey="equity" stroke="#10b981" dot={false} isAnimationActive={false} />
-                </LineChart>
-              </ResponsiveContainer>
+              <LineChart data={filteredEquity} config={perfEquityConfig} height="100%">
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="step" tickFormatter={fmtStep} />
+                <YAxis tickFormatter={(v: any) => String(v)} />
+                <ChartTooltip
+                  content={
+                    <ChartTooltipContent
+                      labelFormatter={(label) => `step ${label}`}
+                      formatter={(value) => fmtVal(Number(value))}
+                    />
+                  }
+                />
+                <Line
+                  type="monotone"
+                  dataKey="equity"
+                  stroke="var(--color-equity)"
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              </LineChart>
             </div>
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
@@ -1527,17 +1690,32 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
             )}
             {seedAgg.entropy && (
               <div className="h-56">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={seedAgg.entropy}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="step" tickFormatter={fmtStep} />
-                    <YAxis />
-                    <Tooltip labelFormatter={(l)=>`step ${l}`} formatter={(v:any)=>fmtVal(Number(v))} />
-                    <Line dataKey="median" stroke="#3b82f6" dot={false} />
-                    <Line dataKey="q1" stroke="#94a3b8" dot={false} strokeDasharray="4 4" />
-                    <Line dataKey="q3" stroke="#94a3b8" dot={false} strokeDasharray="4 4" />
-                  </LineChart>
-                </ResponsiveContainer>
+                <LineChart data={seedAgg.entropy} config={seedEntropyConfig} height="100%">
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="step" tickFormatter={fmtStep} />
+                  <YAxis />
+                  <ChartTooltip
+                    content={
+                      <ChartTooltipContent
+                        labelFormatter={(label) => `step ${label}`}
+                        formatter={(value) => fmtVal(Number(value))}
+                      />
+                    }
+                  />
+                  <Line dataKey="median" stroke="var(--color-median)" dot={false} />
+                  <Line
+                    dataKey="q1"
+                    stroke="var(--color-q1)"
+                    dot={false}
+                    strokeDasharray="4 4"
+                  />
+                  <Line
+                    dataKey="q3"
+                    stroke="var(--color-q3)"
+                    dot={false}
+                    strokeDasharray="4 4"
+                  />
+                </LineChart>
               </div>
             )}
             {seedAgg.actionHist && (
@@ -1767,20 +1945,20 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
               <div className="grid md:grid-cols-2 gap-4">
                 <div className="rounded-lg border p-3">
                   <div className="text-sm font-medium mb-2">Equity & Drawdown</div>
-                  <ChartContainer
-                    config={{ equity: { label: "Equity (Base=100)", color: "hsl(var(--chart-1))" }, dd: { label: "Drawdown (%)", color: "hsl(var(--chart-2))" } }}
+                  <LineChart
+                    data={equity.map((e, i) => ({ step: e.step, equity: e.equity, dd: drawdown[i]?.dd ?? 0 }))}
+                    config={artifactEquityConfig}
+                    height={220}
                     className="h-[220px]"
                   >
-                    <LineChart data={equity.map((e, i) => ({ step: e.step, equity: e.equity, dd: drawdown[i]?.dd ?? 0 }))}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="step" />
-                      <YAxis yAxisId="left" tickFormatter={(v: any) => String(v)} />
-                      <YAxis yAxisId="right" orientation="right" tickFormatter={(v: any) => `${v}%`} domain={["auto", 0]} />
-                      <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
-                      <Line yAxisId="left" dataKey="equity" type="monotone" stroke="var(--color-equity)" dot={false} />
-                      <Line yAxisId="right" dataKey="dd" type="monotone" stroke="var(--color-dd)" dot={false} />
-                    </LineChart>
-                  </ChartContainer>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="step" />
+                    <YAxis yAxisId="left" tickFormatter={(v: any) => String(v)} />
+                    <YAxis yAxisId="right" orientation="right" tickFormatter={(v: any) => `${v}%`} domain={["auto", 0]} />
+                    <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+                    <Line yAxisId="left" dataKey="equity" type="monotone" stroke="var(--color-equity)" dot={false} />
+                    <Line yAxisId="right" dataKey="dd" type="monotone" stroke="var(--color-dd)" dot={false} />
+                  </LineChart>
                 </div>
                 <div className="rounded-lg border p-3">
                   <div className="text-sm font-medium mb-2">Turnover & Leverage</div>
