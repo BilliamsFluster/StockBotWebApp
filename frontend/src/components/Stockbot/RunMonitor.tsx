@@ -336,6 +336,23 @@ export default function RunMonitor({ runId }: { runId: string }) {
       if (!runId) return;
       if (fullSnapshotLoadingRef.current) return;
       if (!opts?.force && fullSnapshotLoadedRef.current) return;
+
+      const totalHint = Number.isFinite(opts?.totalHint ?? NaN) ? Number(opts?.totalHint) : null;
+      const preflightTooManyLines = totalHint != null && totalHint > MAX_SNAPSHOT_LINES;
+      if (preflightTooManyLines) {
+        const parts: string[] = [];
+        parts.push(`${totalHint.toLocaleString()} bars`);
+        const prefix = opts?.manual
+          ? 'Unable to load full telemetry snapshot'
+          : 'Skipped loading full telemetry snapshot';
+        setTelemetryNotice({
+          severity: 'warning',
+          message: `${prefix} because it exceeds the safe limit (${parts.join(' / ')}). Download the raw live_telemetry.jsonl file instead.`,
+        });
+        fullSnapshotLoadingRef.current = false;
+        setFullSnapshotLoading(false);
+        return;
+      }
       fullSnapshotLoadingRef.current = true;
       setFullSnapshotLoading(true);
       try {
@@ -348,7 +365,6 @@ export default function RunMonitor({ runId }: { runId: string }) {
           });
           return;
         }
-        const totalHint = Number.isFinite(opts?.totalHint ?? NaN) ? Number(opts?.totalHint) : null;
         const contentLengthHeader = resp.headers.get('content-length');
         const contentLength = contentLengthHeader ? Number.parseInt(contentLengthHeader, 10) : NaN;
         const tooManyLines = totalHint != null && totalHint > MAX_SNAPSHOT_LINES;
