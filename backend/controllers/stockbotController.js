@@ -514,6 +514,35 @@ export async function getRunTelemetryTailProxy(req, res) {
   }
 }
 
+export async function getRunTelemetryChunkProxy(req, res) {
+  const rawLimit = Array.isArray(req.query?.limit) ? req.query.limit[0] : req.query?.limit;
+  let limit = Number.parseInt(rawLimit ?? "", 10);
+  if (!Number.isFinite(limit)) limit = 1000;
+  if (limit <= 0) limit = 1;
+  if (limit > 5000) limit = 5000;
+
+  const params = { limit };
+  const rawCursor = Array.isArray(req.query?.cursor) ? req.query.cursor[0] : req.query?.cursor;
+  if (typeof rawCursor === "string" && rawCursor.length > 0) {
+    params.cursor = rawCursor;
+  }
+
+  try {
+    const { data } = await stockbotRequest({
+      method: "get",
+      url: `/api/stockbot/runs/${encodeURIComponent(req.params.id)}/telemetry/chunk`,
+      params,
+    }, { retries: 2 });
+    return res.json(data);
+  } catch (e) {
+    if (axios.isAxiosError(e)) {
+      const { status, body } = safeErrorBody(e, e.response?.status ?? 502);
+      return res.status(status).json(body);
+    }
+    return res.status(500).json({ error: errMsg(e) });
+  }
+}
+
 /** GET /api/stockbot/runs/:id/files/:name -> stream file */
 export async function getRunArtifactFileProxy(req, res) {
   try {

@@ -16,7 +16,7 @@ import shutil
 import json
 
 from fastapi import BackgroundTasks, HTTPException, UploadFile, File
-from fastapi.responses import JSONResponse, FileResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi import Request
 from pydantic import BaseModel, Field
 
@@ -48,6 +48,20 @@ def _resolve_under_project(path: str | Path) -> Path:
     if not p.is_absolute():
         p = (PROJECT_ROOT / p).resolve()
     return p
+
+
+def _iter_file_bytes(path: Path, chunk_size: int = 1024 * 1024):
+    """Yield chunks from *path* without loading the whole file into memory."""
+
+    def _gen():
+        with path.open("rb") as fh:
+            while True:
+                chunk = fh.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+
+    return _gen()
 
 # Allow-list server-write roots (optional but recommended)
 ALLOWED_OUTPUT_ROOTS: List[Path] = [RUNS_DIR]
@@ -850,6 +864,89 @@ def get_telemetry_tail(run_id: str, limit: int = 4000):
         "has_more": total > len(items),
     })
 
+
+def get_telemetry_chunk(run_id: str, cursor: int | None = None, limit: int = 1000):
+    r = RUN_MANAGER.get(run_id)
+    rel = SAFE_NAME_MAP.get("live_telemetry")
+    if not rel:
+        raise HTTPException(status_code=404, detail="Telemetry mapping missing")
+
+    path = Path(r.out_dir) / rel
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Telemetry file not found")
+
+    try:
+        limit = int(limit)
+    except Exception:
+        limit = 1000
+    if limit <= 0:
+        limit = 1
+    limit = min(limit, 5000)
+
+    try:
+        file_size = path.stat().st_size
+    except Exception:
+        file_size = None
+
+    cursor_val = 0
+    if cursor is not None:
+        try:
+            cursor_val = int(cursor)
+        except Exception:
+            cursor_val = 0
+    if file_size is not None and cursor_val > file_size:
+        cursor_val = file_size
+    if cursor_val < 0:
+        if file_size is not None:
+            cursor_val = max(file_size + cursor_val, 0)
+        else:
+            cursor_val = 0
+
+    items: list[Any] = []
+    start_cursor = 0
+    next_cursor = cursor_val
+    eof_reached = False
+
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as fh:
+            if cursor_val > 0:
+                try:
+                    fh.seek(cursor_val)
+                except OSError:
+                    fh.seek(0)
+                # Align to the next full line to avoid returning partial JSON
+                fh.readline()
+            start_cursor = fh.tell()
+            while len(items) < limit:
+                line = fh.readline()
+                if not line:
+                    eof_reached = True
+                    break
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    obj = json.loads(stripped)
+                except Exception:
+                    obj = {"raw": stripped}
+                items.append(obj)
+            next_cursor = fh.tell()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read telemetry chunk: {exc}")
+
+    has_more = not eof_reached and len(items) >= limit
+    if not has_more and file_size is not None and next_cursor < file_size:
+        has_more = True
+
+    payload = {
+        "items": items,
+        "cursor": start_cursor,
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "file_size": file_size,
+    }
+    return JSONResponse(payload)
+
 def get_artifact_file(run_id: str, name: str):
     r = RUN_MANAGER.get(run_id)
     rel = SAFE_NAME_MAP.get(name)
@@ -864,12 +961,11 @@ def get_artifact_file(run_id: str, name: str):
     LIVE_TEXT_NAMES = {"live_telemetry", "live_events", "live_rollups", "live_audit", "job_log"}
     if name in LIVE_TEXT_NAMES:
         try:
-            # Read a snapshot at request time; clients poll and diff/tail as needed
-            txt = path.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            txt = ""
-        # NDJSON / log text — serve as plain text to avoid strict JSON parsing at proxies
-        return PlainTextResponse(txt)
+            iterator = _iter_file_bytes(path)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to stream file: {exc}")
+        # NDJSON / log text — stream as plain text so callers can incrementally consume it
+        return StreamingResponse(iterator, media_type="text/plain; charset=utf-8")
     return FileResponse(str(path), filename=path.name)
 
 # Cancel a running job by pid
