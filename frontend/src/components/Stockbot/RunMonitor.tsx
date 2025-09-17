@@ -10,7 +10,9 @@ import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@
 import api, { buildUrl } from "@/api/client";
 import { askJarvisLite, fetchAvailableModels } from "@/api/jarvisApi";
 import { formatPct, formatSigned } from "./lib/formats";
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, ReferenceLine, ReferenceDot, Tooltip } from "recharts";
+import { Line, XAxis, YAxis, CartesianGrid, ReferenceLine, ReferenceDot } from "recharts";
+import { ChartTooltip, type ChartConfig } from "@/components/ui/chart";
+import { LineChart as MonitorLineChart } from "@/components/ui/line-chart";
 import type { TelemetryWorkerRequest, TelemetryWorkerResponse, TelemetryWorkerResult } from "@/workers/telemetryWorkerTypes";
 
 const MAX_LIVE_POINTS = 4000;
@@ -20,6 +22,20 @@ const TELEMETRY_TAIL_LIMIT = 4000;
 
 type TelemetryBar = any;
 type TelemetryEvent = any;
+
+const pnlChartConfig: ChartConfig = {
+  cum: { label: "Cum P&L (%)", color: "#2563eb" },
+  dd: { label: "Drawdown", color: "#ef4444" },
+};
+
+const expoChartConfig: ChartConfig = {
+  gross: { label: "Gross Lev", color: "#16a34a" },
+};
+
+const slipChartConfig: ChartConfig = {
+  slip: { label: "Slippage (bps)", color: "#a855f7" },
+  to: { label: "Turnover (%)", color: "#f59e0b" },
+};
 
 export default function RunMonitor({ runId }: { runId: string }) {
   const [last, setLast] = useState<TelemetryBar | null>(null);
@@ -1011,27 +1027,29 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
             </span>
           </div>
           <div className="h-48">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={pnlD} syncId="runSync"
-                onMouseMove={(st:any)=>{ if (st && st.activeLabel != null) setHoverTs(Number(st.activeLabel)); }}
-                onMouseLeave={()=> { setHoverTs(null); }}
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleDateString([], { year: '2-digit', month: 'short', day: '2-digit' })} />
-                <YAxis yAxisId="left" domain={pnlCumDomain as any} tickFormatter={(v) => formatPct(Number(v))} />
-                <YAxis yAxisId="right" orientation="right" domain={pnlDdDomain as any} tickFormatter={(v) => formatPct(Number(v))} />
-                <Tooltip content={() => null} wrapperStyle={{ display: 'none' }} cursor={false} />
-                {hoverTs != null && hoverPNLPt && (
-                  <>
-                    <ReferenceLine x={hoverTs} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
-                    {showSeries.pnl && (<ReferenceDot x={hoverTs} yAxisId="left" y={hoverPNLPt.cum} r={5} fill="#2563eb" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
-                    {showSeries.dd && (<ReferenceDot x={hoverTs} yAxisId="right" y={hoverPNLPt.dd} r={5} fill="#ef4444" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
-                  </>
-                )}
-                {showSeries.pnl && <Line yAxisId="left" type="monotone" dataKey="cum" stroke="#2563eb" strokeWidth={1.2} strokeOpacity={0.9} dot={false} isAnimationActive={false} name="Cum P&L (%)" />}
-                {showSeries.dd && <Line yAxisId="right" type="monotone" dataKey="dd" stroke="#ef4444" strokeWidth={1.2} strokeOpacity={0.9} dot={false} isAnimationActive={false} name="Drawdown" />}
-              </LineChart>
-            </ResponsiveContainer>
+            <MonitorLineChart
+              data={pnlD}
+              syncId="runSync"
+              onMouseMove={(st:any)=>{ if (st && st.activeLabel != null) setHoverTs(Number(st.activeLabel)); }}
+              onMouseLeave={()=> { setHoverTs(null); }}
+              config={pnlChartConfig}
+              height="100%"
+            >
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleDateString([], { year: '2-digit', month: 'short', day: '2-digit' })} />
+              <YAxis yAxisId="left" domain={pnlCumDomain as any} tickFormatter={(v) => formatPct(Number(v))} />
+              <YAxis yAxisId="right" orientation="right" domain={pnlDdDomain as any} tickFormatter={(v) => formatPct(Number(v))} />
+              <ChartTooltip content={() => null} wrapperStyle={{ display: 'none' }} cursor={false} />
+              {hoverTs != null && hoverPNLPt && (
+                <>
+                  <ReferenceLine x={hoverTs} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
+                  {showSeries.pnl && (<ReferenceDot x={hoverTs} yAxisId="left" y={hoverPNLPt.cum} r={5} fill="var(--color-cum)" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
+                  {showSeries.dd && (<ReferenceDot x={hoverTs} yAxisId="right" y={hoverPNLPt.dd} r={5} fill="var(--color-dd)" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
+                </>
+              )}
+              {showSeries.pnl && <Line yAxisId="left" type="monotone" dataKey="cum" stroke="var(--color-cum)" strokeWidth={1.2} strokeOpacity={0.9} dot={false} isAnimationActive={false} name="Cum P&L (%)" />}
+              {showSeries.dd && <Line yAxisId="right" type="monotone" dataKey="dd" stroke="var(--color-dd)" strokeWidth={1.2} strokeOpacity={0.9} dot={false} isAnimationActive={false} name="Drawdown" />}
+            </MonitorLineChart>
           </div>
         </Card>
 
@@ -1046,24 +1064,26 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
             </span>
           </div>
           <div className="h-48">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={expoD} syncId="runSync"
-                onMouseMove={(st:any)=>{ if (st && st.activeLabel != null) setHoverTs(Number(st.activeLabel)); }}
-                onMouseLeave={()=> { setHoverTs(null); }}
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleDateString([], { year: '2-digit', month: 'short', day: '2-digit' })} />
-                <YAxis domain={expoDomain as any} tickFormatter={(v) => formatSigned(Number(v))} />
-                <Tooltip content={() => null} wrapperStyle={{ display: 'none' }} cursor={false} />
-                {hoverTs != null && hoverExpoPt && (
-                  <>
-                    <ReferenceLine x={hoverTs} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
-                    {showSeries.gross && (<ReferenceDot x={hoverTs} y={hoverExpoPt.gross} r={5} fill="#16a34a" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
-                  </>
-                )}
-                {showSeries.gross && <Line type="monotone" dataKey="gross" stroke="#16a34a" strokeWidth={1.2} strokeOpacity={0.9} dot={false} isAnimationActive={false} name="Gross Lev" />}
-              </LineChart>
-            </ResponsiveContainer>
+            <MonitorLineChart
+              data={expoD}
+              syncId="runSync"
+              onMouseMove={(st:any)=>{ if (st && st.activeLabel != null) setHoverTs(Number(st.activeLabel)); }}
+              onMouseLeave={()=> { setHoverTs(null); }}
+              config={expoChartConfig}
+              height="100%"
+            >
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleDateString([], { year: '2-digit', month: 'short', day: '2-digit' })} />
+              <YAxis domain={expoDomain as any} tickFormatter={(v) => formatSigned(Number(v))} />
+              <ChartTooltip content={() => null} wrapperStyle={{ display: 'none' }} cursor={false} />
+              {hoverTs != null && hoverExpoPt && (
+                <>
+                  <ReferenceLine x={hoverTs} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
+                  {showSeries.gross && (<ReferenceDot x={hoverTs} y={hoverExpoPt.gross} r={5} fill="var(--color-gross)" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
+                </>
+              )}
+              {showSeries.gross && <Line type="monotone" dataKey="gross" stroke="var(--color-gross)" strokeWidth={1.2} strokeOpacity={0.9} dot={false} isAnimationActive={false} name="Gross Lev" />}
+            </MonitorLineChart>
           </div>
         </Card>
 
@@ -1083,27 +1103,29 @@ Data follows as labeled JSON/CSV snippets (trimmed).`;
             </span>
           </div>
           <div className="h-48">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={slipD} syncId="runSync"
-                onMouseMove={(st:any)=>{ if (st && st.activeLabel != null) setHoverTs(Number(st.activeLabel)); }}
-                onMouseLeave={()=> { setHoverTs(null); }}
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleDateString([], { year: '2-digit', month: 'short', day: '2-digit' })} />
-                <YAxis yAxisId="left" domain={slipDomain as any} tickFormatter={(v) => `${Number(v).toFixed(1)} bps`} />
-                <YAxis yAxisId="right" orientation="right" domain={toDomain as any} tickFormatter={(v) => formatPct(Number(v)/100)} />
-                <Tooltip content={() => null} wrapperStyle={{ display: 'none' }} cursor={false} />
-                {hoverTs != null && hoverSlipPt && (
-                  <>
-                    <ReferenceLine x={hoverTs} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
-                    {showSeries.slip && (<ReferenceDot x={hoverTs} yAxisId="left" y={hoverSlipPt.slip} r={5} fill="#a855f7" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
-                    {showSeries.to && (<ReferenceDot x={hoverTs} yAxisId="right" y={hoverSlipPt.to} r={5} fill="#f59e0b" stroke="#111827" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
-                  </>
-                )}
-                {showSeries.slip && <Line yAxisId="left" type="monotone" dataKey="slip" stroke="#a855f7" strokeWidth={1.2} strokeOpacity={0.85} dot={false} isAnimationActive={false} name="Slippage (bps)" />}
-                {showSeries.to && <Line yAxisId="right" type="monotone" dataKey="to" stroke="#f59e0b" strokeWidth={1.2} strokeOpacity={0.85} dot={false} isAnimationActive={false} name="Turnover (%)" />}
-              </LineChart>
-            </ResponsiveContainer>
+            <MonitorLineChart
+              data={slipD}
+              syncId="runSync"
+              onMouseMove={(st:any)=>{ if (st && st.activeLabel != null) setHoverTs(Number(st.activeLabel)); }}
+              onMouseLeave={()=> { setHoverTs(null); }}
+              config={slipChartConfig}
+              height="100%"
+            >
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="t" type="number" domain={[tMin as any, tMax as any]} tickFormatter={(v) => new Date(Number(v)).toLocaleDateString([], { year: '2-digit', month: 'short', day: '2-digit' })} />
+              <YAxis yAxisId="left" domain={slipDomain as any} tickFormatter={(v) => `${Number(v).toFixed(1)} bps`} />
+              <YAxis yAxisId="right" orientation="right" domain={toDomain as any} tickFormatter={(v) => formatPct(Number(v)/100)} />
+              <ChartTooltip content={() => null} wrapperStyle={{ display: 'none' }} cursor={false} />
+              {hoverTs != null && hoverSlipPt && (
+                <>
+                  <ReferenceLine x={hoverTs} stroke="#9aa0a6" strokeDasharray="3 3" ifOverflow="extendDomain" isFront />
+                  {showSeries.slip && (<ReferenceDot x={hoverTs} yAxisId="left" y={hoverSlipPt.slip} r={5} fill="var(--color-slip)" stroke="#ffffff" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
+                  {showSeries.to && (<ReferenceDot x={hoverTs} yAxisId="right" y={hoverSlipPt.to} r={5} fill="var(--color-to)" stroke="#111827" strokeWidth={1.5} ifOverflow="extendDomain" isFront />)}
+                </>
+              )}
+              {showSeries.slip && <Line yAxisId="left" type="monotone" dataKey="slip" stroke="var(--color-slip)" strokeWidth={1.2} strokeOpacity={0.85} dot={false} isAnimationActive={false} name="Slippage (bps)" />}
+              {showSeries.to && <Line yAxisId="right" type="monotone" dataKey="to" stroke="var(--color-to)" strokeWidth={1.2} strokeOpacity={0.85} dot={false} isAnimationActive={false} name="Turnover (%)" />}
+            </MonitorLineChart>
           </div>
         </Card>
       </div>
