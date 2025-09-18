@@ -1400,7 +1400,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
             </div>
             <div>
               <span className="uppercase">Turnover</span>
-              <div className="font-mono text-sm">{formatPct((selectedHistorical?.slip?.to ?? 0) / 100)}</div>
+              <div className="font-mono text-sm">{formatPct(selectedHistorical?.slip?.to ?? 0)}</div>
             </div>
           </div>
         ) : (
