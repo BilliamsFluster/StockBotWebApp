@@ -11,6 +11,7 @@ import {
   uploadPolicyProxy,
   getRunArtifactsProxy,
   getRunSeriesProxy,
+  getRunRollingMetricsProxy,
   getRunTradesProxy,
   getRunEventsProxy,
   getRunStateSnapshotProxy,
@@ -65,6 +66,7 @@ router.get("/runs/:id/telemetry/chunk", protectRoute, getRunTelemetryChunkProxy)
 router.get("/runs/:id/telemetry", protectRoute, streamRunTelemetryProxy);
 
 // Stream a specific artifact (metrics, equity, trades, orders, summary, config, model, job_log)
+router.get("/runs/:id/files/rolling_metrics", protectRoute, getRunRollingMetricsProxy);
 router.get("/runs/:id/files/:name", protectRoute, getRunArtifactFileProxy);
 router.get("/runs/:id/bundle", protectRoute, getRunBundleProxy);
 router.get("/runs/:id/stream", protectRoute, streamRunStatusProxy);

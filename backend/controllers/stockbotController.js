@@ -167,6 +167,7 @@ const SERIES_FALLBACK_FILES = {
 const TRADES_FALLBACK_FILES = ["report/trades.csv"];
 const EVENTS_FALLBACK_FILES = ["live_events.jsonl"];
 const STATE_SNAPSHOT_FALLBACK_FILES = ["report/state_snapshots.parquet", "report/equity.csv"];
+const ROLLING_METRICS_FALLBACK_FILES = ["report/rolling_metrics.csv"];
 
 function splitCsvLine(line) {
   const values = [];
@@ -436,6 +437,20 @@ async function fallbackStateSnapshot(runId, ts) {
     }
   }
   return { ...best, requested_ts: target };
+}
+
+async function fallbackRollingMetricsData(runId) {
+  const rows = await loadCsvSeriesData(runId, ROLLING_METRICS_FALLBACK_FILES);
+  if (!rows) return null;
+  const items = rows
+    .filter((row) => typeof row?.ts === "number" && Number.isFinite(row.ts))
+    .map((row) => ({ ...row }))
+    .sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  return {
+    items,
+    returned: items.length,
+    total: items.length,
+  };
 }
 
 async function buildRunRecordFromDir(runId) {
@@ -778,6 +793,35 @@ export async function getRunSeriesProxy(req, res) {
   } catch (e) {
     try {
       const fallback = await fallbackSeriesData(runId, seriesKey, req.query || {});
+      if (fallback) return res.json(fallback);
+    } catch (fallbackErr) {
+      if (axios.isAxiosError(fallbackErr)) {
+        const { status, body } = safeErrorBody(fallbackErr, fallbackErr.response?.status ?? 502);
+        return res.status(status).json(body);
+      }
+      if (fallbackErr && typeof fallbackErr.status === "number") {
+        return res.status(fallbackErr.status).json({ error: errMsg(fallbackErr) });
+      }
+    }
+    if (axios.isAxiosError(e)) {
+      const { status, body } = safeErrorBody(e, e.response?.status ?? 502);
+      return res.status(status).json(body);
+    }
+    return res.status(500).json({ error: errMsg(e) });
+  }
+}
+
+export async function getRunRollingMetricsProxy(req, res) {
+  const runId = req.params.id;
+  try {
+    const { data } = await stockbotRequest({
+      method: "get",
+      url: `/api/stockbot/runs/${encodeURIComponent(runId)}/files/rolling_metrics`,
+    }, { retries: 2 });
+    return res.json(data);
+  } catch (e) {
+    try {
+      const fallback = await fallbackRollingMetricsData(runId);
       if (fallback) return res.json(fallback);
     } catch (fallbackErr) {
       if (axios.isAxiosError(fallbackErr)) {
