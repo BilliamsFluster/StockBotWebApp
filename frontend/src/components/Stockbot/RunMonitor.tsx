@@ -1056,12 +1056,23 @@ export default function RunMonitor({ runId }: { runId: string }) {
   );
 
   const buildRunPrompt = useCallback(async () => {
-    const head = `You are Jarvis, a concise quant mentor. Analyze this run and produce a short, practical dashboard update.\n\n` +
-      `# Strategy Review\n## Summary\n- 1–2 sentences on status and the highest-impact change to try next.\n\n` +
-      `## Critical Alerts\n- Bullets calling out breaches (drawdown, turnover, leverage) with observed value vs. limits.\n\n` +
-      `## Key Metrics\n| Metric | Value |\n|---|---|\n\n` +
-      `## Next Run Checklist\n- [ ] Parameter -> new value (with rationale).\n\n` +
-      `## Data Notes\n- Coverage or data quality issues affecting the interpretation.`;
+    const head =
+      `You are Jarvis, a concise quant mentor. Analyze this run and produce a short, practical dashboard update.\n\n` +
+      `# Strategy Review\n` +
+      `## Summary\n- 1–2 sentences on status that ties the current performance to the payload configuration.\n- Highlight the single highest-impact change to try next and why it matters for return, drawdown, or turnover.\n\n` +
+      `## Payload Feedback\n- Bullet the payload fields (from payload.json) that most influence these metrics.\n- Explain how each setting is helping or hurting results and what concrete adjustment to make (include new value suggestions when possible).\n\n` +
+      `## Critical Alerts\n- Bullets calling out breaches (drawdown, turnover, leverage) with observed value vs. limits.\n- If an artifact below is missing (404), explain how that limits insight and which payload flag or data source to adjust to fix it.\n\n` +
+      `## Key Metrics\n| Metric | Value | Notes |\n|---|---|---|\n\n` +
+      `## Next Run Checklist\n- [ ] Parameter -> new value (with rationale tied to payload impact).\n\n` +
+      `## Data Notes\n- Coverage or data quality issues affecting the interpretation. Mention any missing artifacts explicitly.`;
+
+    const dataGaps = [
+      metricsError ? `metrics_error: ${metricsError}` : null,
+      summaryError ? `summary_error: ${summaryError}` : null,
+      rollingError ? `rolling_error: ${rollingError}` : null,
+      tradesError ? `trades_error: ${tradesError}` : null,
+    ].filter(Boolean);
+    const gapText = dataGaps.length ? ['--- DATA_GAPS ---', ...dataGaps].join('\n') : '';
 
     const meta = `Run meta: id=${runId}, type=${runStatus?.type || ''}, status=${runStatus?.status || ''}`;
     let artifactMap: Record<string, string | null> = artifacts;
@@ -1104,6 +1115,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
     return [
       head,
       meta,
+      gapText,
       anchors,
       settings,
       '--- summary.json ---',
@@ -1129,6 +1141,10 @@ export default function RunMonitor({ runId }: { runId: string }) {
     artifacts,
     fetchArtifactJson,
     fetchArtifactText,
+    metricsError,
+    summaryError,
+    rollingError,
+    tradesError,
   ]);
 
   const requestAiInsights = useCallback(async () => {
