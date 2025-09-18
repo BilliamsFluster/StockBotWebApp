@@ -14,7 +14,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { ChartTooltip, type ChartConfig } from "@/components/ui/chart";
+import { ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { LineChart as MonitorLineChart } from "@/components/ui/line-chart";
 import { Line, XAxis, YAxis, CartesianGrid, ReferenceLine, ReferenceDot } from "recharts";
 import api, { buildUrl } from "@/api/client";
@@ -48,6 +48,8 @@ type SummaryMeta = {
   symbols?: string[];
   policy?: string;
   normalize?: boolean;
+  config_path?: string;
+  notes?: string;
   [key: string]: any;
 };
 
@@ -355,6 +357,8 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const [seriesRange, setSeriesRange] = useState<{ from?: number; to?: number } | null>(null);
   const [seriesMaxPoints, setSeriesMaxPoints] = useState<number>(SERIES_DEFAULT_POINTS);
   const [seriesReloadToken, setSeriesReloadToken] = useState(0);
+  const [artifacts, setArtifacts] = useState<Record<string, string | null>>({});
+  const [artifactsLoaded, setArtifactsLoaded] = useState(false);
   const [liveSeries, setLiveSeries] = useState<SeriesPoint[]>([]);
   const [events, setEvents] = useState<EventItem[]>([]);
   const [eventsCursor, setEventsCursor] = useState<string | null>(null);
@@ -439,6 +443,8 @@ export default function RunMonitor({ runId }: { runId: string }) {
     setAiText("");
     setAiError(null);
     setZoomPreset("all");
+    setArtifacts({});
+    setArtifactsLoaded(false);
   }, [runId]);
 
   useEffect(() => {
@@ -486,14 +492,40 @@ export default function RunMonitor({ runId }: { runId: string }) {
   useEffect(() => {
     if (!runId) return;
     let cancelled = false;
-
-    const metricsUrl = buildUrl(`/api/stockbot/runs/${runId}/files/metrics`);
-    const summaryUrl = buildUrl(`/api/stockbot/runs/${runId}/files/summary`);
-    const rollingUrl = buildUrl(`/api/stockbot/runs/${runId}/files/rolling_metrics`);
-
+    setArtifactsLoaded(false);
     (async () => {
       try {
-        const resp = await fetch(metricsUrl, { credentials: "include" });
+        const url = buildUrl(`/api/stockbot/runs/${runId}/artifacts`);
+        const resp = await fetch(url, { credentials: "include" });
+        if (!resp.ok) throw new Error(`artifacts ${resp.status}`);
+        const data = await resp.json();
+        if (!cancelled) setArtifacts((data ?? {}) as Record<string, string | null>);
+      } catch {
+        if (!cancelled) setArtifacts({});
+      } finally {
+        if (!cancelled) setArtifactsLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [runId]);
+  useEffect(() => {
+    if (!runId || !artifactsLoaded) return;
+    let cancelled = false;
+    const hasKey = Object.prototype.hasOwnProperty.call(artifacts, "metrics");
+    const path = (artifacts as Record<string, string | null>)?.metrics ?? null;
+    if (hasKey && !path) {
+      setMetrics(null);
+      setMetricsError("Metrics not available");
+      return () => {
+        cancelled = true;
+      };
+    }
+    const url = buildUrl(path || `/api/stockbot/runs/${runId}/files/metrics`);
+    (async () => {
+      try {
+        const resp = await fetch(url, { credentials: "include" });
         if (!resp.ok) throw new Error(`metrics ${resp.status}`);
         const data = await resp.json();
         if (!cancelled) {
@@ -502,15 +534,32 @@ export default function RunMonitor({ runId }: { runId: string }) {
         }
       } catch (err: any) {
         if (!cancelled) {
+          const msg = err?.message || "Failed to load metrics";
           setMetrics(null);
-          setMetricsError(err?.message || "Failed to load metrics");
+          setMetricsError(msg.includes("404") ? "Metrics not available" : msg);
         }
       }
     })();
-
+    return () => {
+      cancelled = true;
+    };
+  }, [artifacts, artifactsLoaded, runId]);
+  useEffect(() => {
+    if (!runId || !artifactsLoaded) return;
+    let cancelled = false;
+    const hasKey = Object.prototype.hasOwnProperty.call(artifacts, "summary");
+    const path = (artifacts as Record<string, string | null>)?.summary ?? null;
+    if (hasKey && !path) {
+      setSummary(null);
+      setSummaryError("Summary not available");
+      return () => {
+        cancelled = true;
+      };
+    }
+    const url = buildUrl(path || `/api/stockbot/runs/${runId}/files/summary`);
     (async () => {
       try {
-        const resp = await fetch(summaryUrl, { credentials: "include" });
+        const resp = await fetch(url, { credentials: "include" });
         if (!resp.ok) throw new Error(`summary ${resp.status}`);
         const data = await resp.json();
         if (!cancelled) {
@@ -519,37 +568,84 @@ export default function RunMonitor({ runId }: { runId: string }) {
         }
       } catch (err: any) {
         if (!cancelled) {
+          const msg = err?.message || "Failed to load summary";
           setSummary(null);
-          setSummaryError(err?.message || "Failed to load summary");
+          setSummaryError(msg.includes("404") ? "Summary not available" : msg);
         }
       }
     })();
-
+    return () => {
+      cancelled = true;
+    };
+  }, [artifacts, artifactsLoaded, runId]);
+  useEffect(() => {
+    if (!runId || !artifactsLoaded) return;
+    let cancelled = false;
+    const hasKey = Object.prototype.hasOwnProperty.call(artifacts, "rolling_metrics");
+    const path = (artifacts as Record<string, string | null>)?.rolling_metrics ?? null;
+    if (hasKey && !path) {
+      setRolling([]);
+      setRollingError(null);
+      setRollingLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    const url = buildUrl(path || `/api/stockbot/runs/${runId}/files/rolling_metrics`);
     setRollingLoading(true);
     (async () => {
       try {
-        const resp = await fetch(rollingUrl, { credentials: "include" });
+        const resp = await fetch(url, { credentials: "include" });
         if (!resp.ok) throw new Error(`rolling ${resp.status}`);
         const data = await resp.json();
-        if (!cancelled) {
-          const items: RollingPoint[] = Array.isArray(data?.items) ? data.items : [];
-          setRolling(items);
-          setRollingError(null);
-        }
+        if (cancelled) return;
+        const rawItems = Array.isArray(data?.items)
+          ? data.items
+          : Array.isArray(data)
+          ? data
+          : [];
+        const items: RollingPoint[] = rawItems
+          .map((rec: any) => ({
+            ts: parseEpoch(rec?.ts ?? rec?.t ?? rec?.timestamp),
+            roll_sharpe_63: Number.isFinite(rec?.roll_sharpe_63)
+              ? Number(rec.roll_sharpe_63)
+              : Number.isFinite(rec?.sharpe)
+              ? Number(rec.sharpe)
+              : Number.isFinite(rec?.roll_sharpe)
+              ? Number(rec.roll_sharpe)
+              : undefined,
+            roll_vol_63: Number.isFinite(rec?.roll_vol_63)
+              ? Number(rec.roll_vol_63)
+              : Number.isFinite(rec?.vol)
+              ? Number(rec.vol)
+              : Number.isFinite(rec?.roll_volatility)
+              ? Number(rec.roll_volatility)
+              : undefined,
+            roll_maxdd_252: Number.isFinite(rec?.roll_maxdd_252)
+              ? Number(rec.roll_maxdd_252)
+              : Number.isFinite(rec?.maxdd)
+              ? Number(rec.maxdd)
+              : Number.isFinite(rec?.roll_maxdd)
+              ? Number(rec.roll_maxdd)
+              : undefined,
+          }))
+          .filter((rec: RollingPoint) => Number.isFinite(rec.ts) && rec.ts > 0);
+        setRolling(items);
+        setRollingError(null);
       } catch (err: any) {
         if (!cancelled) {
+          const msg = err?.message || "Failed to load rolling metrics";
           setRolling([]);
-          setRollingError(err?.message || "Failed to load rolling metrics");
+          setRollingError(msg.includes("404") ? null : msg);
         }
       } finally {
         if (!cancelled) setRollingLoading(false);
       }
     })();
-
     return () => {
       cancelled = true;
     };
-  }, [runId]);
+  }, [artifacts, artifactsLoaded, runId]);
   useEffect(() => {
     if (!runId) return;
     if (pendingSeriesRequest.current) {
@@ -766,6 +862,10 @@ export default function RunMonitor({ runId }: { runId: string }) {
       return { t: pt.ts, cum, dd };
     });
   }, [series]);
+  useEffect(() => {
+    if (!pnlSeries.length) return;
+    setSelectedTs((prev) => (prev == null ? pnlSeries[pnlSeries.length - 1].t : prev));
+  }, [pnlSeries]);
 
   const expoSeries = useMemo(() => {
     if (!series.length) return [] as { t: number; gross: number }[];
@@ -851,13 +951,31 @@ export default function RunMonitor({ runId }: { runId: string }) {
 
   const summaryLines = useMemo(() => {
     if (!summary) return [] as { label: string; value: string }[];
-    return [
+    const lines: { label: string; value: string }[] = [
       { label: "Policy", value: summary.policy || "—" },
-      { label: "Symbols", value: Array.isArray(summary.symbols) ? summary.symbols.join(", ") : String(summary.symbols || "—") },
-      { label: "Start", value: summary.start ? new Date(summary.start).toISOString().slice(0, 10) : "—" },
-      { label: "End", value: summary.end ? new Date(summary.end).toISOString().slice(0, 10) : "—" },
+      {
+        label: "Symbols",
+        value: Array.isArray(summary.symbols)
+          ? summary.symbols.join(", ")
+          : String(summary.symbols || "—"),
+      },
+      {
+        label: "Start",
+        value: summary.start ? new Date(summary.start).toISOString().slice(0, 10) : "—",
+      },
+      {
+        label: "End",
+        value: summary.end ? new Date(summary.end).toISOString().slice(0, 10) : "—",
+      },
       { label: "Normalize Obs", value: summary.normalize ? "Yes" : "No" },
     ];
+    if (summary.config_path) {
+      lines.push({ label: "Config", value: String(summary.config_path) });
+    }
+    if (summary.notes) {
+      lines.push({ label: "Notes", value: String(summary.notes) });
+    }
+    return lines.filter((line) => line.value != null && String(line.value).trim().length > 0);
   }, [summary]);
 
   const highlightedEventIndices = useMemo(() => {
@@ -946,16 +1064,18 @@ export default function RunMonitor({ runId }: { runId: string }) {
       `## Data Notes\n- Coverage or data quality issues affecting the interpretation.`;
 
     const meta = `Run meta: id=${runId}, type=${runStatus?.type || ''}, status=${runStatus?.status || ''}`;
-    let artifacts: any = {};
-    try {
-      const url = buildUrl(`/api/stockbot/runs/${runId}/artifacts`);
-      const resp = await fetch(url, { credentials: "include" });
-      if (resp.ok) artifacts = await resp.json();
-    } catch {
-      /* ignore */
+    let artifactMap: Record<string, string | null> = artifacts;
+    if (!artifactMap || Object.keys(artifactMap).length === 0) {
+      try {
+        const url = buildUrl(`/api/stockbot/runs/${runId}/artifacts`);
+        const resp = await fetch(url, { credentials: "include" });
+        if (resp.ok) artifactMap = ((await resp.json()) ?? {}) as Record<string, string | null>;
+      } catch {
+        artifactMap = artifacts;
+      }
     }
 
-    const metricsJson = artifacts?.metrics ? await fetchArtifactJson("metrics") : metrics;
+    const metricsJson = artifactMap?.metrics ? await fetchArtifactJson("metrics") : metrics;
     const anchors = metricsJson
       ? [
           "--- ANCHOR METRICS ---",
@@ -967,18 +1087,18 @@ export default function RunMonitor({ runId }: { runId: string }) {
         ].join("\n")
       : "";
 
-    const summaryText = artifacts?.summary ? await fetchArtifactText("summary", 6000) : JSON.stringify(summary ?? {}, null, 2);
-    const metricsText = artifacts?.metrics ? await fetchArtifactText("metrics", 6000) : JSON.stringify(metrics ?? {}, null, 2);
-    const equityText = artifacts?.equity ? await fetchArtifactText("equity", 6000) : "";
-    const rollingText = artifacts?.rolling_metrics ? await fetchArtifactText("rolling_metrics", 4000) : "";
-    const ordersText = artifacts?.orders ? await fetchArtifactText("orders", 4000) : "";
-    const tradesText = artifacts?.trades ? await fetchArtifactText("trades", 4000) : "";
+    const summaryText = artifactMap?.summary ? await fetchArtifactText("summary", 6000) : JSON.stringify(summary ?? {}, null, 2);
+    const metricsText = artifactMap?.metrics ? await fetchArtifactText("metrics", 6000) : JSON.stringify(metrics ?? {}, null, 2);
+    const equityText = artifactMap?.equity ? await fetchArtifactText("equity", 6000) : "";
+    const rollingText = artifactMap?.rolling_metrics ? await fetchArtifactText("rolling_metrics", 4000) : "";
+    const ordersText = artifactMap?.orders ? await fetchArtifactText("orders", 4000) : "";
+    const tradesText = artifactMap?.trades ? await fetchArtifactText("trades", 4000) : "";
 
     const settings = [
       '--- CONFIG SNAPSHOT ---',
-      artifacts?.config ? await fetchArtifactText('config', 6000) : '',
+      artifactMap?.config ? await fetchArtifactText('config', 6000) : '',
       '--- PAYLOAD ---',
-      artifacts?.payload ? await fetchArtifactText('payload', 6000) : '',
+      artifactMap?.payload ? await fetchArtifactText('payload', 6000) : '',
     ].filter(Boolean).join('\n');
 
     return [
@@ -1000,7 +1120,16 @@ export default function RunMonitor({ runId }: { runId: string }) {
       tradesText || '(missing)',
       'Return concise markdown. Use numbers from ANCHOR METRICS when present. Avoid speculation.',
     ].join('\n');
-  }, [runId, runStatus?.status, runStatus?.type, metrics, summary, fetchArtifactJson, fetchArtifactText]);
+  }, [
+    runId,
+    runStatus?.status,
+    runStatus?.type,
+    metrics,
+    summary,
+    artifacts,
+    fetchArtifactJson,
+    fetchArtifactText,
+  ]);
 
   const requestAiInsights = useCallback(async () => {
     if (!runId) return;
@@ -1064,15 +1193,52 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const liveCursorTs = liveSeries.length ? liveSeries[liveSeries.length - 1].ts : null;
   const statusLabel = (runStatus?.status || "").toUpperCase() || "UNKNOWN";
   const statusTone = statusLabel === "SUCCEEDED" ? "bg-emerald-600" : statusLabel === "FAILED" ? "bg-rose-600" : statusLabel === "RUNNING" ? "bg-blue-600" : "bg-slate-600";
-
-  const metricsDownloads = (
-    <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-      <span>Downloads:</span>
-      <a className="underline" href={buildUrl(`/api/stockbot/runs/${runId}/files/live_telemetry`)} target="_blank" rel="noreferrer">live_telemetry.jsonl</a>
-      <a className="underline" href={buildUrl(`/api/stockbot/runs/${runId}/files/live_events`)} target="_blank" rel="noreferrer">live_events.jsonl</a>
-      <a className="underline" href={buildUrl(`/api/stockbot/runs/${runId}/files/trades`)} target="_blank" rel="noreferrer">trades.csv</a>
-    </div>
+  const dataWarning = useMemo(() => {
+    const warnings: string[] = [];
+    if (metricsError && metricsError !== "Metrics not available") warnings.push(metricsError);
+    if (summaryError && summaryError !== "Summary not available") warnings.push(summaryError);
+    return warnings.join(" · ") || null;
+  }, [metricsError, summaryError]);
+  const formatPnlTooltipValue = useCallback((value: number) => formatPct(Number(value)), []);
+  const formatExpoTooltipValue = useCallback((value: number) => formatSigned(Number(value)), []);
+  const formatSlipTooltipValue = useCallback(
+    (value: number, name: string) =>
+      name === "slip" ? `${Number(value).toFixed(1)} bps` : formatPct(Number(value)),
+    []
   );
+  const formatRollingTooltipValue = useCallback((value: number, name: string) => {
+    const key = name.toLowerCase();
+    if (key.includes("sharpe")) return formatSigned(Number(value));
+    if (key.includes("vol")) return formatPct(Number(value));
+    if (key.includes("dd")) return formatPct(Number(value));
+    return formatSigned(Number(value));
+  }, []);
+
+  const metricsDownloads = useMemo(() => {
+    const linkDefs: Array<{ key: string; label: string }> = [
+      { key: "live_telemetry", label: "live_telemetry.jsonl" },
+      { key: "live_events", label: "live_events.jsonl" },
+      { key: "trades", label: "trades.csv" },
+    ];
+    const available = linkDefs.filter(({ key }) => {
+      const value = (artifacts as Record<string, string | null>)[key];
+      return typeof value === "string" && value.length > 0;
+    });
+    if (!available.length) return null;
+    return (
+      <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+        <span>Downloads:</span>
+        {available.map(({ key, label }) => {
+          const href = (artifacts as Record<string, string | null>)[key] as string;
+          return (
+            <a key={key} className="underline" href={buildUrl(href)} target="_blank" rel="noreferrer">
+              {label}
+            </a>
+          );
+        })}
+      </div>
+    );
+  }, [artifacts]);
 
   return (
     <div className="space-y-6">
@@ -1084,10 +1250,10 @@ export default function RunMonitor({ runId }: { runId: string }) {
         <Badge className={cn("text-xs", statusTone)}>{statusLabel}</Badge>
       </div>
 
-      {(metricsError || summaryError) && (
+      {dataWarning && (
         <Alert variant="destructive">
           <AlertTitle>Data warning</AlertTitle>
-          <AlertDescription>{metricsError || summaryError}</AlertDescription>
+          <AlertDescription>{dataWarning}</AlertDescription>
         </Alert>
       )}
 
@@ -1102,14 +1268,18 @@ export default function RunMonitor({ runId }: { runId: string }) {
 
       <Card className="p-4 space-y-3">
         <div className="text-sm font-semibold">Summary</div>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 text-sm">
-          {summaryLines.map((line) => (
-            <div key={line.label} className="flex flex-col">
-              <span className="text-xs uppercase text-muted-foreground">{line.label}</span>
-              <span className="font-medium text-sm">{line.value}</span>
-            </div>
-          ))}
-        </div>
+        {summaryLines.length ? (
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 text-sm">
+            {summaryLines.map((line) => (
+              <div key={line.label} className="flex flex-col">
+                <span className="text-xs uppercase text-muted-foreground">{line.label}</span>
+                <span className="font-medium text-sm">{line.value}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-sm text-muted-foreground">Summary not available.</div>
+        )}
         {metricsDownloads}
       </Card>
 
@@ -1168,7 +1338,10 @@ export default function RunMonitor({ runId }: { runId: string }) {
                   />
                   <YAxis yAxisId="left" domain={pnlCumDomain as any} tickFormatter={(value) => formatPct(Number(value))} />
                   <YAxis yAxisId="right" orientation="right" domain={pnlDdDomain as any} tickFormatter={(value) => formatPct(Number(value))} />
-                  <ChartTooltip formatter={(value: any) => formatPct(Number(value))} labelFormatter={(label) => formatDateTime(Number(label))} />
+                  <ChartTooltip
+                    content={<ChartTooltipContent valueFormatter={(value: number) => formatPnlTooltipValue(value)} />}
+                    labelFormatter={(label) => formatDateTime(Number(label))}
+                  />
                   <Line yAxisId="left" type="monotone" dataKey="cum" stroke="var(--color-cum)" dot={false} isAnimationActive={false} />
                   <Line yAxisId="right" type="monotone" dataKey="dd" stroke="var(--color-dd)" dot={false} isAnimationActive={false} />
                   {selectedHistorical?.pnl && (
@@ -1187,7 +1360,10 @@ export default function RunMonitor({ runId }: { runId: string }) {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="t" type="number" domain={[tMin, tMax] as any} tickFormatter={(value) => new Date(Number(value)).toLocaleDateString()} />
                   <YAxis domain={expoDomain as any} tickFormatter={(value) => formatSigned(Number(value))} />
-                  <ChartTooltip formatter={(value: any) => formatSigned(Number(value))} labelFormatter={(label) => formatDateTime(Number(label))} />
+                  <ChartTooltip
+                    content={<ChartTooltipContent valueFormatter={(value: number) => formatExpoTooltipValue(value)} />}
+                    labelFormatter={(label) => formatDateTime(Number(label))}
+                  />
                   <Line type="monotone" dataKey="gross" stroke="var(--color-gross)" dot={false} isAnimationActive={false} />
                   {selectedHistorical?.expo && (
                     <ReferenceDot x={selectedHistorical.expo.t} y={selectedHistorical.expo.gross} r={5} fill="var(--color-gross)" stroke="#fff" />
@@ -1200,7 +1376,10 @@ export default function RunMonitor({ runId }: { runId: string }) {
                   <XAxis dataKey="t" type="number" domain={[tMin, tMax] as any} tickFormatter={(value) => new Date(Number(value)).toLocaleDateString()} />
                   <YAxis yAxisId="left" domain={slipDomain as any} tickFormatter={(value) => `${Number(value).toFixed(1)} bps`} />
                   <YAxis yAxisId="right" orientation="right" domain={turnoverDomain as any} tickFormatter={(value) => formatPct(Number(value))} />
-                  <ChartTooltip labelFormatter={(label) => formatDateTime(Number(label))} />
+                  <ChartTooltip
+                    content={<ChartTooltipContent valueFormatter={(value: number, name: string) => formatSlipTooltipValue(value, name)} />}
+                    labelFormatter={(label) => formatDateTime(Number(label))}
+                  />
                   <Line yAxisId="left" type="monotone" dataKey="slip" stroke="var(--color-slip)" dot={false} isAnimationActive={false} />
                   <Line yAxisId="right" type="monotone" dataKey="to" stroke="var(--color-to)" dot={false} isAnimationActive={false} />
                   {selectedHistorical?.slip && (
@@ -1231,7 +1410,10 @@ export default function RunMonitor({ runId }: { runId: string }) {
                   <XAxis dataKey="t" type="number" domain={['auto', 'auto']} tickFormatter={(value) => new Date(Number(value)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} />
                   <YAxis yAxisId="left" domain={livePnlDomain as any} tickFormatter={(value) => formatPct(Number(value))} />
                   <YAxis yAxisId="right" orientation="right" domain={liveDdDomain as any} tickFormatter={(value) => formatPct(Number(value))} />
-                  <ChartTooltip formatter={(value: any) => formatPct(Number(value))} labelFormatter={(label) => formatDateTime(Number(label))} />
+                  <ChartTooltip
+                    content={<ChartTooltipContent valueFormatter={(value: number) => formatPnlTooltipValue(value)} />}
+                    labelFormatter={(label) => formatDateTime(Number(label))}
+                  />
                   <Line yAxisId="left" type="monotone" dataKey="cum" stroke="var(--color-cum)" dot={false} isAnimationActive={false} />
                   <Line yAxisId="right" type="monotone" dataKey="dd" stroke="var(--color-dd)" dot={false} isAnimationActive={false} />
                   {liveSelected?.pnl && (
@@ -1249,7 +1431,10 @@ export default function RunMonitor({ runId }: { runId: string }) {
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="t" type="number" domain={['auto', 'auto']} tickFormatter={(value) => new Date(Number(value)).toLocaleTimeString()} />
                     <YAxis domain={liveExpoDomain as any} tickFormatter={(value) => formatSigned(Number(value))} />
-                    <ChartTooltip formatter={(value: any) => formatSigned(Number(value))} labelFormatter={(label) => formatDateTime(Number(label))} />
+                    <ChartTooltip
+                      content={<ChartTooltipContent valueFormatter={(value: number) => formatExpoTooltipValue(value)} />}
+                      labelFormatter={(label) => formatDateTime(Number(label))}
+                    />
                     <Line type="monotone" dataKey="gross" stroke="var(--color-gross)" dot={false} isAnimationActive={false} />
                   </MonitorLineChart>
                 </div>
@@ -1259,7 +1444,10 @@ export default function RunMonitor({ runId }: { runId: string }) {
                     <XAxis dataKey="t" type="number" domain={['auto', 'auto']} tickFormatter={(value) => new Date(Number(value)).toLocaleTimeString()} />
                     <YAxis yAxisId="left" domain={liveSlipDomain as any} tickFormatter={(value) => `${Number(value).toFixed(1)} bps`} />
                     <YAxis yAxisId="right" orientation="right" domain={liveTurnoverDomain as any} tickFormatter={(value) => formatPct(Number(value))} />
-                    <ChartTooltip labelFormatter={(label) => formatDateTime(Number(label))} />
+                    <ChartTooltip
+                      content={<ChartTooltipContent valueFormatter={(value: number, name: string) => formatSlipTooltipValue(value, name)} />}
+                      labelFormatter={(label) => formatDateTime(Number(label))}
+                    />
                     <Line yAxisId="left" type="monotone" dataKey="slip" stroke="var(--color-slip)" dot={false} isAnimationActive={false} />
                     <Line yAxisId="right" type="monotone" dataKey="to" stroke="var(--color-to)" dot={false} isAnimationActive={false} />
                   </MonitorLineChart>
@@ -1283,7 +1471,10 @@ export default function RunMonitor({ runId }: { runId: string }) {
               <XAxis dataKey="t" type="number" tickFormatter={(value) => new Date(Number(value)).toLocaleDateString()} />
               <YAxis yAxisId="left" domain={['auto', 'auto']} />
               <YAxis yAxisId="right" orientation="right" domain={['auto', 'auto']} />
-              <ChartTooltip labelFormatter={(label) => formatDateTime(Number(label))} />
+              <ChartTooltip
+                content={<ChartTooltipContent valueFormatter={(value: number, name: string) => formatRollingTooltipValue(value, name)} />}
+                labelFormatter={(label) => formatDateTime(Number(label))}
+              />
               <Line yAxisId="left" type="monotone" dataKey="sharpe" stroke="var(--color-sharpe, #2563eb)" dot={false} isAnimationActive={false} />
               <Line yAxisId="left" type="monotone" dataKey="vol" stroke="var(--color-vol, #f59e0b)" dot={false} isAnimationActive={false} />
               <Line yAxisId="right" type="monotone" dataKey="maxdd" stroke="var(--color-dd, #ef4444)" dot={false} isAnimationActive={false} />
@@ -1309,7 +1500,11 @@ export default function RunMonitor({ runId }: { runId: string }) {
           </div>
           <VirtualizedList
             rows={events}
-            loadMore={() => loadEventPage(eventsCursor, false)}
+            loadMore={() => {
+              if (eventsHasMore && eventsCursor !== null) {
+                loadEventPage(eventsCursor, false);
+              }
+            }}
             hasMore={eventsHasMore}
             isLoading={eventsLoading}
             emptyPlaceholder="No events recorded."
@@ -1345,7 +1540,11 @@ export default function RunMonitor({ runId }: { runId: string }) {
           </div>
           <VirtualizedList
             rows={trades}
-            loadMore={() => loadTradePage(tradesCursor, false)}
+            loadMore={() => {
+              if (tradesHasMore && tradesCursor !== null) {
+                loadTradePage(tradesCursor, false);
+              }
+            }}
             hasMore={tradesHasMore}
             isLoading={tradesLoading}
             emptyPlaceholder="No trades recorded."
