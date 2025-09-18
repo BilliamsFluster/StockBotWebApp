@@ -95,10 +95,12 @@ def apply_sizing_layers(
         cfg.state.realized_var_ewma = (
             (1 - cfg.vol_ema_alpha) * prev + cfg.vol_ema_alpha * (r ** 2)
         )
+        realized_vol = float(np.sqrt(cfg.state.realized_var_ewma) * np.sqrt(252))
+        vol_scale = vol_target_scale(realized_vol, cfg.vol_target)
     else:
         f = 1.0
-    realized_vol = float(np.sqrt(cfg.state.realized_var_ewma) * np.sqrt(252))
-    vol_scale = vol_target_scale(realized_vol, cfg.vol_target)
+        vol_scale = 1.0
+        realized_vol = 0.0
 
     w = w_raw * f * vol_scale * float(gamma_t)
     trace = {

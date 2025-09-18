@@ -19,6 +19,8 @@ interface DatasetProps {
   setAdjusted: (v: boolean) => void;
   lookback: number;
   setLookback: (v: number) => void;
+  evalWindow: number;
+  setEvalWindow: (v: number) => void;
   trainEvalSplit: string;
   setTrainEvalSplit: (v: string) => void;
 }
@@ -36,6 +38,8 @@ export function DatasetSection({
   setAdjusted,
   lookback,
   setLookback,
+  evalWindow,
+  setEvalWindow,
   trainEvalSplit,
   setTrainEvalSplit,
 }: DatasetProps) {
@@ -77,6 +81,13 @@ export function DatasetSection({
             tooltip="Number of past bars provided in each observation"
             value={String(lookback)}
             onChange={(v) => setLookback(parseInt(v) || lookback)}
+            type="number"
+          />
+          <InputGroup
+            label="Eval Window"
+            tooltip="Calendar days for evaluation window (0=auto)"
+            value={String(evalWindow)}
+            onChange={(v) => setEvalWindow(parseInt(v) || 0)}
             type="number"
           />
           <div className="flex flex-col gap-1">

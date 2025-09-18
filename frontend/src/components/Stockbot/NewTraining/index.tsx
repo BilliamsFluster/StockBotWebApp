@@ -1,7 +1,7 @@
 // src/components/Stockbot/NewTraining/index.tsx
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-hot-toast";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,9 +19,444 @@ import { SizingSection, DEFAULT_SIZING } from "./SizingSection";
 import { RewardLoggingSection, DEFAULT_REWARD  } from "./RewardLoggingSection";
 import { DownloadsSection } from "./DownloadsSection";
 import { buildTrainPayload, type TrainPayload } from "./payload";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 
 const TERMINAL: Array<JobStatusResponse["status"]> = ["SUCCEEDED", "FAILED", "CANCELLED"];
 const ppoDivisible = (n: number, b: number) => n > 0 && b > 0 && n % b === 0;
+
+type ValidationLevel = "error" | "warning" | "info";
+
+interface ValidationIssue {
+  level: ValidationLevel;
+  message: string;
+  detail?: string;
+  blocking?: boolean;
+}
+
+interface RangeSummary {
+  start: string;
+  end: string;
+  calendarDays: number;
+  businessDays: number;
+  tradingDays: number;
+  tradingBars: number;
+  effectiveBars: number;
+}
+
+interface ValidationResult {
+  issues: ValidationIssue[];
+  blockingIssues: ValidationIssue[];
+  split?: {
+    train: RangeSummary;
+    eval: RangeSummary;
+  };
+  requiredBars: number;
+  featureWarmup: number;
+}
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+const BARS_PER_DAY: Record<"1d" | "1h" | "15m", number> = {
+  "1d": 1,
+  "1h": 6.5,
+  "15m": 26,
+};
+
+const TRADING_DAY_RATIO = 252 / 260; // ~3% buffer for US market holidays
+
+const FEATURE_SET_WARMUP: Record<string, number> = {
+  minimal: 20,
+  minimal_core: 20,
+  ohlcv: 0,
+  ohlcv_ta_basic: 32,
+  ohlcv_ta_rich: 64,
+};
+
+const INDICATOR_WARMUP: Record<string, number> = {
+  rsi: 14,
+  macd: 26,
+  bbands: 20,
+};
+
+const formatIso = (d: Date) => d.toISOString().slice(0, 10);
+
+const parseIsoDate = (value: string | undefined | null): Date | null => {
+  if (!value || typeof value !== "string") return null;
+  const parts = value.split("-").map((x) => Number(x));
+  if (parts.length !== 3 || parts.some((x) => Number.isNaN(x))) return null;
+  const [y, m, day] = parts;
+  return new Date(Date.UTC(y, m - 1, day));
+};
+
+const addUtcDays = (d: Date, days: number) => {
+  const next = new Date(d.getTime());
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+};
+
+const diffCalendarDays = (start: Date, end: Date) => {
+  if (end < start) return 0;
+  return Math.floor((end.getTime() - start.getTime()) / MS_PER_DAY);
+};
+
+const countBusinessDays = (start: Date, end: Date) => {
+  if (end < start) return 0;
+  let count = 0;
+  for (let d = new Date(start.getTime()); d.getTime() <= end.getTime(); d.setUTCDate(d.getUTCDate() + 1)) {
+    const day = d.getUTCDay();
+    if (day !== 0 && day !== 6) count += 1;
+  }
+  return count;
+};
+
+const summarizeRange = (
+  start: Date,
+  end: Date,
+  interval: "1d" | "1h" | "15m",
+  featureWarmup: number
+): RangeSummary => {
+  const calendarDays = diffCalendarDays(start, end) + 1; // inclusive span for display
+  const businessDays = countBusinessDays(start, end);
+  const tradingDays = Math.max(0, Math.round(businessDays * TRADING_DAY_RATIO));
+  const multiplier = BARS_PER_DAY[interval] ?? 1;
+  const tradingBars = Math.max(0, Math.round(tradingDays * multiplier));
+  const effectiveBars = Math.max(0, tradingBars - Math.max(0, Math.floor(featureWarmup)));
+  return {
+    start: formatIso(start),
+    end: formatIso(end),
+    calendarDays,
+    businessDays,
+    tradingDays,
+    tradingBars,
+    effectiveBars,
+  };
+};
+
+const estimateFeatureWarmup = (state: any): number => {
+  const sets = Array.isArray(state.featureSet) ? state.featureSet : [];
+  let warmup = 0;
+  for (const set of sets) {
+    const key = typeof set === "string" ? set : String(set);
+    warmup = Math.max(warmup, FEATURE_SET_WARMUP[key] ?? 0);
+  }
+  if (state?.rsi) warmup = Math.max(warmup, INDICATOR_WARMUP.rsi);
+  if (state?.macd) warmup = Math.max(warmup, INDICATOR_WARMUP.macd);
+  if (state?.bbands) warmup = Math.max(warmup, INDICATOR_WARMUP.bbands);
+  const embargo = Number(state?.embargo);
+  if (!Number.isNaN(embargo) && embargo > 0) {
+    warmup = Math.max(warmup, embargo);
+  }
+  return warmup;
+};
+
+interface DeriveSplitInput {
+  start: Date;
+  end: Date;
+  interval: "1d" | "1h" | "15m";
+  lookback: number;
+  trainSplit: string;
+  evalWindow: number;
+}
+
+const deriveSplit = ({ start, end, lookback, trainSplit, evalWindow }: DeriveSplitInput) => {
+  const spanDays = diffCalendarDays(start, end);
+  let trainStart = new Date(start.getTime());
+  let trainEnd = new Date(end.getTime());
+  let evalStart = new Date(start.getTime());
+  let evalEnd = new Date(end.getTime());
+
+  const enforceMinEvalWindow = () => {
+    const minEvalDays = Math.max(100, Math.floor(lookback) + 40);
+    const evalSpan = diffCalendarDays(evalStart, evalEnd);
+    if (evalSpan < minEvalDays) {
+      let newEvalStart = addUtcDays(end, -minEvalDays);
+      if (newEvalStart < start) newEvalStart = new Date(start.getTime());
+      evalStart = newEvalStart;
+      const newTrainEnd = addUtcDays(evalStart, -1);
+      if (newTrainEnd >= start) {
+        trainEnd = newTrainEnd;
+      }
+    }
+  };
+
+  if (evalWindow && evalWindow > 0) {
+    evalEnd = new Date(end.getTime());
+    let candidate = addUtcDays(end, -(evalWindow - 1));
+    if (candidate < start) candidate = new Date(start.getTime());
+    evalStart = candidate;
+    const trainCandidate = addUtcDays(evalStart, -1);
+    trainStart = new Date(start.getTime());
+    trainEnd = trainCandidate >= start ? trainCandidate : new Date(start.getTime());
+    enforceMinEvalWindow();
+  } else if (trainSplit === "80_20" || spanDays < 365) {
+    const splitOffset = Math.floor(spanDays * 0.8);
+    const splitPoint = addUtcDays(start, splitOffset);
+    trainEnd = splitPoint >= start ? splitPoint : new Date(start.getTime());
+    evalStart = addUtcDays(trainEnd, 1);
+    evalEnd = new Date(end.getTime());
+    if (evalStart > evalEnd) {
+      evalStart = new Date(end.getTime());
+    }
+    enforceMinEvalWindow();
+  } else {
+    const lastYear = end.getUTCFullYear();
+    const janFirst = new Date(Date.UTC(lastYear, 0, 1));
+    if (start.getUTCFullYear() >= lastYear) {
+      const splitOffset = Math.floor(spanDays * 0.8);
+      const splitPoint = addUtcDays(start, splitOffset);
+      trainEnd = splitPoint >= start ? splitPoint : new Date(start.getTime());
+      evalStart = addUtcDays(trainEnd, 1);
+      evalEnd = new Date(end.getTime());
+    } else {
+      evalStart = janFirst < start ? new Date(start.getTime()) : janFirst;
+      evalEnd = new Date(end.getTime());
+      const candidateTrainEnd = addUtcDays(evalStart, -1);
+      trainEnd = candidateTrainEnd >= start ? candidateTrainEnd : new Date(start.getTime());
+    }
+    enforceMinEvalWindow();
+  }
+
+  if (trainEnd < trainStart) trainEnd = new Date(trainStart.getTime());
+  if (evalStart < start) evalStart = new Date(start.getTime());
+  if (evalEnd < evalStart) evalEnd = new Date(evalStart.getTime());
+
+  return {
+    train: { start: trainStart, end: trainEnd },
+    eval: { start: evalStart, end: evalEnd },
+  };
+};
+
+const computeValidation = (state: any): ValidationResult => {
+  const issues: ValidationIssue[] = [];
+  const symbols = String(state.symbols || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (symbols.length === 0) {
+    issues.push({
+      level: "error",
+      message: "Add at least one symbol to train on.",
+      blocking: true,
+    });
+  }
+
+  const interval = (state.interval as "1d" | "1h" | "15m") || "1d";
+  const startDate = parseIsoDate(state.start);
+  const endDate = parseIsoDate(state.end);
+  if (!startDate || !endDate) {
+    issues.push({
+      level: "error",
+      message: "Provide valid ISO dates for start and end (YYYY-MM-DD).",
+      blocking: true,
+    });
+    return {
+      issues,
+      blockingIssues: issues.filter((i) => i.level === "error" && i.blocking),
+      requiredBars: Math.max(0, Number(state.lookback) || 0) + 2,
+    };
+  }
+
+  if (endDate < startDate) {
+    issues.push({
+      level: "error",
+      message: "End date must be after start date.",
+      blocking: true,
+    });
+  }
+
+  const lookback = Number(state.lookback) || 0;
+  if (lookback <= 0) {
+    issues.push({
+      level: "error",
+      message: "Lookback must be a positive number of bars.",
+      blocking: true,
+    });
+  }
+
+  if (!Array.isArray(state.featureSet) || state.featureSet.length === 0) {
+    issues.push({
+      level: "error",
+      message: "Select at least one feature set.",
+      blocking: true,
+    });
+  }
+
+  const trainSplit = state.trainSplit || "last_year";
+  const evalWindow = Number(state.evalWindow) || 0;
+  const featureWarmup = estimateFeatureWarmup(state);
+  let splitSummary: ValidationResult["split"] | undefined;
+
+  if (endDate >= startDate && lookback > 0) {
+    const split = deriveSplit({
+      start: startDate,
+      end: endDate,
+      lookback,
+      trainSplit,
+      evalWindow,
+      interval,
+    });
+    const trainRange = summarizeRange(split.train.start, split.train.end, interval, featureWarmup);
+    const evalRange = summarizeRange(split.eval.start, split.eval.end, interval, featureWarmup);
+    splitSummary = { train: trainRange, eval: evalRange };
+
+    const requiredBars = lookback + 2;
+    const warnThreshold = requiredBars + 10;
+
+    if (trainRange.effectiveBars < requiredBars) {
+      issues.push({
+        level: "error",
+        message: `Train window has ≈${trainRange.effectiveBars} usable bars but lookback requires at least ${requiredBars}.`,
+        detail: "Extend the training start date, reduce indicator warm-up, or lower the lookback.",
+        blocking: true,
+      });
+    } else if (trainRange.effectiveBars < warnThreshold) {
+      issues.push({
+        level: "warning",
+        message: `Train window is tight (≈${trainRange.effectiveBars} usable bars vs required ${requiredBars}).`,
+        detail: "Consider using a longer history for more stable training.",
+      });
+    }
+
+    if (evalRange.effectiveBars < requiredBars) {
+      issues.push({
+        level: "error",
+        message: `Eval window has ≈${evalRange.effectiveBars} usable bars but lookback requires at least ${requiredBars}.`,
+        detail: "Increase eval window days, extend the end date, or reduce lookback.",
+        blocking: true,
+      });
+    } else if (evalRange.effectiveBars < warnThreshold) {
+      issues.push({
+        level: "warning",
+        message: `Eval window is tight (≈${evalRange.effectiveBars} usable bars vs required ${requiredBars}).`,
+        detail: "Extend the evaluation window to avoid runtime errors.",
+      });
+    }
+
+    if (trainSplit === "custom_ranges") {
+      issues.push({
+        level: "info",
+        message: "Custom ranges selected — ensure payload JSON supplies explicit ranges (UI uses auto-split heuristics).",
+      });
+    }
+
+    if (featureWarmup > 0) {
+      issues.push({
+        level: "info",
+        message: `Indicator warm-up removes ≈${featureWarmup} bars before windows are usable.`,
+        detail: "Usable bars estimates subtract warm-up and a small holiday buffer.",
+      });
+    }
+  }
+
+  const nSteps = Number(state.nSteps) || 0;
+  const batchSize = Number(state.batchSize) || 0;
+  if (!ppoDivisible(nSteps, batchSize)) {
+    issues.push({
+      level: "error",
+      message: "PPO expects batch_size to divide n_steps (per environment).",
+      detail: "Adjust n_steps or batch_size so n_steps % batch_size = 0.",
+      blocking: true,
+    });
+  }
+
+  if (state.volEnabled && Number(state.clampMin) === 0 && Number(state.clampMax) === 0) {
+    issues.push({
+      level: "error",
+      message: "Vol target clamps are 0/0 — exposure will pin near zero.",
+      detail: "Use wider clamps such as min 0.25 / max 2.0.",
+      blocking: true,
+    });
+  }
+
+  if (state.mappingMode === "tanh_leverage" && Number(state.grossLevCap) <= 1.0) {
+    issues.push({
+      level: "error",
+      message: "tanh_leverage mapping works best with gross_leverage_cap > 1.0.",
+      detail: "Increase the leverage cap or switch mapping modes.",
+      blocking: true,
+    });
+  }
+
+  const blockingIssues = issues.filter((i) => i.level === "error" && i.blocking);
+
+  return {
+    issues,
+    blockingIssues,
+    split: splitSummary,
+    requiredBars: Math.max(0, lookback) + 2,
+    featureWarmup,
+  };
+};
+
+const levelColors: Record<ValidationLevel, string> = {
+  error: "text-red-600 dark:text-red-400",
+  warning: "text-amber-600 dark:text-amber-400",
+  info: "text-sky-600 dark:text-sky-400",
+};
+
+const statusColor = (validation: ValidationResult) => {
+  if (validation.blockingIssues.length > 0) return "text-red-600 dark:text-red-400";
+  if (validation.issues.some((issue) => issue.level === "warning")) return "text-amber-600 dark:text-amber-400";
+  return "text-emerald-600 dark:text-emerald-400";
+};
+
+const statusLabel = (validation: ValidationResult) => {
+  if (validation.blockingIssues.length > 0) return "Fix blocking issues";
+  if (validation.issues.some((issue) => issue.level === "warning")) return "Review warnings";
+  return "Ready to train";
+};
+
+function ValidationSummaryCard({ validation }: { validation: ValidationResult }) {
+  return (
+    <div className="rounded-md border border-border/60 bg-muted/40 p-4 space-y-3">
+      <div className="flex items-center justify-between gap-2 text-sm">
+        <div className="font-medium text-foreground">Configuration checks</div>
+        <span className={`text-xs font-semibold uppercase tracking-wide ${statusColor(validation)}`}>
+          {statusLabel(validation)}
+        </span>
+      </div>
+      {validation.split && (
+        <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+          <div>
+            <span className="font-semibold text-foreground">Train</span>: {validation.split.train.start} → {validation.split.train.end}
+            {" "}({validation.split.train.calendarDays} days, ≈{validation.split.train.tradingBars} trading bars, ≈{validation.split.train.effectiveBars} usable)
+          </div>
+          <div>
+            <span className="font-semibold text-foreground">Eval</span>: {validation.split.eval.start} → {validation.split.eval.end}
+            {" "}({validation.split.eval.calendarDays} days, ≈{validation.split.eval.tradingBars} trading bars, ≈{validation.split.eval.effectiveBars} usable)
+          </div>
+          <div className="sm:col-span-2">
+            Minimum bars required by lookback: {validation.requiredBars}.
+            {" "}
+            {validation.featureWarmup > 0 && (
+              <span>
+                Warm-up estimate subtracts ≈{validation.featureWarmup} bars plus a small holiday buffer.
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+      <div className="space-y-2">
+        {validation.issues.length === 0 && (
+          <div className="text-xs text-muted-foreground">
+            No issues detected. You're good to start training.
+          </div>
+        )}
+        {validation.issues.map((issue, idx) => (
+          <div key={idx} className={`text-sm leading-snug ${levelColors[issue.level]}`}>
+            <div>
+              <span className="font-medium capitalize">{issue.level}:</span> {issue.message}
+            </div>
+            {issue.detail && <div className="text-xs text-muted-foreground">{issue.detail}</div>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function NewTraining({
   onJobCreated,
@@ -37,6 +472,7 @@ export default function NewTraining({
   const [interval, setInterval] = useState<"1d" | "1h" | "15m">("1d");
   const [adjusted, setAdjusted] = useState(true);
   const [lookback, setLookback] = useState(64);
+  const [evalWindow, setEvalWindow] = useState(0);
   const [trainSplit, setTrainSplit] = useState("last_year");
 
   // ===== Features =====
@@ -128,6 +564,12 @@ export default function NewTraining({
   const [saveTb, setSaveTb] = useState(true);
   const [saveActions, setSaveActions] = useState(true);
   const [saveRegime, setSaveRegime] = useState(true);
+
+  // ===== Payload JSON view =====
+  const [showPayload, setShowPayload] = useState(false);
+  const [jsonPayload, setJsonPayload] = useState("");
+  const [isJsonEditing, setIsJsonEditing] = useState(false);
+  const [jsonError, setJsonError] = useState<string | null>(null);
 
   // ===== Run state =====
   const [jobId, setJobId] = useState<string | null>(null);
@@ -303,6 +745,342 @@ export default function NewTraining({
     } catch {}
   };
 
+  const gatherState = useCallback(
+    () => ({
+      symbols: symbols.split(",").map((s) => s.trim()).join(","),
+      start,
+      end,
+      interval,
+      adjusted,
+      lookback,
+      evalWindow,
+      trainSplit,
+      featureSet,
+      dataSource,
+      rsi,
+      macd,
+      bbands,
+      normalizeObs,
+      embargo,
+      commissionPerShare,
+      takerFeeBps,
+      makerRebateBps,
+      halfSpreadBps,
+      impactK,
+      fillPolicy,
+      vwapMinutes,
+      maxParticipation,
+      cvFolds,
+      cvEmbargo,
+      regimeEnabled,
+      regimeStates,
+      regimeFeatures,
+      appendBeliefs,
+      policy,
+      totalTimesteps,
+      nSteps,
+      batchSize,
+      learningRate,
+      gamma,
+      gaeLambda,
+      clipRange,
+      entCoef,
+      vfCoef,
+      maxGradNorm,
+      dropout,
+      seed,
+      mappingMode,
+      investMax,
+      grossLevCap,
+      maxStepChange,
+      rebalanceEps,
+      minHoldBars,
+      kellyEnabled,
+      kellyLambda,
+      kellyFMax,
+      kellyEmaAlpha,
+      volEnabled,
+      volTarget,
+      volMin,
+      clampMin,
+      clampMax,
+      dailyLoss,
+      perNameCap,
+      rewardBase,
+      wDrawdown,
+      wTurnover,
+      wVol,
+      wLeverage,
+      saveTb,
+      saveActions,
+      saveRegime,
+    }),
+    [
+      symbols,
+      start,
+      end,
+      interval,
+      adjusted,
+      lookback,
+      evalWindow,
+      trainSplit,
+      featureSet,
+      dataSource,
+      rsi,
+      macd,
+      bbands,
+      normalizeObs,
+      embargo,
+      commissionPerShare,
+      takerFeeBps,
+      makerRebateBps,
+      halfSpreadBps,
+      impactK,
+      fillPolicy,
+      vwapMinutes,
+      maxParticipation,
+      cvFolds,
+      cvEmbargo,
+      regimeEnabled,
+      regimeStates,
+      regimeFeatures,
+      appendBeliefs,
+      policy,
+      totalTimesteps,
+      nSteps,
+      batchSize,
+      learningRate,
+      gamma,
+      gaeLambda,
+      clipRange,
+      entCoef,
+      vfCoef,
+      maxGradNorm,
+      dropout,
+      seed,
+      mappingMode,
+      investMax,
+      grossLevCap,
+      maxStepChange,
+      rebalanceEps,
+      minHoldBars,
+      kellyEnabled,
+      kellyLambda,
+      kellyFMax,
+      kellyEmaAlpha,
+      volEnabled,
+      volTarget,
+      volMin,
+      clampMin,
+      clampMax,
+      dailyLoss,
+      perNameCap,
+      rewardBase,
+      wDrawdown,
+      wTurnover,
+      wVol,
+      wLeverage,
+      saveTb,
+      saveActions,
+      saveRegime,
+    ]
+  );
+
+  const validation = useMemo(() => computeValidation(gatherState()), [gatherState]);
+
+  const applyPayloadToState = (payload: TrainPayload) => {
+    const toNumber = (value: unknown): number | undefined => {
+      if (typeof value === "number") return value;
+      if (typeof value === "string" && value.trim() !== "") {
+        const num = Number(value);
+        return Number.isNaN(num) ? undefined : num;
+      }
+      return undefined;
+    };
+
+    if (payload?.dataset) {
+      if (Array.isArray(payload.dataset.symbols)) {
+        setSymbols(payload.dataset.symbols.map((s) => s.trim()).join(","));
+      }
+      if (typeof payload.dataset.start_date === "string") setStart(payload.dataset.start_date);
+      if (typeof payload.dataset.end_date === "string") setEnd(payload.dataset.end_date);
+      if (payload.dataset.interval) setInterval(payload.dataset.interval);
+      if (typeof payload.dataset.adjusted_prices === "boolean") setAdjusted(payload.dataset.adjusted_prices);
+      const lookbackVal = toNumber(payload.dataset.lookback);
+      if (lookbackVal !== undefined) setLookback(lookbackVal);
+      const evalWindowVal = toNumber(payload.dataset.eval_window_days);
+      setEvalWindow(evalWindowVal ?? 0);
+      if (payload.dataset.train_eval_split) setTrainSplit(payload.dataset.train_eval_split);
+    }
+
+    if (payload?.features) {
+      if (Array.isArray(payload.features.feature_set)) setFeatureSet([...payload.features.feature_set]);
+      if (typeof payload.features.data_source === "string") setDataSource(payload.features.data_source);
+      if ("ta_basic_opts" in payload.features) {
+        const opts = payload.features.ta_basic_opts ?? { rsi: false, macd: false, bbands: false };
+        setRsi(!!opts.rsi);
+        setMacd(!!opts.macd);
+        setBbands(!!opts.bbands);
+      }
+      if (typeof payload.features.normalize_observation === "boolean") {
+        setNormalizeObs(payload.features.normalize_observation);
+      }
+      const embargoVal = toNumber(payload.features.embargo_bars);
+      if (embargoVal !== undefined) setEmbargo(embargoVal);
+    }
+
+    if (payload?.costs) {
+      const commissionVal = toNumber(payload.costs.commission_per_share);
+      if (commissionVal !== undefined) setCommissionPerShare(commissionVal);
+      const takerVal = toNumber(payload.costs.taker_fee_bps);
+      if (takerVal !== undefined) setTakerFeeBps(takerVal);
+      const makerVal = toNumber(payload.costs.maker_rebate_bps);
+      if (makerVal !== undefined) setMakerRebateBps(makerVal);
+      const spreadVal = toNumber(payload.costs.half_spread_bps);
+      if (spreadVal !== undefined) setHalfSpreadBps(spreadVal);
+      const impactVal = toNumber(payload.costs.impact_k);
+      if (impactVal !== undefined) setImpactK(impactVal);
+    }
+
+    if (payload?.execution_model) {
+      if (payload.execution_model.fill_policy) setFillPolicy(payload.execution_model.fill_policy);
+      const vwapVal = toNumber(payload.execution_model.vwap_minutes);
+      if (vwapVal !== undefined) setVwapMinutes(vwapVal);
+      const maxPartVal = toNumber(payload.execution_model.max_participation);
+      if (maxPartVal !== undefined) setMaxParticipation(maxPartVal);
+    }
+
+    if (payload?.cv) {
+      const foldsVal = toNumber(payload.cv.n_folds);
+      if (foldsVal !== undefined) setCvFolds(foldsVal);
+      const cvEmbargoVal = toNumber(payload.cv.embargo_bars);
+      if (cvEmbargoVal !== undefined) setCvEmbargo(cvEmbargoVal);
+    }
+
+    if (payload?.regime) {
+      if (typeof payload.regime.enabled === "boolean") setRegimeEnabled(payload.regime.enabled);
+      const statesVal = toNumber(payload.regime.n_states);
+      if (statesVal !== undefined) setRegimeStates(statesVal);
+      if (Array.isArray(payload.regime.features)) {
+        setRegimeFeatures(payload.regime.features.map((f) => f.trim()).filter(Boolean).join(","));
+      }
+      if (typeof payload.regime.append_beliefs_to_obs === "boolean") {
+        setAppendBeliefs(payload.regime.append_beliefs_to_obs);
+      }
+    }
+
+    if (payload?.model) {
+      if (payload.model.policy) setPolicy(payload.model.policy);
+      const totalVal = toNumber(payload.model.total_timesteps);
+      if (totalVal !== undefined) setTotalTimesteps(totalVal);
+      const nStepsVal = toNumber(payload.model.n_steps);
+      if (nStepsVal !== undefined) setNSteps(nStepsVal);
+      const batchVal = toNumber(payload.model.batch_size);
+      if (batchVal !== undefined) setBatchSize(batchVal);
+      const lrVal = toNumber(payload.model.learning_rate);
+      if (lrVal !== undefined) setLearningRate(lrVal);
+      const gammaVal = toNumber(payload.model.gamma);
+      if (gammaVal !== undefined) setGamma(gammaVal);
+      const gaeVal = toNumber(payload.model.gae_lambda);
+      if (gaeVal !== undefined) setGaeLambda(gaeVal);
+      const clipVal = toNumber(payload.model.clip_range);
+      if (clipVal !== undefined) setClipRange(clipVal);
+      const entVal = toNumber(payload.model.ent_coef);
+      if (entVal !== undefined) setEntCoef(entVal);
+      const vfVal = toNumber(payload.model.vf_coef);
+      if (vfVal !== undefined) setVfCoef(vfVal);
+      const gradVal = toNumber(payload.model.max_grad_norm);
+      if (gradVal !== undefined) setMaxGradNorm(gradVal);
+      const dropoutVal = toNumber(payload.model.dropout);
+      if (dropoutVal !== undefined) setDropout(dropoutVal);
+      const seedVal = toNumber(payload.model.seed);
+      setSeed(seedVal);
+    }
+
+    if (payload?.sizing) {
+      if (payload.sizing.mapping_mode) setMappingMode(payload.sizing.mapping_mode);
+      const investVal = toNumber(payload.sizing.invest_max);
+      if (investVal !== undefined) setInvestMax(investVal);
+      const grossVal = toNumber(payload.sizing.gross_leverage_cap);
+      if (grossVal !== undefined) setGrossLevCap(grossVal);
+      const maxStepVal = toNumber(payload.sizing.max_step_change);
+      if (maxStepVal !== undefined) setMaxStepChange(maxStepVal);
+      const rebalanceVal = toNumber(payload.sizing.rebalance_eps);
+      if (rebalanceVal !== undefined) setRebalanceEps(rebalanceVal);
+      const minHoldVal = toNumber(payload.sizing.min_hold_bars);
+      if (minHoldVal !== undefined) setMinHoldBars(minHoldVal);
+      if (payload.sizing.kelly) {
+        if (typeof payload.sizing.kelly.enabled === "boolean") setKellyEnabled(payload.sizing.kelly.enabled);
+        const lambdaVal = toNumber(payload.sizing.kelly.lambda);
+        if (lambdaVal !== undefined) setKellyLambda(lambdaVal);
+        const fMaxVal = toNumber(payload.sizing.kelly.f_max);
+        if (fMaxVal !== undefined) setKellyFMax(fMaxVal);
+        const emaVal = toNumber(payload.sizing.kelly.ema_alpha);
+        if (emaVal !== undefined) setKellyEmaAlpha(emaVal);
+      }
+      if (payload.sizing.vol_target) {
+        if (typeof payload.sizing.vol_target.enabled === "boolean") setVolEnabled(payload.sizing.vol_target.enabled);
+        const annualVal = toNumber(payload.sizing.vol_target.annual_target);
+        if (annualVal !== undefined) setVolTarget(annualVal);
+        const minVolVal = toNumber(payload.sizing.vol_target.min_vol);
+        if (minVolVal !== undefined) setVolMin(minVolVal);
+        if (payload.sizing.vol_target.clamp) {
+          const clampMinVal = toNumber(payload.sizing.vol_target.clamp.min);
+          if (clampMinVal !== undefined) setClampMin(clampMinVal);
+          const clampMaxVal = toNumber(payload.sizing.vol_target.clamp.max);
+          if (clampMaxVal !== undefined) setClampMax(clampMaxVal);
+        }
+      }
+      if (payload.sizing.guards) {
+        const dailyVal = toNumber(payload.sizing.guards.daily_loss_limit_pct);
+        if (dailyVal !== undefined) setDailyLoss(dailyVal);
+        const perNameVal = toNumber(payload.sizing.guards.per_name_weight_cap);
+        if (perNameVal !== undefined) setPerNameCap(perNameVal);
+      }
+    }
+
+    if (payload?.reward) {
+      if (payload.reward.base) setRewardBase(payload.reward.base);
+      const drawdownVal = toNumber(payload.reward.w_drawdown);
+      if (drawdownVal !== undefined) setWDrawdown(drawdownVal);
+      const turnoverVal = toNumber(payload.reward.w_turnover);
+      if (turnoverVal !== undefined) setWTurnover(turnoverVal);
+      const volVal = toNumber(payload.reward.w_vol);
+      if (volVal !== undefined) setWVol(volVal);
+      const levVal = toNumber(payload.reward.w_leverage);
+      if (levVal !== undefined) setWLeverage(levVal);
+    }
+
+    if (payload?.artifacts) {
+      if (typeof payload.artifacts.save_tb === "boolean") setSaveTb(payload.artifacts.save_tb);
+      if (typeof payload.artifacts.save_action_hist === "boolean") setSaveActions(payload.artifacts.save_action_hist);
+      if (typeof payload.artifacts.save_regime_plots === "boolean") setSaveRegime(payload.artifacts.save_regime_plots);
+    }
+  };
+
+  useEffect(() => {
+    if (isJsonEditing) return;
+    const next = JSON.stringify(buildTrainPayload(gatherState()), null, 2);
+    setJsonPayload((prev) => (prev === next ? prev : next));
+    setJsonError(null);
+  }, [gatherState, isJsonEditing, showPayload]);
+
+  const handlePayloadChange = (value: string) => {
+    setJsonPayload(value);
+    if (!value.trim()) {
+      setJsonError("Payload cannot be empty");
+      return;
+    }
+    try {
+      const parsed = JSON.parse(value) as TrainPayload;
+      if (!parsed || typeof parsed !== "object") throw new Error("Invalid payload");
+      applyPayloadToState(parsed);
+      setJsonError(null);
+    } catch {
+      setJsonError("Invalid JSON payload");
+    }
+  };
+
   // ===== Submit =====
   const onSubmit = async () => {
     setSubmitting(true);
@@ -313,94 +1091,22 @@ export default function NewTraining({
     setJobId(null);
 
     // ---- Preflight guards ----
-    if (!ppoDivisible(nSteps, batchSize)) {
-      setError("PPO: batch_size should divide n_steps (or n_steps × n_envs).");
-      setSubmitting(false);
-      setProgress(null);
-      return;
-    }
-    if (volEnabled && clampMin === 0 && clampMax === 0) {
-      setError("Vol target clamps are 0/0 → exposure will pin near zero. Use e.g. min=0.25, max=2.0.");
-      setSubmitting(false);
-      setProgress(null);
-      return;
-    }
-    if (mappingMode === "tanh_leverage" && grossLevCap <= 1.0) {
-      setError("tanh_leverage requires gross_leverage_cap > 1.0 to be useful.");
+    if (validation.blockingIssues.length > 0) {
+      setError(validation.blockingIssues.map((issue) => issue.message).join(" "));
       setSubmitting(false);
       setProgress(null);
       return;
     }
 
     try {
-      const payload: TrainPayload = buildTrainPayload({
-        symbols: symbols.split(",").map(s => s.trim()).join(","), // normalize
-        start,
-        end,
-        interval,
-        adjusted,
-        lookback,
-        trainSplit,
-        featureSet,
-        dataSource,
-        rsi,
-        macd,
-        bbands,
-        normalizeObs,
-        embargo,
-        commissionPerShare,
-        takerFeeBps,
-        makerRebateBps,
-        halfSpreadBps,
-        impactK,
-        fillPolicy,
-        vwapMinutes,
-        maxParticipation,
-        cvFolds,
-        cvEmbargo,
-        regimeEnabled,
-        regimeStates,
-        regimeFeatures,
-        appendBeliefs,
-        policy,
-        totalTimesteps,
-        nSteps,
-        batchSize,
-        learningRate,
-        gamma,
-        gaeLambda,
-        clipRange,
-        entCoef,
-        vfCoef,
-        maxGradNorm,
-        dropout,
-        seed,
-        mappingMode,
-        investMax,
-        grossLevCap,
-        maxStepChange,
-        rebalanceEps,
-        minHoldBars,
-        kellyEnabled,
-        kellyLambda,
-        kellyFMax,
-        kellyEmaAlpha,
-        volEnabled,
-        volTarget,
-        volMin,
-        clampMin,
-        clampMax,
-        dailyLoss,
-        perNameCap,
-        rewardBase,
-        wDrawdown,
-        wTurnover,
-        wVol,
-        wLeverage,
-        saveTb,
-        saveActions,
-        saveRegime,
-      });
+      if (showPayload && jsonError) {
+        setError(jsonError);
+        setSubmitting(false);
+        setProgress(null);
+        return;
+      }
+      const state = gatherState();
+      const payload = buildTrainPayload(state);
 
       const { data: resp } = await api.post<{ job_id: string }>("/stockbot/train", payload);
       if (!resp?.job_id) throw new Error("No job_id returned");
@@ -431,7 +1137,15 @@ export default function NewTraining({
           >
             Cancel
           </Button>
-          <Button onClick={onSubmit} disabled={submitting || isRunning}>
+          <Button
+            onClick={onSubmit}
+            disabled={submitting || isRunning || validation.blockingIssues.length > 0}
+            title={
+              validation.blockingIssues.length > 0
+                ? "Resolve configuration errors before starting"
+                : undefined
+            }
+          >
             {submitting && !status ? "Submitting…" : isRunning ? "Running…" : "Start Training"}
           </Button>
         </div>
@@ -456,6 +1170,42 @@ export default function NewTraining({
       )}
       {error && <div className="text-sm text-red-600">{error}</div>}
 
+      <ValidationSummaryCard validation={validation} />
+
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <Switch
+            id="view-json"
+            checked={showPayload}
+            onCheckedChange={(value) => {
+              setShowPayload(value);
+              if (value) {
+                const next = JSON.stringify(buildTrainPayload(gatherState()), null, 2);
+                setJsonPayload(next);
+                setJsonError(null);
+              } else {
+                setIsJsonEditing(false);
+                setJsonError(null);
+              }
+            }}
+          />
+          <Label htmlFor="view-json">View JSON payload</Label>
+        </div>
+        {showPayload && (
+          <div className="space-y-1">
+            <Textarea
+              className="font-mono text-xs h-64"
+              value={jsonPayload}
+              onChange={(e) => handlePayloadChange(e.target.value)}
+              onFocus={() => setIsJsonEditing(true)}
+              onBlur={() => setIsJsonEditing(false)}
+              spellCheck={false}
+            />
+            {jsonError && <div className="text-xs text-red-500">{jsonError}</div>}
+          </div>
+        )}
+      </div>
+
       <Accordion type="multiple" className="w-full">
         <DatasetSection
           symbols={symbols}
@@ -470,6 +1220,8 @@ export default function NewTraining({
           setAdjusted={setAdjusted}
           lookback={lookback}
           setLookback={setLookback}
+          evalWindow={evalWindow}
+          setEvalWindow={setEvalWindow}
           trainEvalSplit={trainSplit}
           setTrainEvalSplit={setTrainSplit}
         />

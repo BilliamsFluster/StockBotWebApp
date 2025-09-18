@@ -15,7 +15,7 @@ import shutil
 import json
 
 from fastapi import BackgroundTasks, HTTPException, UploadFile, File
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, PlainTextResponse
 from fastapi import Request
 from pydantic import BaseModel, Field
 
@@ -115,6 +115,7 @@ class DatasetModel(BaseModel):
     lookback: int = 64
     train_eval_split: Literal["last_year", "80_20", "custom_ranges"] = "last_year"
     custom_ranges: Optional[List[Dict[str, List[str]]]] = None
+    eval_window_days: Optional[int] = None
 
 
 class FeaturesModel(BaseModel):
@@ -344,6 +345,8 @@ def _env_snapshot_from_train(req: "TrainRequest") -> Dict[str, Any]:
     base["start"] = ds.start_date
     base["end"] = ds.end_date
     base["adjusted"] = bool(ds.adjusted_prices)
+    if getattr(ds, "eval_window_days", None) is not None:
+        base["eval_window_days"] = int(ds.eval_window_days)
 
     # Episode lookback
     base.setdefault("episode", {})
@@ -811,6 +814,18 @@ def get_artifact_file(run_id: str, name: str):
     path = Path(r.out_dir) / rel
     if not path.exists():
         raise HTTPException(status_code=404, detail="File not found")
+    # Live, growing files can cause Content-Length mismatches with FileResponse
+    # when the file size changes between header calculation and body send.
+    # For these, serve a static text snapshot instead of a direct file handle.
+    LIVE_TEXT_NAMES = {"live_telemetry", "live_events", "live_rollups", "live_audit", "job_log"}
+    if name in LIVE_TEXT_NAMES:
+        try:
+            # Read a snapshot at request time; clients poll and diff/tail as needed
+            txt = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            txt = ""
+        # NDJSON / log text — serve as plain text to avoid strict JSON parsing at proxies
+        return PlainTextResponse(txt)
     return FileResponse(str(path), filename=path.name)
 
 # Cancel a running job by pid
