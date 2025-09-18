@@ -10,6 +10,10 @@ import {
   deleteRunProxy,
   uploadPolicyProxy,
   getRunArtifactsProxy,
+  getRunSeriesProxy,
+  getRunTradesProxy,
+  getRunEventsProxy,
+  getRunStateSnapshotProxy,
   getRunArtifactFileProxy,
   getRunBundleProxy,
   getRunTelemetryTailProxy,
@@ -51,10 +55,14 @@ router.get("/runs", protectRoute, listRunsProxy);
 router.get("/runs/:id", protectRoute, getRunProxy);
 router.delete("/runs/:id", protectRoute, deleteRunProxy);
 router.get("/runs/:id/artifacts", protectRoute, getRunArtifactsProxy);
+router.get("/runs/:id/series/:key", protectRoute, getRunSeriesProxy);
+router.get("/runs/:id/trades", protectRoute, getRunTradesProxy);
+router.get("/runs/:id/events", protectRoute, getRunEventsProxy);
+router.get("/runs/:id/events/stream", protectRoute, streamRunEventsProxy);
+router.get("/runs/:id/state", protectRoute, getRunStateSnapshotProxy);
 router.get("/runs/:id/telemetry/tail", protectRoute, getRunTelemetryTailProxy);
 router.get("/runs/:id/telemetry/chunk", protectRoute, getRunTelemetryChunkProxy);
 router.get("/runs/:id/telemetry", protectRoute, streamRunTelemetryProxy);
-router.get("/runs/:id/events", protectRoute, streamRunEventsProxy);
 
 // Stream a specific artifact (metrics, equity, trades, orders, summary, config, model, job_log)
 router.get("/runs/:id/files/:name", protectRoute, getRunArtifactFileProxy);
