@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { LineChart as MonitorLineChart } from "@/components/ui/line-chart";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Line, XAxis, YAxis, CartesianGrid, ReferenceLine, ReferenceDot } from "recharts";
 import api, { buildUrl } from "@/api/client";
 import { askJarvisLite, fetchAvailableModels } from "@/api/jarvisApi";
@@ -172,6 +173,147 @@ function toFloat(value: any): number {
   }
   return 0;
 }
+
+function coerceNumber(value: any): number | undefined {
+  if (value == null) return undefined;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value.trim());
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function firstNumber(...values: any[]): number | undefined {
+  for (const value of values) {
+    const num = coerceNumber(value);
+    if (num != null) return num;
+  }
+  return undefined;
+}
+
+function formatDateOnly(value: any): string {
+  if (!value) return "—";
+  try {
+    const date = typeof value === "number" ? new Date(value) : new Date(String(value));
+    if (Number.isNaN(date.getTime())) return "—";
+    return date.toISOString().slice(0, 10);
+  } catch {
+    return "—";
+  }
+}
+
+function humanizeKey(key: string): string {
+  return key
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
+function formatNumberFixed(value: any, digits = 2): string | null {
+  const num = coerceNumber(value);
+  if (num == null) return null;
+  return num.toFixed(digits);
+}
+
+function formatSignedFixed(value: any, digits = 2): string | null {
+  const num = coerceNumber(value);
+  if (num == null) return null;
+  const str = num.toFixed(digits);
+  return num >= 0 ? `+${str}` : str;
+}
+
+function formatPercentValue(value: any): string | null {
+  const num = coerceNumber(value);
+  if (num == null) return null;
+  return formatPct(num);
+}
+
+function formatIntegerValue(value: any): string | null {
+  const num = coerceNumber(value);
+  if (num == null) return null;
+  return Math.round(num).toLocaleString();
+}
+
+function formatBpsValue(value: any, digits = 1): string | null {
+  const num = coerceNumber(value);
+  if (num == null) return null;
+  return `${num.toFixed(digits)} bps`;
+}
+
+function formatYesNo(value: any): string {
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "string") {
+    const lowered = value.trim().toLowerCase();
+    if (["true", "yes", "1"].includes(lowered)) return "Yes";
+    if (["false", "no", "0"].includes(lowered)) return "No";
+  }
+  if (typeof value === "number") return value !== 0 ? "Yes" : "No";
+  return value ? "Yes" : "No";
+}
+
+const SUMMARY_FIELD_CONFIG: Record<
+  string,
+  { label: string; order: number; format?: (value: any) => string | null }
+> = {
+  policy: { label: "Policy", order: 10, format: (value) => (value ? String(value) : "—") },
+  symbols: {
+    label: "Symbols",
+    order: 20,
+    format: (value) => {
+      if (Array.isArray(value)) {
+        const joined = value.map((item) => String(item)).filter(Boolean).join(", ");
+        return joined || "—";
+      }
+      if (typeof value === "string" && value.trim()) return value;
+      return null;
+    },
+  },
+  start: {
+    label: "Start",
+    order: 30,
+    format: (value) => {
+      const formatted = formatDateOnly(value);
+      return formatted === "—" ? null : formatted;
+    },
+  },
+  end: {
+    label: "End",
+    order: 40,
+    format: (value) => {
+      const formatted = formatDateOnly(value);
+      return formatted === "—" ? null : formatted;
+    },
+  },
+  normalize: { label: "Normalize Obs", order: 50, format: (value) => formatYesNo(value) },
+  config_path: { label: "Config", order: 60, format: (value) => (value ? String(value) : "—") },
+  notes: { label: "Notes", order: 70, format: (value) => (value ? String(value) : null) },
+  total_return: { label: "Total Return", order: 110, format: (value) => formatPercentValue(value) },
+  cagr: { label: "CAGR", order: 120, format: (value) => formatPercentValue(value) },
+  vol_daily: { label: "Vol (Daily)", order: 130, format: (value) => formatPercentValue(value) },
+  vol_annual: { label: "Vol (Annual)", order: 140, format: (value) => formatPercentValue(value) },
+  sharpe: { label: "Sharpe", order: 150, format: (value) => formatNumberFixed(value, 2) },
+  sortino: { label: "Sortino", order: 160, format: (value) => formatNumberFixed(value, 2) },
+  calmar: { label: "Calmar", order: 170, format: (value) => formatNumberFixed(value, 2) },
+  max_drawdown: { label: "Max Drawdown", order: 180, format: (value) => formatPercentValue(value) },
+  turnover: { label: "Turnover", order: 190, format: (value) => formatPercentValue(value) },
+  hit_rate: { label: "Hit Rate", order: 200, format: (value) => formatPercentValue(value) },
+  num_trades: { label: "Trades", order: 210, format: (value) => formatIntegerValue(value) },
+  avg_trade_pnl: { label: "Avg Trade P&L", order: 220, format: (value) => formatSignedFixed(value, 2) },
+  profit_factor: { label: "Profit Factor", order: 230, format: (value) => formatNumberFixed(value, 2) },
+  expectancy: { label: "Expectancy", order: 240, format: (value) => formatSignedFixed(value, 2) },
+  avg_win: { label: "Avg Win", order: 250, format: (value) => formatNumberFixed(value, 2) },
+  avg_loss: { label: "Avg Loss", order: 260, format: (value) => formatNumberFixed(value, 2) },
+  median_hold_days: { label: "Median Hold (days)", order: 270, format: (value) => formatNumberFixed(value, 1) },
+  hold_p25: { label: "Hold P25 (days)", order: 280, format: (value) => formatNumberFixed(value, 1) },
+  hold_p75: { label: "Hold P75 (days)", order: 290, format: (value) => formatNumberFixed(value, 1) },
+  avg_cost_bps: { label: "Avg Cost (bps)", order: 300, format: (value) => formatBpsValue(value, 1) },
+  rets_skew: { label: "Return Skew", order: 310, format: (value) => formatSignedFixed(value, 2) },
+  rets_kurtosis: { label: "Return Kurtosis", order: 320, format: (value) => formatSignedFixed(value, 2) },
+};
 
 function inferEventTimestamp(ev: EventItem): number {
   return ev?.ts ?? ev?.at ?? ev?.emitted_at ?? 0;
@@ -607,27 +749,9 @@ export default function RunMonitor({ runId }: { runId: string }) {
         const items: RollingPoint[] = rawItems
           .map((rec: any) => ({
             ts: parseEpoch(rec?.ts ?? rec?.t ?? rec?.timestamp),
-            roll_sharpe_63: Number.isFinite(rec?.roll_sharpe_63)
-              ? Number(rec.roll_sharpe_63)
-              : Number.isFinite(rec?.sharpe)
-              ? Number(rec.sharpe)
-              : Number.isFinite(rec?.roll_sharpe)
-              ? Number(rec.roll_sharpe)
-              : undefined,
-            roll_vol_63: Number.isFinite(rec?.roll_vol_63)
-              ? Number(rec.roll_vol_63)
-              : Number.isFinite(rec?.vol)
-              ? Number(rec.vol)
-              : Number.isFinite(rec?.roll_volatility)
-              ? Number(rec.roll_volatility)
-              : undefined,
-            roll_maxdd_252: Number.isFinite(rec?.roll_maxdd_252)
-              ? Number(rec.roll_maxdd_252)
-              : Number.isFinite(rec?.maxdd)
-              ? Number(rec.maxdd)
-              : Number.isFinite(rec?.roll_maxdd)
-              ? Number(rec.roll_maxdd)
-              : undefined,
+            roll_sharpe_63: firstNumber(rec?.roll_sharpe_63, rec?.roll_sharpe, rec?.sharpe),
+            roll_vol_63: firstNumber(rec?.roll_vol_63, rec?.roll_volatility, rec?.vol, rec?.vol_realized),
+            roll_maxdd_252: firstNumber(rec?.roll_maxdd_252, rec?.roll_maxdd, rec?.maxdd),
           }))
           .filter((rec: RollingPoint) => Number.isFinite(rec.ts) && rec.ts > 0);
         setRolling(items);
@@ -925,13 +1049,24 @@ export default function RunMonitor({ runId }: { runId: string }) {
   const liveTurnoverDomain = useMemo(() => computeDomain(liveSlipSeries.map((p) => p.to), 0.1), [liveSlipSeries]);
 
   const rollingSharpeSeries = useMemo(() => {
-    if (!rolling.length) return [] as { t: number; sharpe: number; vol: number; maxdd: number }[];
-    return rolling.map((pt) => ({
-      t: pt.ts,
-      sharpe: Number(pt.roll_sharpe_63 ?? 0),
-      vol: Number(pt.roll_vol_63 ?? 0),
-      maxdd: Number(pt.roll_maxdd_252 ?? 0),
-    }));
+    if (!rolling.length)
+      return [] as { t: number; sharpe: number | null; vol: number | null; maxdd: number | null }[];
+    return rolling
+      .map((pt) => {
+        const sharpe = coerceNumber(pt.roll_sharpe_63);
+        const vol = coerceNumber(pt.roll_vol_63);
+        const maxdd = coerceNumber(pt.roll_maxdd_252);
+        if (sharpe == null && vol == null && maxdd == null) return null;
+        return {
+          t: pt.ts,
+          sharpe: sharpe ?? null,
+          vol: vol ?? null,
+          maxdd: maxdd ?? null,
+        };
+      })
+      .filter(
+        (row): row is { t: number; sharpe: number | null; vol: number | null; maxdd: number | null } => row !== null
+      );
   }, [rolling]);
   const metricCards = useMemo(() => {
     if (!metrics) return [] as { key: string; label: string; value: string }[];
@@ -949,34 +1084,57 @@ export default function RunMonitor({ runId }: { runId: string }) {
     return entries;
   }, [metrics]);
 
+  const aiModelOptions = useMemo(
+    () =>
+      [aiModel, ...aiModels]
+        .filter((value): value is string => Boolean(value && String(value).trim().length > 0))
+        .filter((value, idx, arr) => arr.indexOf(value) === idx),
+    [aiModel, aiModels]
+  );
+
+  const aiModelSelectValue = aiModelOptions.includes(aiModel) ? aiModel : undefined;
+
+  const summaryData = useMemo(() => {
+    if (!summary && !metrics) return null;
+    const combined = { ...(summary ?? {}), ...(metrics ?? {}) } as Record<string, any>;
+    return Object.keys(combined).length ? combined : null;
+  }, [summary, metrics]);
+
   const summaryLines = useMemo(() => {
-    if (!summary) return [] as { label: string; value: string }[];
-    const lines: { label: string; value: string }[] = [
-      { label: "Policy", value: summary.policy || "—" },
-      {
-        label: "Symbols",
-        value: Array.isArray(summary.symbols)
-          ? summary.symbols.join(", ")
-          : String(summary.symbols || "—"),
-      },
-      {
-        label: "Start",
-        value: summary.start ? new Date(summary.start).toISOString().slice(0, 10) : "—",
-      },
-      {
-        label: "End",
-        value: summary.end ? new Date(summary.end).toISOString().slice(0, 10) : "—",
-      },
-      { label: "Normalize Obs", value: summary.normalize ? "Yes" : "No" },
-    ];
-    if (summary.config_path) {
-      lines.push({ label: "Config", value: String(summary.config_path) });
-    }
-    if (summary.notes) {
-      lines.push({ label: "Notes", value: String(summary.notes) });
-    }
-    return lines.filter((line) => line.value != null && String(line.value).trim().length > 0);
-  }, [summary]);
+    if (!summaryData)
+      return [] as { key: string; label: string; value: string }[];
+    const entries: { key: string; label: string; value: string; order: number }[] = [];
+    Object.entries(summaryData).forEach(([key, rawValue]) => {
+      if (rawValue == null) return;
+      if (typeof rawValue === "number" && Number.isNaN(rawValue)) return;
+      const config = SUMMARY_FIELD_CONFIG[key];
+      const label = config?.label ?? humanizeKey(key);
+      const formatter = config?.format;
+      let value: string | null = null;
+      if (formatter) {
+        value = formatter(rawValue);
+      } else if (Array.isArray(rawValue)) {
+        const joined = rawValue.map((item) => String(item)).filter(Boolean).join(", ");
+        value = joined || null;
+      } else if (typeof rawValue === "boolean") {
+        value = rawValue ? "Yes" : "No";
+      } else if (typeof rawValue === "number") {
+        value = Number.isFinite(rawValue) ? rawValue.toString() : null;
+      } else if (typeof rawValue === "string") {
+        value = rawValue.trim() || null;
+      }
+      if (!value) return;
+      entries.push({
+        key,
+        label,
+        value,
+        order: config?.order ?? 1000,
+      });
+    });
+    return entries
+      .sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))
+      .map(({ key, label, value }) => ({ key, label, value }));
+  }, [summaryData]);
 
   const highlightedEventIndices = useMemo(() => {
     if (!selectedTs) return new Set<number>();
@@ -1287,7 +1445,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
         {summaryLines.length ? (
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 text-sm">
             {summaryLines.map((line) => (
-              <div key={line.label} className="flex flex-col">
+              <div key={line.key} className="flex flex-col">
                 <span className="text-xs uppercase text-muted-foreground">{line.label}</span>
                 <span className="font-medium text-sm">{line.value}</span>
               </div>
@@ -1482,11 +1640,14 @@ export default function RunMonitor({ runId }: { runId: string }) {
           <div className="text-sm text-muted-foreground">Loading rolling metrics…</div>
         ) : rollingSharpeSeries.length ? (
           <div className="h-48">
-            <MonitorLineChart data={rollingSharpeSeries} config={{ sharpe: { label: "Sharpe", color: "#2563eb" }, vol: { label: "Vol", color: "#f59e0b" }, maxdd: { label: "Max DD", color: "#ef4444" } }}>
+            <MonitorLineChart
+              data={rollingSharpeSeries}
+              config={{ sharpe: { label: "Sharpe", color: "#2563eb" }, vol: { label: "Vol", color: "#f59e0b" }, maxdd: { label: "Max DD", color: "#ef4444" } }}
+            >
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="t" type="number" tickFormatter={(value) => new Date(Number(value)).toLocaleDateString()} />
-              <YAxis yAxisId="left" domain={['auto', 'auto']} />
-              <YAxis yAxisId="right" orientation="right" domain={['auto', 'auto']} />
+              <YAxis yAxisId="left" domain={["auto", "auto"]} />
+              <YAxis yAxisId="right" orientation="right" domain={["auto", "auto"]} />
               <ChartTooltip
                 content={<ChartTooltipContent valueFormatter={(value: number, name: string) => formatRollingTooltipValue(value, name)} />}
                 labelFormatter={(label) => formatDateTime(Number(label))}
@@ -1497,7 +1658,10 @@ export default function RunMonitor({ runId }: { runId: string }) {
             </MonitorLineChart>
           </div>
         ) : (
-          <div className="text-sm text-muted-foreground">Rolling metrics not available.</div>
+          <div className="space-y-1 text-sm text-muted-foreground">
+            <div>Rolling metrics not available.</div>
+            {rollingError && <div className="text-xs">{rollingError}</div>}
+          </div>
         )}
       </Card>
       <div className="grid gap-4 lg:grid-cols-2">
@@ -1644,17 +1808,18 @@ export default function RunMonitor({ runId }: { runId: string }) {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="text-sm font-semibold">Jarvis Insights</div>
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <select
-              className="rounded border bg-background px-2 py-1 text-xs"
-              value={aiModel}
-              onChange={(e) => setAiModel(e.target.value)}
-            >
-              {[aiModel, ...aiModels].filter(Boolean).filter((v, idx, arr) => arr.indexOf(v) === idx).map((model) => (
-                <option key={model} value={model}>
-                  {model}
-                </option>
-              ))}
-            </select>
+            <Select value={aiModelSelectValue} onValueChange={setAiModel}>
+              <SelectTrigger className="h-8 w-[200px] text-xs" disabled={!aiModelOptions.length}>
+                <SelectValue placeholder="Select a model" />
+              </SelectTrigger>
+              <SelectContent>
+                {aiModelOptions.map((model) => (
+                  <SelectItem key={model} value={model}>
+                    {model}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button size="xs" variant={aiUseMemory ? "default" : "outline"} onClick={() => setAiUseMemory((v) => !v)}>
               Memory {aiUseMemory ? "On" : "Off"}
             </Button>
