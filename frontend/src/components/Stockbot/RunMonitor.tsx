@@ -725,13 +725,10 @@ export default function RunMonitor({ runId }: { runId: string }) {
     let cancelled = false;
     const hasKey = Object.prototype.hasOwnProperty.call(artifacts, "rolling_metrics");
     const path = (artifacts as Record<string, string | null>)?.rolling_metrics ?? null;
-    if (hasKey && !path) {
+    const expectMissing = hasKey && !path;
+    if (expectMissing) {
       setRolling([]);
       setRollingError(null);
-      setRollingLoading(false);
-      return () => {
-        cancelled = true;
-      };
     }
     const url = buildUrl(path || `/api/stockbot/runs/${runId}/files/rolling_metrics`);
     setRollingLoading(true);
@@ -760,7 +757,11 @@ export default function RunMonitor({ runId }: { runId: string }) {
         if (!cancelled) {
           const msg = err?.message || "Failed to load rolling metrics";
           setRolling([]);
-          setRollingError(msg.includes("404") ? null : msg);
+          if (expectMissing || msg.includes("404")) {
+            setRollingError(null);
+          } else {
+            setRollingError(msg);
+          }
         }
       } finally {
         if (!cancelled) setRollingLoading(false);
