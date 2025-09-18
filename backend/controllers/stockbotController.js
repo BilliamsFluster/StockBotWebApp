@@ -127,6 +127,317 @@ function parseLogTimestamp(line) {
   }
 }
 
+function firstQueryValue(query, key) {
+  const value = query?.[key];
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
+
+function parseTimestampLike(value) {
+  if (value == null) return null;
+  if (value instanceof Date) {
+    const ms = value.getTime();
+    return Number.isFinite(ms) ? ms : null;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    if (value > 1e12) return Math.round(value);
+    if (value > 1e9) return Math.round(value * 1000);
+    if (value > 1e5) return Math.round(value * 1000);
+    return Math.round(value);
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+      const num = Number(trimmed);
+      if (Number.isFinite(num)) return parseTimestampLike(num);
+    }
+    const parsed = Date.parse(trimmed);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+const SERIES_FALLBACK_FILES = {
+  equity: ["report/equity.csv"],
+  cash: ["report/equity.csv"],
+};
+
+const TRADES_FALLBACK_FILES = ["report/trades.csv"];
+const EVENTS_FALLBACK_FILES = ["live_events.jsonl"];
+const STATE_SNAPSHOT_FALLBACK_FILES = ["report/state_snapshots.parquet", "report/equity.csv"];
+
+function splitCsvLine(line) {
+  const values = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === "\"") {
+      if (inQuotes && line[i + 1] === "\"") {
+        current += "\"";
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === "," && !inQuotes) {
+      values.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  values.push(current);
+  return values;
+}
+
+function parseCsv(text) {
+  if (!text) return [];
+  const lines = text.split(/\r?\n/);
+  let header = null;
+  let startIndex = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    const raw = lines[i];
+    if (!raw || !raw.trim()) continue;
+    header = splitCsvLine(raw);
+    startIndex = i + 1;
+    break;
+  }
+  if (!header) return [];
+  const headers = header.map((h) => h.trim());
+  const records = [];
+  for (let i = startIndex; i < lines.length; i += 1) {
+    const raw = lines[i];
+    if (!raw || !raw.trim()) continue;
+    const parts = splitCsvLine(raw);
+    const record = {};
+    headers.forEach((name, idx) => {
+      record[name] = parts[idx] !== undefined ? String(parts[idx]).trim() : "";
+    });
+    records.push(record);
+  }
+  return records;
+}
+
+function convertCsvRow(record) {
+  if (!record || typeof record !== "object") return null;
+  const row = {};
+  for (const [key, rawValue] of Object.entries(record)) {
+    if (!key) continue;
+    const column = key.trim();
+    if (!column) continue;
+    if (column === "ts") {
+      const ts = parseTimestampLike(rawValue);
+      if (typeof ts === "number" && Number.isFinite(ts)) {
+        row.ts = ts;
+      }
+      continue;
+    }
+    if (rawValue == null) continue;
+    const value = typeof rawValue === "string" ? rawValue.trim() : rawValue;
+    if (value === "") continue;
+    if (typeof value === "number") {
+      if (Number.isFinite(value)) row[column] = value;
+      continue;
+    }
+    if (typeof value === "string") {
+      const num = Number(value);
+      if (Number.isFinite(num)) {
+        row[column] = num;
+      } else {
+        row[column] = value;
+      }
+      continue;
+    }
+    row[column] = value;
+  }
+  if (typeof row.ts !== "number" || !Number.isFinite(row.ts)) return null;
+  return row;
+}
+
+async function loadCsvSeriesData(runId, relPaths) {
+  const base = path.join(RUNS_DIR, String(runId));
+  for (const rel of relPaths || []) {
+    if (!rel) continue;
+    const abs = path.join(base, rel);
+    if (!fs.existsSync(abs)) continue;
+    if (path.extname(abs).toLowerCase() !== ".csv") continue;
+    try {
+      const text = await fs.promises.readFile(abs, "utf-8");
+      const parsed = parseCsv(text);
+      const rows = [];
+      for (const record of parsed) {
+        const row = convertCsvRow(record);
+        if (row) rows.push(row);
+      }
+      rows.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+      return rows;
+    } catch (err) {
+      // Ignore and try next candidate
+    }
+  }
+  return null;
+}
+
+function downsampleSeries(items, maxPoints) {
+  if (!Array.isArray(items) || items.length <= maxPoints) {
+    return Array.isArray(items) ? [...items] : [];
+  }
+  const total = items.length;
+  const step = (total - 1) / Math.max(1, maxPoints - 1);
+  const selected = [];
+  const seen = new Set();
+  for (let i = 0; i < maxPoints; i += 1) {
+    const idx = Math.min(total - 1, Math.round(i * step));
+    if (seen.has(idx)) continue;
+    seen.add(idx);
+    selected.push(items[idx]);
+  }
+  if (!seen.has(total - 1)) {
+    selected.push(items[total - 1]);
+  }
+  selected.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  return selected;
+}
+
+async function fallbackSeriesData(runId, key, query) {
+  const candidates = SERIES_FALLBACK_FILES[key];
+  if (!candidates) return null;
+  const rows = await loadCsvSeriesData(runId, candidates);
+  if (rows === null) return null;
+  let filtered = rows.slice();
+  const fromRaw = firstQueryValue(query, "from_ts") ?? firstQueryValue(query, "fromTs");
+  const toRaw = firstQueryValue(query, "to_ts") ?? firstQueryValue(query, "toTs");
+  const fromTs = parseTimestampLike(fromRaw);
+  const toTs = parseTimestampLike(toRaw);
+  if (typeof fromTs === "number" && Number.isFinite(fromTs)) {
+    filtered = filtered.filter((row) => row.ts >= fromTs);
+  }
+  if (typeof toTs === "number" && Number.isFinite(toTs)) {
+    filtered = filtered.filter((row) => row.ts <= toTs);
+  }
+  const total = filtered.length;
+  let maxPointsRaw =
+    firstQueryValue(query, "maxPoints") ??
+    firstQueryValue(query, "max_points") ??
+    firstQueryValue(query, "limit");
+  let maxPoints = Number.parseInt(String(maxPointsRaw ?? ""), 10);
+  if (!Number.isFinite(maxPoints)) maxPoints = 1500;
+  if (maxPoints < 100) maxPoints = 100;
+  if (maxPoints > 10000) maxPoints = 10000;
+  let downsampled = false;
+  if (filtered.length > maxPoints) {
+    filtered = downsampleSeries(filtered, maxPoints);
+    downsampled = true;
+  }
+  const items = filtered.map((row) => ({ ...row }));
+  return {
+    items,
+    returned: items.length,
+    total,
+    t_min: items.length ? items[0].ts : null,
+    t_max: items.length ? items[items.length - 1].ts : null,
+    downsampled,
+  };
+}
+
+async function fallbackTradesData(runId, query) {
+  const rows = await loadCsvSeriesData(runId, TRADES_FALLBACK_FILES);
+  if (rows === null) return null;
+  const total = rows.length;
+  let cursorRaw = firstQueryValue(query, "cursor");
+  let cursor = Number.parseInt(String(cursorRaw ?? ""), 10);
+  if (!Number.isFinite(cursor)) cursor = 0;
+  if (cursor < 0) cursor = Math.max(total + cursor, 0);
+  let limitRaw = firstQueryValue(query, "limit");
+  let limit = Number.parseInt(String(limitRaw ?? ""), 10);
+  if (!Number.isFinite(limit)) limit = 500;
+  if (limit < 1) limit = 1;
+  if (limit > 2000) limit = 2000;
+  const start = Math.min(Math.max(0, cursor), total);
+  const end = Math.min(total, start + limit);
+  const items = rows.slice(start, end).map((row) => ({ ...row }));
+  return {
+    items,
+    cursor: start,
+    next_cursor: end,
+    returned: items.length,
+    total,
+    has_more: end < total,
+  };
+}
+
+async function fallbackEventsData(runId, query) {
+  const base = path.join(RUNS_DIR, String(runId));
+  for (const rel of EVENTS_FALLBACK_FILES) {
+    if (!rel) continue;
+    const abs = path.join(base, rel);
+    if (!fs.existsSync(abs)) continue;
+    try {
+      const text = await fs.promises.readFile(abs, "utf-8");
+      const lines = text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+      const total = lines.length;
+      let cursorRaw = firstQueryValue(query, "cursor");
+      let cursor = Number.parseInt(String(cursorRaw ?? ""), 10);
+      if (!Number.isFinite(cursor)) cursor = 0;
+      if (cursor < 0) cursor = Math.max(total + cursor, 0);
+      let limitRaw = firstQueryValue(query, "limit");
+      let limit = Number.parseInt(String(limitRaw ?? ""), 10);
+      if (!Number.isFinite(limit)) limit = 500;
+      if (limit < 1) limit = 1;
+      if (limit > 2000) limit = 2000;
+      const start = Math.min(Math.max(0, cursor), total);
+      const end = Math.min(total, start + limit);
+      const slice = lines.slice(start, end);
+      const items = slice.map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch (err) {
+          return { raw: line };
+        }
+      });
+      return {
+        items,
+        cursor: start,
+        next_cursor: end,
+        returned: items.length,
+        total,
+        has_more: end < total,
+        file_size: Buffer.byteLength(text, "utf-8"),
+      };
+    } catch (err) {
+      // try next candidate
+    }
+  }
+  return null;
+}
+
+async function fallbackStateSnapshot(runId, ts) {
+  const target = parseTimestampLike(ts);
+  if (typeof target !== "number" || !Number.isFinite(target)) {
+    const err = new Error("Invalid timestamp");
+    err.status = 400;
+    throw err;
+  }
+  const rows = await loadCsvSeriesData(runId, STATE_SNAPSHOT_FALLBACK_FILES);
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  let best = rows[0];
+  let bestDiff = Math.abs(best.ts - target);
+  for (let i = 1; i < rows.length; i += 1) {
+    const row = rows[i];
+    const diff = Math.abs(row.ts - target);
+    if (diff < bestDiff) {
+      best = row;
+      bestDiff = diff;
+    }
+  }
+  return { ...best, requested_ts: target };
+}
+
 async function buildRunRecordFromDir(runId) {
   const outDir = path.join(RUNS_DIR, String(runId));
   const exists = await fs.promises
@@ -451,6 +762,116 @@ export async function getRunArtifactsProxy(req, res) {
     return res.json(data);
   } catch (e) {
     return res.status(400).json({ error: errMsg(e) });
+  }
+}
+
+export async function getRunSeriesProxy(req, res) {
+  const runId = req.params.id;
+  const seriesKey = req.params.key;
+  try {
+    const { data } = await stockbotRequest({
+      method: "get",
+      url: `/api/stockbot/runs/${encodeURIComponent(runId)}/series/${encodeURIComponent(seriesKey)}`,
+      params: req.query,
+    }, { retries: 2 });
+    return res.json(data);
+  } catch (e) {
+    try {
+      const fallback = await fallbackSeriesData(runId, seriesKey, req.query || {});
+      if (fallback) return res.json(fallback);
+    } catch (fallbackErr) {
+      if (axios.isAxiosError(fallbackErr)) {
+        const { status, body } = safeErrorBody(fallbackErr, fallbackErr.response?.status ?? 502);
+        return res.status(status).json(body);
+      }
+      if (fallbackErr && typeof fallbackErr.status === "number") {
+        return res.status(fallbackErr.status).json({ error: errMsg(fallbackErr) });
+      }
+    }
+    if (axios.isAxiosError(e)) {
+      const { status, body } = safeErrorBody(e, e.response?.status ?? 502);
+      return res.status(status).json(body);
+    }
+    return res.status(500).json({ error: errMsg(e) });
+  }
+}
+
+export async function getRunTradesProxy(req, res) {
+  const runId = req.params.id;
+  try {
+    const { data } = await stockbotRequest({
+      method: "get",
+      url: `/api/stockbot/runs/${encodeURIComponent(runId)}/trades`,
+      params: req.query,
+    }, { retries: 2 });
+    return res.json(data);
+  } catch (e) {
+    try {
+      const fallback = await fallbackTradesData(runId, req.query || {});
+      if (fallback) return res.json(fallback);
+    } catch (fallbackErr) {
+      if (fallbackErr && typeof fallbackErr.status === "number") {
+        return res.status(fallbackErr.status).json({ error: errMsg(fallbackErr) });
+      }
+    }
+    if (axios.isAxiosError(e)) {
+      const { status, body } = safeErrorBody(e, e.response?.status ?? 502);
+      return res.status(status).json(body);
+    }
+    return res.status(500).json({ error: errMsg(e) });
+  }
+}
+
+export async function getRunEventsProxy(req, res) {
+  const runId = req.params.id;
+  try {
+    const { data } = await stockbotRequest({
+      method: "get",
+      url: `/api/stockbot/runs/${encodeURIComponent(runId)}/events`,
+      params: req.query,
+    }, { retries: 2 });
+    return res.json(data);
+  } catch (e) {
+    try {
+      const fallback = await fallbackEventsData(runId, req.query || {});
+      if (fallback) return res.json(fallback);
+    } catch (fallbackErr) {
+      if (fallbackErr && typeof fallbackErr.status === "number") {
+        return res.status(fallbackErr.status).json({ error: errMsg(fallbackErr) });
+      }
+    }
+    if (axios.isAxiosError(e)) {
+      const { status, body } = safeErrorBody(e, e.response?.status ?? 502);
+      return res.status(status).json(body);
+    }
+    return res.status(500).json({ error: errMsg(e) });
+  }
+}
+
+export async function getRunStateSnapshotProxy(req, res) {
+  const runId = req.params.id;
+  try {
+    const { data } = await stockbotRequest({
+      method: "get",
+      url: `/api/stockbot/runs/${encodeURIComponent(runId)}/state`,
+      params: req.query,
+    }, { retries: 2 });
+    return res.json(data);
+  } catch (e) {
+    try {
+      const tsParam = firstQueryValue(req.query || {}, "ts");
+      const fallback = await fallbackStateSnapshot(runId, tsParam);
+      if (fallback) return res.json(fallback);
+    } catch (fallbackErr) {
+      if (fallbackErr && typeof fallbackErr.status === "number") {
+        return res.status(fallbackErr.status).json({ error: errMsg(fallbackErr) });
+      }
+    }
+    if (axios.isAxiosError(e)) {
+      const { status, body } = safeErrorBody(e, e.response?.status ?? 502);
+      return res.status(status).json(body);
+    }
+    return res.status(500).json({ error: errMsg(e) });
   }
 }
 
