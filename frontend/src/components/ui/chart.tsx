@@ -111,6 +111,12 @@ const ChartTooltipContent = React.forwardRef<
       indicator?: "line" | "dot" | "dashed"
       nameKey?: string
       labelKey?: string
+      valueFormatter?: (
+        value: number,
+        name: string,
+        item: any,
+        index: number
+      ) => React.ReactNode
     }
 >(
   (
@@ -125,6 +131,7 @@ const ChartTooltipContent = React.forwardRef<
       labelFormatter,
       labelClassName,
       formatter,
+      valueFormatter,
       color,
       nameKey,
       labelKey,
@@ -189,6 +196,24 @@ const ChartTooltipContent = React.forwardRef<
             const key = `${nameKey || item.name || item.dataKey || "value"}`
             const itemConfig = getPayloadConfigFromPayload(config, item, key)
             const indicatorColor = color || item.payload.fill || item.color
+            const rawValue = item?.value as number | string | undefined
+            const hasValue = rawValue !== undefined && rawValue !== null
+            const numericValue = Number(rawValue)
+            const displayValue =
+              valueFormatter && hasValue
+                ? valueFormatter(
+                    Number.isFinite(numericValue) ? numericValue : Number(rawValue),
+                    key,
+                    item,
+                    index
+                  )
+                : typeof rawValue === "number"
+                ? rawValue.toLocaleString()
+                : typeof rawValue === "string"
+                ? rawValue
+                : hasValue
+                ? String(rawValue)
+                : null
 
             return (
               <div
@@ -238,9 +263,9 @@ const ChartTooltipContent = React.forwardRef<
                           {itemConfig?.label || item.name}
                         </span>
                       </div>
-                      {item.value && (
+                      {hasValue && displayValue !== null && (
                         <span className="font-mono font-medium tabular-nums text-foreground">
-                          {item.value.toLocaleString()}
+                          {displayValue}
                         </span>
                       )}
                     </div>
