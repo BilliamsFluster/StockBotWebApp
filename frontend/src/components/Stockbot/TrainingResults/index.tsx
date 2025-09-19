@@ -1,7 +1,12 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DockviewReact, type DockviewApi, type DockviewLayout } from "dockview";
+import {
+  DockviewReact,
+  type DockviewApi,
+  type DockviewLayout,
+  type DockviewReadyEvent,
+} from "dockview";
 import api, { buildUrl } from "@/api/client";
 import { deleteRun } from "@/api/stockbot";
 import type { RunSummary, Metrics, RunArtifacts } from "../lib/types";
@@ -533,11 +538,14 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     [commitOpenPanels],
   );
 
-  const handleDockReady = useCallback((api: DockviewApi) => {
-    dockApiRef.current = api;
-    setDockReady(true);
-    updateOpenPanels(extractPanelIds(api.toJSON()), true);
-  }, [updateOpenPanels]);
+  const handleDockReady = useCallback(
+    ({ api }: DockviewReadyEvent) => {
+      dockApiRef.current = api;
+      setDockReady(true);
+      updateOpenPanels(extractPanelIds(api.toJSON()), true);
+    },
+    [updateOpenPanels],
+  );
 
   const handleLayoutChange = useCallback(
     (layout: DockviewLayout) => {
