@@ -99,6 +99,9 @@ const cloneDockLayout = (layout: DockviewLayout): DockviewLayout => ({
   })),
 });
 
+const extractPanelIds = (layout: DockviewLayout): string[] =>
+  layout.groups.flatMap((group) => group.tabs.map((tab) => tab.id));
+
 const createPanel = <K extends keyof typeof panelDefinitions>(key: K) => ({
   ...panelDefinitions[key],
 });
@@ -186,6 +189,8 @@ const DOCK_PRESETS: Array<{ id: string; label: string; layout: DockviewLayout }>
   { id: "compact", label: "Compact Stack", layout: compactDockLayout },
 ];
 
+type PanelKey = keyof typeof panelDefinitions;
+
 export default function TrainingResults({ initialRunId }: { initialRunId?: string }) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [runId, setRunId] = useState<string>(initialRunId || "");
@@ -198,6 +203,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   const [equity, setEquity] = useState<Array<{ step: number; equity: number }>>([]);
   const [drawdown, setDrawdown] = useState<Array<{ step: number; dd: number }>>([]);
   const [lev, setLev] = useState<Array<{ step: number; to: number; gl: number; nl: number }>>([]);
+  const [openPanels, setOpenPanels] = useState<string[]>([]);
   const [artifacts, setArtifacts] = useState<RunArtifacts | null>(null);
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [showCharts, setShowCharts] = useState(false);
@@ -912,35 +918,37 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
       if (!api) return;
       suppressLayoutChangeRef.current = true;
       api.fromJSON(cloneDockLayout(layout));
+      setOpenPanels(extractPanelIds(layout));
       setCurrentLayout(presetId ?? "custom");
       setTimeout(() => {
         suppressLayoutChangeRef.current = false;
       }, 0);
     },
-    []
+    [setOpenPanels]
   );
 
-  const loadSavedLayout = useCallback(() => {
-    if (typeof window === "undefined") return false;
+  const loadSavedLayout = useCallback((): DockviewLayout | null => {
+    if (typeof window === "undefined") return null;
     const api = dockApiRef.current;
-    if (!api) return false;
+    if (!api) return null;
     const raw = localStorage.getItem(TRAINING_LAYOUT_STORAGE_KEY);
-    if (!raw) return false;
+    if (!raw) return null;
     try {
       const parsed = JSON.parse(raw) as DockviewLayout;
       suppressLayoutChangeRef.current = true;
       api.fromJSON(cloneDockLayout(parsed));
+      setOpenPanels(extractPanelIds(parsed));
       setCurrentLayout("saved");
       setHasSavedLayout(true);
       setTimeout(() => {
         suppressLayoutChangeRef.current = false;
       }, 0);
-      return true;
+      return parsed;
     } catch (err) {
       console.error("Failed to restore dock layout", err);
-      return false;
+      return null;
     }
-  }, []);
+  }, [setOpenPanels]);
 
   const handleDockReady = useCallback(
     (event: { api: DockviewApi }) => {
@@ -954,22 +962,26 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
     [applyLayout, loadSavedLayout]
   );
 
-  const handleLayoutChange = useCallback(() => {
-    if (suppressLayoutChangeRef.current) return;
-    if (pendingLayoutChangeRef.current) {
-      clearTimeout(pendingLayoutChangeRef.current);
-    }
-    pendingLayoutChangeRef.current = setTimeout(() => {
-      pendingLayoutChangeRef.current = null;
-      setCurrentLayout("custom");
-    }, 0);
-  }, []);
+  const handleLayoutChange = useCallback(
+    (layout: DockviewLayout) => {
+      setOpenPanels(extractPanelIds(layout));
+      if (suppressLayoutChangeRef.current) return;
+      if (pendingLayoutChangeRef.current) {
+        clearTimeout(pendingLayoutChangeRef.current);
+      }
+      pendingLayoutChangeRef.current = setTimeout(() => {
+        pendingLayoutChangeRef.current = null;
+        setCurrentLayout("custom");
+      }, 0);
+    },
+    [setOpenPanels]
+  );
 
   const handlePresetChange = useCallback(
     (value: string) => {
       if (value === "saved") {
-        const ok = loadSavedLayout();
-        if (!ok) {
+        const layout = loadSavedLayout();
+        if (!layout) {
           setHasSavedLayout(false);
         }
         return;
@@ -1001,8 +1013,8 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   }, []);
 
   const handleLoadSaved = useCallback(() => {
-    const ok = loadSavedLayout();
-    if (!ok) {
+    const layout = loadSavedLayout();
+    if (!layout) {
       setHasSavedLayout(false);
     }
   }, [loadSavedLayout]);
@@ -1021,6 +1033,25 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
     if (!api) return;
     api.focusPanel(panelId);
   }, []);
+
+  const handlePanelLaunch = useCallback(
+    (panelKey: PanelKey) => {
+      const api = dockApiRef.current;
+      if (!api) return;
+      const panelDef = panelDefinitions[panelKey];
+      if (openPanels.includes(panelDef.id)) {
+        api.focusPanel(panelDef.id);
+        return;
+      }
+      api.addPanel({
+        id: panelDef.id,
+        component: panelDef.component,
+        title: panelDef.title,
+      });
+      setCurrentLayout("custom");
+    },
+    [openPanels, setCurrentLayout]
+  );
 
   const PanelBody = ({ children }: { children: React.ReactNode }) => (
     <div className="h-full overflow-auto space-y-4 p-4">{children}</div>
@@ -1718,6 +1749,31 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
                 Clear Saved
               </Button>
             )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <TooltipLabel className="text-xs" tooltip="Add, restore, or focus specific panels">
+              Panels
+            </TooltipLabel>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(panelDefinitions).map(([key, panel]) => {
+                const isOpen = openPanels.includes(panel.id);
+                return (
+                  <Button
+                    key={panel.id}
+                    size="sm"
+                    variant={isOpen ? "secondary" : "outline"}
+                    className="px-2"
+                    onClick={() => handlePanelLaunch(key as PanelKey)}
+                    disabled={!dockReady}
+                    title={isOpen ? "Focus panel" : "Add panel"}
+                  >
+                    <span className="font-mono text-xs">{isOpen ? "●" : "+"}</span>
+                    <span>{panel.title}</span>
+                  </Button>
+                );
+              })}
+            </div>
           </div>
 
           {!!tags && (
