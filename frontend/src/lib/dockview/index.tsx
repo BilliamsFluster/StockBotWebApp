@@ -1,3 +1,5 @@
+"use client";
+
 import React, {
   useCallback,
   useEffect,
@@ -96,6 +98,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
   onReady,
   onLayoutChange,
 }) => {
+  const componentsRef = useRef(components);
   const [layout, setLayoutState] = useState<DockviewLayout>({ groups: [] });
   const layoutRef = useRef(layout);
   const draggingIdRef = useRef<string | null>(null);
@@ -104,6 +107,10 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
   const resizeCleanupRef = useRef<(() => void) | null>(null);
   const [resizingIndex, setResizingIndex] = useState<number | null>(null);
   const panelApis = useRef(new Map<string, DockviewPanelApi>());
+
+  useEffect(() => {
+    componentsRef.current = components;
+  }, [components]);
 
   const setLayout = useCallback(
     (updater: (prev: DockviewLayout) => DockviewLayout) => {
@@ -308,12 +315,13 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
 
   const fromJSON = useCallback(
     (nextLayout: DockviewLayout) => {
+      const map = componentsRef.current;
       const validGroups = (nextLayout.groups || []).map((group) => ({
         id: group.id || createId("group"),
         size: group.size,
         active: group.active,
         tabs: (group.tabs || [])
-          .filter((tab) => components[tab.component])
+          .filter((tab) => Boolean(map[tab.component]))
           .map((tab) => ({
             id: tab.id || createId("panel"),
             component: tab.component,
@@ -324,22 +332,26 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
       setLayout(() => ({ groups: validGroups }));
       panelApis.current.clear();
     },
-    [components, setLayout]
+    [setLayout]
   );
 
   const toJSON = useCallback(() => cloneLayout(layoutRef.current), []);
 
-  useEffect(() => {
-    const api: DockviewApi = {
+  const api = useMemo<DockviewApi>(
+    () => ({
       addPanel,
       closePanel,
       focusPanel: focusPanelInternal,
       getPanel,
       toJSON,
       fromJSON,
-    };
+    }),
+    [addPanel, closePanel, focusPanelInternal, fromJSON, getPanel, toJSON]
+  );
+
+  useEffect(() => {
     onReady?.({ api });
-  }, [addPanel, closePanel, focusPanelInternal, fromJSON, getPanel, onReady, toJSON]);
+  }, [api, onReady]);
 
   const handleDragStart = (event: React.DragEvent<HTMLElement>, panelId: string) => {
     draggingIdRef.current = panelId;
