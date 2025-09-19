@@ -1479,7 +1479,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
             ].map((preset) => (
               <Button
                 key={preset.key}
-                size="xs"
+                size="sm"
                 variant={zoomPreset === preset.key ? "default" : "outline"}
                 onClick={() => handleZoomPreset(preset.key)}
               >
@@ -1821,10 +1821,10 @@ export default function RunMonitor({ runId }: { runId: string }) {
                 ))}
               </SelectContent>
             </Select>
-            <Button size="xs" variant={aiUseMemory ? "default" : "outline"} onClick={() => setAiUseMemory((v) => !v)}>
+            <Button size="sm" variant={aiUseMemory ? "default" : "outline"} onClick={() => setAiUseMemory((v) => !v)}>
               Memory {aiUseMemory ? "On" : "Off"}
             </Button>
-            <Button size="xs" onClick={requestAiInsights} disabled={aiLoading}>
+            <Button size="sm" onClick={requestAiInsights} disabled={aiLoading}>
               {aiLoading ? "Generating…" : "Generate"}
             </Button>
           </div>
