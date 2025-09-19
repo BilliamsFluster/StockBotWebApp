@@ -1,14 +1,14 @@
 // src/components/Stockbot/TrainingResults.tsx
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import { DockviewReact, type DockviewApi, type DockviewLayout } from "dockview";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { TooltipLabel } from "./shared/TooltipLabel";
-// Tabs removed: replaced by left sidebar section nav
 import api from "@/api/client";
 import { deleteRun } from "@/api/stockbot";
 import type { RunSummary, Metrics, RunArtifacts } from "./lib/types";
@@ -79,6 +79,113 @@ const PlotlySurface = dynamic(() => withRetry(() => import("./PlotlySurface"))()
   loading: () => <div className="text-xs text-muted-foreground">Loading 3D surface…</div>,
 });
 
+const TRAINING_LAYOUT_STORAGE_KEY = "stockbot:trainingResults:docklayout:v1";
+
+const panelDefinitions = {
+  overview: { id: "panel-overview", title: "Overview", component: "overview" },
+  performance: { id: "panel-performance", title: "Performance", component: "performance" },
+  trades: { id: "panel-trades", title: "Trades & Behavior", component: "trades" },
+  risk: { id: "panel-risk", title: "Risk & Exposure", component: "risk" },
+  diagnostics: { id: "panel-diagnostics", title: "Diagnostics", component: "diagnostics" },
+  scalars: { id: "panel-scalars", title: "Data & Scalars", component: "scalars" },
+  artifacts: { id: "panel-artifacts", title: "Artifacts", component: "artifacts" },
+  monitor: { id: "panel-monitor", title: "Monitor", component: "monitor" },
+} as const;
+
+const cloneDockLayout = (layout: DockviewLayout): DockviewLayout => ({
+  groups: layout.groups.map((group) => ({
+    ...group,
+    tabs: group.tabs.map((tab) => ({ ...tab })),
+  })),
+});
+
+const createPanel = <K extends keyof typeof panelDefinitions>(key: K) => ({
+  ...panelDefinitions[key],
+});
+
+const defaultDockLayout: DockviewLayout = {
+  groups: [
+    {
+      id: "group-overview",
+      size: 1.2,
+      active: panelDefinitions.overview.id,
+      tabs: [createPanel("overview"), createPanel("performance")],
+    },
+    {
+      id: "group-behavior",
+      size: 1.1,
+      active: panelDefinitions.trades.id,
+      tabs: [createPanel("trades"), createPanel("risk"), createPanel("diagnostics")],
+    },
+    {
+      id: "group-data",
+      size: 1,
+      active: panelDefinitions.scalars.id,
+      tabs: [createPanel("scalars"), createPanel("artifacts")],
+    },
+    {
+      id: "group-monitor",
+      size: 1.2,
+      active: panelDefinitions.monitor.id,
+      tabs: [createPanel("monitor")],
+    },
+  ],
+};
+
+const analysisDockLayout: DockviewLayout = {
+  groups: [
+    {
+      id: "group-core",
+      size: 1.6,
+      active: panelDefinitions.performance.id,
+      tabs: [createPanel("overview"), createPanel("performance"), createPanel("diagnostics"), createPanel("risk")],
+    },
+    {
+      id: "group-context",
+      size: 1.2,
+      active: panelDefinitions.scalars.id,
+      tabs: [createPanel("scalars"), createPanel("trades"), createPanel("artifacts")],
+    },
+    {
+      id: "group-monitor-analysis",
+      size: 1,
+      active: panelDefinitions.monitor.id,
+      tabs: [createPanel("monitor")],
+    },
+  ],
+};
+
+const compactDockLayout: DockviewLayout = {
+  groups: [
+    {
+      id: "group-all",
+      size: 1.8,
+      active: panelDefinitions.overview.id,
+      tabs: [
+        createPanel("overview"),
+        createPanel("performance"),
+        createPanel("trades"),
+        createPanel("risk"),
+        createPanel("diagnostics"),
+        createPanel("scalars"),
+        createPanel("artifacts"),
+      ],
+    },
+    {
+      id: "group-monitor-compact",
+      size: 1,
+      active: panelDefinitions.monitor.id,
+      tabs: [createPanel("monitor")],
+    },
+  ],
+};
+
+const DOCK_PRESETS: Array<{ id: string; label: string; layout: DockviewLayout }> = [
+  { id: "default", label: "Default Columns", layout: defaultDockLayout },
+  { id: "analysis", label: "Analysis Focus", layout: analysisDockLayout },
+  { id: "compact", label: "Compact Stack", layout: compactDockLayout },
+];
+
 export default function TrainingResults({ initialRunId }: { initialRunId?: string }) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [runId, setRunId] = useState<string>(initialRunId || "");
@@ -109,26 +216,13 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
     entropy?: Array<{ step: number; median: number; q1: number; q3: number }>;
     actionHist?: Array<{ mid: number; median: number; err: [number, number] }>;
   }>({});
-  // Left sidebar section nav + monitor drawer state
-  const [section, setSection] = useState<
-    | "overview"
-    | "performance"
-    | "trades"
-    | "risk"
-    | "diagnostics"
-    | "scalars"
-    | "artifacts"
-  >("overview");
   const [runStatus, setRunStatus] = useState<RunSummary | null>(null);
   const [timeRange, setTimeRange] = useState<[number, number] | null>(null);
-  const [monitorOpen, setMonitorOpen] = useState(false);
-  // Layout/UX: monitor hover autoscroll + dynamic grid sizing
-  const monitorRef = useRef<HTMLDivElement | null>(null);
-  const [monitorHover, setMonitorHover] = useState(false);
-  const contentRef = useRef<HTMLDivElement | null>(null);
-  const [contentWidth, setContentWidth] = useState(0);
-  const userScrollRef = useRef(0);
-  const userInteractRef = useRef(0);
+  const dockApiRef = useRef<DockviewApi | null>(null);
+  const suppressLayoutChangeRef = useRef(false);
+  const [dockReady, setDockReady] = useState(false);
+  const [currentLayout, setCurrentLayout] = useState<string>("default");
+  const [hasSavedLayout, setHasSavedLayout] = useState(false);
 
   // Keep runId in sync with parent prop if it changes (navigation)
   useEffect(() => {
@@ -482,85 +576,6 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   useEffect(() => { if (runId) loadArtifacts(); }, [runId]);
   useEffect(() => { if (runId && tags) loadSeedAggregates(); }, [runId, tags]);
 
-  // Observe available content width to format chart grids dynamically
-  useEffect(() => {
-    const el = contentRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver((entries) => {
-      for (const e of entries) {
-        setContentWidth(Math.max(0, e.contentRect.width));
-      }
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [monitorOpen]);
-
-  // Nudge Recharts to recompute sizes when layout changes
-  useEffect(() => {
-    const t = setTimeout(() => {
-      try { window.dispatchEvent(new Event('resize')); } catch {}
-    }, 60);
-    return () => clearTimeout(t);
-  }, [monitorOpen, contentWidth, section]);
-
-  const perfCols = contentWidth >= 1100 ? 2 : 1;
-  const diagCols = contentWidth >= 1500 ? 3 : contentWidth >= 1000 ? 2 : 1;
-  const scalarCols = contentWidth >= 1100 ? 2 : 1;
-
-  // Auto-scroll the monitor drawer only when NOT hovered (pause during interaction)
-  useEffect(() => {
-    if (!monitorOpen || monitorHover) return;
-    let raf: number | null = null;
-    let last = performance.now();
-    const speedPxPerSec = 16; // slower crawl to reduce sensitivity
-    const step = (now: number) => {
-      const el = monitorRef.current;
-      if (!el) return;
-      // Pause auto-scroll briefly after user wheel/scroll
-      if (Date.now() - userScrollRef.current < 2500) {
-        raf = requestAnimationFrame(step);
-        return;
-      }
-      // Pause while user is interacting/moving pointer over charts
-      if (Date.now() - userInteractRef.current < 2500) {
-        raf = requestAnimationFrame(step);
-        return;
-      }
-      const dt = Math.max(0, (now - last) / 1000);
-      last = now;
-      const maxScroll = el.scrollHeight - el.clientHeight;
-      if (maxScroll <= 0) { raf = requestAnimationFrame(step); return; }
-      const next = el.scrollTop + dt * speedPxPerSec;
-      if (next >= maxScroll - 2) {
-        el.scrollTop = 0; // loop from top
-      } else {
-        el.scrollTop = next;
-      }
-      raf = requestAnimationFrame(step);
-    };
-    raf = requestAnimationFrame(step);
-    return () => { if (raf != null) cancelAnimationFrame(raf); };
-  }, [monitorOpen, monitorHover]);
-
-  useEffect(() => {
-    const el = monitorRef.current;
-    if (!el) return;
-    const handleWheel = (event: WheelEvent) => {
-      // Always consume the wheel so the page doesn't scroll the document
-      event.preventDefault();
-      event.stopPropagation();
-      userScrollRef.current = Date.now();
-      el.scrollTop += event.deltaY;
-    };
-    el.addEventListener("wheel", handleWheel, { passive: false });
-    return () => {
-      el.removeEventListener("wheel", handleWheel);
-    };
-  }, [monitorOpen]);
-
-  const onMonitorPointer = () => {
-    userInteractRef.current = Date.now();
-  };
 
   const fmtStep = (s: number) => `${s}`;
   const fmtVal = (v: number) => Number.isFinite(v) ? v.toFixed(5) : "";
@@ -873,484 +888,850 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
     return arr.length > MAX_PERF_POINTS ? lttb(arr, MAX_PERF_POINTS, p => p.step, p => p.dd) : arr;
   }, [filteredDrawdown]);
 
-  // New dockable layout with left sidebar + monitor drawer
-  const useNewLayout = true;
-  if (useNewLayout) {
-    return (
-      <>
-      <div ref={contentRef} className={["relative", monitorOpen ? "pr-[820px]" : ""].join(" ")}> 
-          {/* Header */}
-          <Card className="p-4 mb-4">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="text-lg font-semibold">Training Results</div>
-              <div className="flex-1" />
-              <div className="hidden md:block w-64">
-                <TooltipLabel className="text-xs" tooltip="Select a training run to inspect">Run</TooltipLabel>
-                <select className="border rounded h-10 px-3 w-full" value={runId} onChange={(e) => setRunId(e.target.value)}>
-                  {runs.map((r) => (
-                    <option key={r.id} value={r.id}>{`${r.id} · ${r.status}`}</option>
+  // Dockable layout state and persistence
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setHasSavedLayout(Boolean(localStorage.getItem(TRAINING_LAYOUT_STORAGE_KEY)));
+  }, []);
+
+  const applyLayout = useCallback(
+    (layout: DockviewLayout, presetId?: string) => {
+      const api = dockApiRef.current;
+      if (!api) return;
+      suppressLayoutChangeRef.current = true;
+      api.fromJSON(cloneDockLayout(layout));
+      setCurrentLayout(presetId ?? "custom");
+      setTimeout(() => {
+        suppressLayoutChangeRef.current = false;
+      }, 0);
+    },
+    []
+  );
+
+  const loadSavedLayout = useCallback(() => {
+    if (typeof window === "undefined") return false;
+    const api = dockApiRef.current;
+    if (!api) return false;
+    const raw = localStorage.getItem(TRAINING_LAYOUT_STORAGE_KEY);
+    if (!raw) return false;
+    try {
+      const parsed = JSON.parse(raw) as DockviewLayout;
+      suppressLayoutChangeRef.current = true;
+      api.fromJSON(cloneDockLayout(parsed));
+      setCurrentLayout("saved");
+      setHasSavedLayout(true);
+      setTimeout(() => {
+        suppressLayoutChangeRef.current = false;
+      }, 0);
+      return true;
+    } catch (err) {
+      console.error("Failed to restore dock layout", err);
+      return false;
+    }
+  }, []);
+
+  const handleDockReady = useCallback(
+    (event: { api: DockviewApi }) => {
+      dockApiRef.current = event.api;
+      setDockReady(true);
+      const restored = loadSavedLayout();
+      if (!restored) {
+        applyLayout(defaultDockLayout, "default");
+      }
+    },
+    [applyLayout, loadSavedLayout]
+  );
+
+  const handleLayoutChange = useCallback(() => {
+    if (suppressLayoutChangeRef.current) return;
+    setCurrentLayout("custom");
+  }, []);
+
+  const handlePresetChange = useCallback(
+    (value: string) => {
+      if (value === "saved") {
+        const ok = loadSavedLayout();
+        if (!ok) {
+          setHasSavedLayout(false);
+        }
+        return;
+      }
+      if (value === "custom") {
+        setCurrentLayout("custom");
+        return;
+      }
+      const preset = DOCK_PRESETS.find((p) => p.id === value);
+      if (preset) {
+        applyLayout(preset.layout, preset.id);
+      }
+    },
+    [applyLayout, loadSavedLayout]
+  );
+
+  const handleSaveLayout = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const api = dockApiRef.current;
+    if (!api) return;
+    try {
+      const layout = api.toJSON();
+      localStorage.setItem(TRAINING_LAYOUT_STORAGE_KEY, JSON.stringify(layout));
+      setHasSavedLayout(true);
+      setCurrentLayout("saved");
+    } catch (err) {
+      console.error("Unable to save dock layout", err);
+    }
+  }, []);
+
+  const handleLoadSaved = useCallback(() => {
+    const ok = loadSavedLayout();
+    if (!ok) {
+      setHasSavedLayout(false);
+    }
+  }, [loadSavedLayout]);
+
+  const handleClearSaved = useCallback(() => {
+    if (typeof window === "undefined") return;
+    localStorage.removeItem(TRAINING_LAYOUT_STORAGE_KEY);
+    setHasSavedLayout(false);
+    if (currentLayout === "saved") {
+      applyLayout(defaultDockLayout, "default");
+    }
+  }, [applyLayout, currentLayout]);
+
+  const focusPanel = useCallback((panelId: string) => {
+    const api = dockApiRef.current;
+    if (!api) return;
+    api.focusPanel(panelId);
+  }, []);
+
+  const PanelBody = ({ children }: { children: React.ReactNode }) => (
+    <div className="h-full overflow-auto space-y-4 p-4">{children}</div>
+  );
+
+  const renderOverviewPanel = () => (
+    <PanelBody>
+      <Card className="p-4 space-y-4">
+        {metrics && filteredEquity.length > 0 ? (
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
+            <div>Net Return: {formatPct(metrics.total_return)}</div>
+            <div>Sharpe: {formatSigned(metrics.sharpe)}</div>
+            <div>Max DD: {formatPct(metrics.max_drawdown)}</div>
+            <div>Turnover: {formatSigned(metrics.turnover)}</div>
+            <div>Fees/Slippage: {formatSigned(metrics.avg_trade_pnl ?? 0)}</div>
+            <div>Status: {runStatus?.status || "—"}</div>
+          </div>
+        ) : (
+          <div className="text-sm text-muted-foreground">
+            Select a training run to see summary metrics.
+          </div>
+        )}
+        <div className="text-xs text-muted-foreground">Recent anomalies: none detected.</div>
+      </Card>
+      <Card className="p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <TooltipLabel
+            className="font-semibold"
+            tooltip="Training rollout reward and evaluation reward over steps."
+          >
+            Rollout & Eval
+          </TooltipLabel>
+          <label className="text-xs flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={showRollout}
+              onChange={(e) => setShowRollout(e.target.checked)}
+            />
+            Show
+          </label>
+        </div>
+        {showRollout ? (
+          <div className="grid gap-6 lg:grid-cols-2">
+            <ChartCard title="Reward (train/eval)" tag={rewardTag} color="#3b82f6" />
+            <ChartCard title="Episode Length (mean)" tag={epLenTag} />
+          </div>
+        ) : (
+          <div className="text-sm text-muted-foreground">
+            Enable to view reward and episode length charts.
+          </div>
+        )}
+      </Card>
+      <div className="text-xs text-muted-foreground">
+        Tip: Use the brush on the performance charts to synchronise the time window across panels.
+      </div>
+    </PanelBody>
+  );
+
+  const renderPerformancePanel = () => (
+    <PanelBody>
+      <Card className="p-4 space-y-3">
+        <TooltipLabel className="font-semibold" tooltip="Net-of-cost equity curve and drawdown.">
+          Net Performance
+        </TooltipLabel>
+        {metrics && filteredEquity.length > 0 ? (
+          <div className="grid gap-6 lg:grid-cols-2">
+            <div className="h-56">
+              <LineChart data={perfEquityD} config={perfEquityConfig} height="100%">
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="step" tickFormatter={fmtStep} />
+                <YAxis tickFormatter={(v: any) => String(v)} />
+                <ChartTooltip
+                  content={
+                    <ChartTooltipContent
+                      labelFormatter={(label) => `step ${label}`}
+                      formatter={(value) => fmtVal(Number(value))}
+                    />
+                  }
+                />
+                <Line
+                  type="monotone"
+                  dataKey="equity"
+                  name="Equity"
+                  stroke="var(--color-equity)"
+                  dot={false}
+                  isAnimationActive={false}
+                />
+                <Brush dataKey="step" onChange={handleBrush} height={10} />
+              </LineChart>
+            </div>
+            <div className="h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={perfDrawdownD}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="step" tickFormatter={fmtStep} />
+                  <YAxis tickFormatter={(v: any) => formatPct(v)} />
+                  <Tooltip labelFormatter={(l) => `step ${l}`} formatter={(v: any) => formatPct(Number(v))} />
+                  <Area type="monotone" dataKey="dd" stroke="#ef4444" fill="#fecaca" isAnimationActive={false} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        ) : (
+          <div className="text-sm text-muted-foreground">
+            Select a run with equity data to view performance charts.
+          </div>
+        )}
+      </Card>
+    </PanelBody>
+  );
+
+  const renderTradesPanel = () => (
+    <PanelBody>
+      <Card className="p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <TooltipLabel
+            className="font-semibold"
+            tooltip="Histogram of values from the selected TensorBoard histogram tag (e.g., action distribution)."
+          >
+            Action Distributions
+          </TooltipLabel>
+          <label className="text-xs flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={showDists}
+              onChange={(e) => setShowDists(e.target.checked)}
+            />
+            Show
+          </label>
+        </div>
+        {showDists ? (
+          tags ? (
+            <ActionsHistogramSection runId={runId} tags={tags} />
+          ) : (
+            <div className="text-sm text-muted-foreground">
+              No histogram tags available for this run.
+            </div>
+          )
+        ) : (
+          <div className="text-sm text-muted-foreground">
+            Enable to inspect the latest action histogram.
+          </div>
+        )}
+        <div className="text-xs text-muted-foreground">
+          Trades table and behavior metrics coming soon.
+        </div>
+      </Card>
+    </PanelBody>
+  );
+
+  const renderRiskPanel = () => (
+    <PanelBody>
+      <Card className="p-4 space-y-3">
+        <TooltipLabel className="font-semibold" tooltip="Turnover and leverage over time.">
+          Risk & Exposure
+        </TooltipLabel>
+        {artifacts?.equity ? (
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={lev}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="step" />
+                <YAxis />
+                <Tooltip />
+                <Area dataKey="to" stroke="#06b6d4" fill="#06b6d4" fillOpacity={0.15} />
+                <Area dataKey="gl" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.15} />
+                <Area dataKey="nl" stroke="#8b5cf6" fill="#8b5cf6" fillOpacity={0.15} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <div className="text-sm text-muted-foreground">
+            Turnover and leverage charts require equity.csv in artifacts.
+          </div>
+        )}
+      </Card>
+    </PanelBody>
+  );
+
+  const renderDiagnosticsPanel = () => (
+    <PanelBody>
+      <Card className="p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <TooltipLabel
+            className="font-semibold"
+            tooltip="Optimization metrics from PPO (loss terms, learning rate, clipping, KL)."
+          >
+            Optimization
+          </TooltipLabel>
+          <label className="text-xs flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={showOptim}
+              onChange={(e) => setShowOptim(e.target.checked)}
+            />
+            Show
+          </label>
+        </div>
+        {showOptim && (
+          <>
+            <div className="grid gap-6 xl:grid-cols-3 md:grid-cols-2">
+              <ChartCard title="Value Loss" tag={valueLossTag} />
+              <ChartCard title="Policy Loss" tag={policyLossTag} />
+              <ChartCard title="Entropy" tag={entropyTag} />
+            </div>
+            <div className="grid gap-6 xl:grid-cols-3 md:grid-cols-2">
+              <ChartCard title="Learning Rate" tag={lrTag} />
+              <ChartCard title="Clip Fraction" tag={clipFracTag} />
+              <ChartCard title="Approx KL" tag={klTag} />
+            </div>
+          </>
+        )}
+      </Card>
+
+      <Card className="p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <TooltipLabel className="font-semibold" tooltip="Performance and throughput metrics such as frames per second (FPS).">
+            Timing
+          </TooltipLabel>
+          <label className="text-xs flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={showTiming}
+              onChange={(e) => setShowTiming(e.target.checked)}
+            />
+            Show
+          </label>
+        </div>
+        {showTiming && (
+          <div className="grid gap-6 md:grid-cols-2">
+            <ChartCard title="FPS" tag={fpsTag} />
+          </div>
+        )}
+      </Card>
+
+      <Card className="p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <TooltipLabel className="font-semibold" tooltip="Gradient diagnostics including global norm and per-layer distributions.">
+            Gradients
+          </TooltipLabel>
+          <label className="text-xs flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={showGrads}
+              onChange={(e) => setShowGrads(e.target.checked)}
+            />
+            Show
+          </label>
+        </div>
+        {showGrads && (
+          <>
+            <div className="grid gap-6 lg:grid-cols-2">
+              <ChartCard title="Gradient Norm" tag={gradTag} color="#ef4444" />
+              {gradMatrix?.layers && gradMatrix?.steps && gradMatrix.layers.length > 0 && gradMatrix.steps.length > 0 && (
+                <Card className="p-4 space-y-2">
+                  <div className="font-semibold">Gradient Norms Heatmap (layers × updates)</div>
+                  <Heatmap gm={gradMatrix} />
+                  <div className="text-xs text-muted-foreground">Color scale is log10(norm); red = higher.</div>
+                </Card>
+              )}
+            </div>
+            {gradientSurface && (
+              <Card className="p-4 space-y-2">
+                <div className="font-semibold">Gradient Norms 3D Surface (log10(norm))</div>
+                <PlotlySurface x={gradientSurface.x} y={gradientSurface.y} z={gradientSurface.z} height={420} />
+              </Card>
+            )}
+          </>
+        )}
+      </Card>
+
+      <Card className="p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <TooltipLabel className="font-semibold" tooltip="Aggregate metrics across run seeds (median – IQR).">
+            Seed Aggregate
+          </TooltipLabel>
+          <label className="text-xs flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={showSeed}
+              onChange={(e) => setShowSeed(e.target.checked)}
+            />
+            Show
+          </label>
+        </div>
+        {showSeed && (
+          <div className="space-y-4">
+            {seedAgg.metrics && (
+              <table className="text-sm w-full">
+                <thead>
+                  <tr>
+                    <th className="text-left">Metric</th>
+                    <th className="text-left">Median</th>
+                    <th className="text-left">Q1–Q3</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(seedAgg.metrics).map(([k, v]) => (
+                    <tr key={k}>
+                      <td className="pr-4 capitalize">{k.replace(/_/g, ' ')}</td>
+                      <td className="pr-4">{fmtMetric(k, v.median)}</td>
+                      <td>{fmtMetric(k, v.q1)} – {fmtMetric(k, v.q3)}</td>
+                    </tr>
                   ))}
-                </select>
+                </tbody>
+              </table>
+            )}
+            {seedAgg.entropy && (
+              <div className="h-56">
+                <LineChart data={seedAgg.entropy} config={seedEntropyConfig} height="100%">
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="step" tickFormatter={fmtStep} />
+                  <YAxis />
+                  <ChartTooltip
+                    content={
+                      <ChartTooltipContent
+                        labelFormatter={(label) => `step ${label}`}
+                        formatter={(value) => fmtVal(Number(value))}
+                      />
+                    }
+                  />
+                  <Line dataKey="median" stroke="var(--color-median)" dot={false} />
+                  <Line dataKey="q1" stroke="var(--color-q1)" dot={false} strokeDasharray="4 4" />
+                  <Line dataKey="q3" stroke="var(--color-q3)" dot={false} strokeDasharray="4 4" />
+                </LineChart>
               </div>
-              <div className="flex items-center gap-2">
-                <TooltipLabel tooltip="ID of a specific run">Run ID</TooltipLabel>
-                <Input value={runId} onChange={(e) => setRunId(e.target.value)} placeholder="Run ID" className="w-48" />
-                <Button size="sm" variant="destructive" onClick={onDeleteRun} disabled={!runId || loading}>Delete</Button>
-                <Button size="sm" variant={monitorOpen ? "default" : "secondary"} onClick={() => setMonitorOpen((v) => !v)}>
-                  {monitorOpen ? "Hide Monitor" : "Monitor"}
-                </Button>
+            )}
+            {seedAgg.actionHist && (
+              <div className="h-56">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={seedAgg.actionHist}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="mid" tickFormatter={(v) => Number(v).toFixed(2)} />
+                    <YAxis />
+                    <Tooltip formatter={(v: any) => Number(v).toFixed(2)} />
+                    <Bar dataKey="median" isAnimationActive={false}>
+                      <ErrorBar dataKey="err" width={4} stroke="#1f2937" />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
+            )}
+          </div>
+        )}
+      </Card>
+    </PanelBody>
+  );
+
+  const renderScalarsPanel = () => (
+    <PanelBody>
+      {tags && tags.scalars?.length ? (
+        <Card className="p-4 space-y-3">
+          <TooltipLabel
+            className="font-semibold"
+            tooltip="Browse and plot any scalar TensorBoard tag. Click tags below to add, and toggle visibility."
+          >
+            All Scalars
+          </TooltipLabel>
+          <ScalarGroups
+            runId={runId}
+            tags={tags}
+            selectedTags={selectedTags}
+            onToggle={async (t: string) => {
+              const next = selectedTags.includes(t)
+                ? selectedTags.filter((x) => x !== t)
+                : [...selectedTags, t];
+              setSelectedTags(next);
+              if (!series[t]) {
+                try {
+                  const { data } = await api.get<{ series: Record<string, TBPoint[]> }>(
+                    `/stockbot/runs/${runId}/tb/scalars-batch`,
+                    { params: { tags: t } }
+                  );
+                  setSeries((prev) => ({ ...prev, ...(data?.series || {}) }));
+                } catch {}
+              }
+            }}
+          />
+          {selectedTags.length > 0 && (
+            <>
+              <div className="flex flex-wrap gap-2 text-xs">
+                {selectedTags.map((t, i) => (
+                  <label key={`${t}-${i}`} className="flex items-center gap-1 border rounded px-2 py-1">
+                    <input
+                      type="checkbox"
+                      checked={visibleSelected[t] !== false}
+                      onChange={(e) =>
+                        setVisibleSelected((m) => ({ ...m, [t]: e.target.checked }))
+                      }
+                    />
+                    {t}
+                    <button
+                      className="ml-1 text-muted-foreground"
+                      onClick={() => {
+                        setSelectedTags((xs) => xs.filter((x) => x !== t));
+                        setVisibleSelected((m) => {
+                          const next = { ...m } as Record<string, boolean>;
+                          delete next[t];
+                          return next;
+                        });
+                      }}
+                    >
+                      ×
+                    </button>
+                  </label>
+                ))}
+                <button
+                  className="text-xs underline"
+                  onClick={() => {
+                    setSelectedTags([]);
+                    setVisibleSelected({});
+                  }}
+                >
+                  Clear
+                </button>
+              </div>
+              <div className="grid gap-4 lg:grid-cols-2">
+                {selectedTags
+                  .filter((t) => visibleSelected[t] !== false)
+                  .map((t, i) => (
+                    <ChartCard key={`${t}-${i}`} title={t} tag={t} />
+                  ))}
+              </div>
+            </>
+          )}
+        </Card>
+      ) : (
+        <Card className="p-4">
+          <div className="text-sm text-muted-foreground">No scalar tags detected for this run.</div>
+        </Card>
+      )}
+    </PanelBody>
+  );
+
+  const renderArtifactsPanel = () => (
+    <PanelBody>
+      <Card className="p-4 space-y-4">
+        <TooltipLabel className="font-semibold" tooltip="Downloaded artifacts saved under the run's report folder.">
+          Report Files
+        </TooltipLabel>
+        {artifacts ? (
+          <div className="flex flex-wrap gap-3 text-sm">
+            {artifacts.metrics && (
+              <a className="underline" href={artifacts.metrics} target="_blank" rel="noreferrer">
+                metrics.json
+              </a>
+            )}
+            {artifacts.equity && (
+              <a className="underline" href={artifacts.equity} target="_blank" rel="noreferrer">
+                equity.csv
+              </a>
+            )}
+            {artifacts.rolling_metrics && (
+              <a className="underline" href={artifacts.rolling_metrics} target="_blank" rel="noreferrer">
+                rolling_metrics.csv
+              </a>
+            )}
+            {artifacts.trades && (
+              <a className="underline" href={artifacts.trades} target="_blank" rel="noreferrer">
+                trades.csv
+              </a>
+            )}
+            {artifacts.gamma_train_yf && (
+              <a className="underline" href={artifacts.gamma_train_yf} target="_blank" rel="noreferrer">
+                regime_posteriors.yf.csv
+              </a>
+            )}
+            {artifacts.gamma_eval_yf && (
+              <a className="underline" href={artifacts.gamma_eval_yf} target="_blank" rel="noreferrer">
+                regime_posteriors.eval.yf.csv
+              </a>
+            )}
+            {artifacts.gamma_prebuilt && (
+              <a className="underline" href={artifacts.gamma_prebuilt} target="_blank" rel="noreferrer">
+                regime_posteriors.csv
+              </a>
+            )}
+            {artifacts.summary && (
+              <a className="underline" href={artifacts.summary} target="_blank" rel="noreferrer">
+                summary.json
+              </a>
+            )}
+            {artifacts.config && (
+              <a className="underline" href={artifacts.config} target="_blank" rel="noreferrer">
+                config.snapshot.yaml
+              </a>
+            )}
+          </div>
+        ) : (
+          <div className="text-sm text-muted-foreground">No artifacts found for this run.</div>
+        )}
+
+        {artifacts?.equity && (
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="rounded-lg border p-3">
+              <div className="text-sm font-medium mb-2">Equity & Drawdown</div>
+              <LineChart
+                data={equity.map((e, i) => ({ step: e.step, equity: e.equity, dd: drawdown[i]?.dd ?? 0 }))}
+                config={artifactEquityConfig}
+                height={220}
+                className="h-[220px]"
+              >
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="step" />
+                <YAxis yAxisId="left" tickFormatter={(v: any) => String(v)} />
+                <YAxis yAxisId="right" orientation="right" tickFormatter={(v: any) => `${v}%`} domain={["auto", 0]} />
+                <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+                <Line yAxisId="left" dataKey="equity" type="monotone" stroke="var(--color-equity)" dot={false} />
+                <Line yAxisId="right" dataKey="dd" type="monotone" stroke="var(--color-dd)" dot={false} />
+              </LineChart>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="text-sm font-medium mb-2">Turnover & Leverage</div>
+              <ChartContainer
+                config={{
+                  to: { label: "Turnover", color: "hsl(var(--chart-3))" },
+                  gl: { label: "Gross", color: "hsl(var(--chart-4))" },
+                  nl: { label: "Net", color: "hsl(var(--chart-5))" },
+                }}
+                className="h-[220px]"
+              >
+                <AreaChart data={lev}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="step" />
+                  <YAxis />
+                  <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+                  <Area dataKey="to" stroke="var(--color-to)" fill="var(--color-to)" fillOpacity={0.15} />
+                  <Area dataKey="gl" stroke="var(--color-gl)" fill="var(--color-gl)" fillOpacity={0.15} />
+                  <Area dataKey="nl" stroke="var(--color-nl)" fill="var(--color-nl)" fillOpacity={0.15} />
+                </AreaChart>
+              </ChartContainer>
+            </div>
+          </div>
+        )}
+
+        {artifacts?.equity && (
+          <div className="rounded-lg border p-3">
+            <WeightsHeatmap inline equityUrl={artifacts.equity} />
+          </div>
+        )}
+      </Card>
+    </PanelBody>
+  );
+
+  const renderMonitorPanel = () => (
+    <div
+      className="h-full overflow-hidden bg-background"
+      data-lenis-prevent
+      data-lenis-prevent-wheel
+      data-lenis-prevent-touch
+    >
+      <div className="h-full overflow-auto p-4 space-y-4">
+        {runId ? (
+          <RunMonitor runId={runId} />
+        ) : (
+          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+            Select a run to open the live monitor.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const dockComponents = {
+    overview: renderOverviewPanel,
+    performance: renderPerformancePanel,
+    trades: renderTradesPanel,
+    risk: renderRiskPanel,
+    diagnostics: renderDiagnosticsPanel,
+    scalars: renderScalarsPanel,
+    artifacts: renderArtifactsPanel,
+    monitor: renderMonitorPanel,
+  } as const;
+
+  return (
+    <>
+      <div className="space-y-4">
+        <Card className="p-4 space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="text-lg font-semibold">Training Results</div>
+            <div className="flex-1" />
+            <div className="flex flex-wrap items-center gap-2">
               <div className="flex items-center gap-2 rounded border px-2 py-1">
-                <TooltipLabel className="text-sm" tooltip="Automatically reload metrics">Auto-refresh</TooltipLabel>
+                <TooltipLabel className="text-sm" tooltip="Automatically reload metrics">
+                  Auto-refresh
+                </TooltipLabel>
                 <Switch checked={autoRefresh} onCheckedChange={setAutoRefresh} />
               </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => focusPanel(panelDefinitions.monitor.id)}
+                disabled={!dockReady}
+              >
+                Focus Monitor
+              </Button>
             </div>
-            {!!tags && (
-              <div className="text-xs text-muted-foreground mt-2">Scalars: {tags.scalars.slice(0, 8).join(", ")}{tags.scalars.length > 8 ? " …" : ""}</div>
-            )}
-          </Card>
+          </div>
 
-          {/* Columns: left nav + main */}
-          <div className="grid grid-cols-[14rem,1fr] gap-6">
-            <aside className="space-y-2">
-              <div className="text-sm font-semibold text-muted-foreground mb-1">Sections</div>
-              {[
-                { id: "overview", label: "Overview" },
-                { id: "performance", label: "Performance" },
-                { id: "trades", label: "Trades & Behavior" },
-                { id: "risk", label: "Risk & Exposure" },
-                { id: "diagnostics", label: "Diagnostics" },
-                { id: "scalars", label: "Data & Scalars" },
-                { id: "artifacts", label: "Artifacts" },
-              ].map((s) => (
-                <button
-                  key={s.id}
-                  className={[
-                    "w-full text-left px-3 py-2 rounded border",
-                    section === (s.id as any) ? "bg-muted border-primary" : "border-transparent hover:border-muted-foreground/30",
-                  ].join(" ")}
-                  onClick={() => setSection(s.id as any)}
-                >
-                  {s.label}
-                </button>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <div>
+              <TooltipLabel className="text-xs" tooltip="Select a training run to inspect">
+                Run
+              </TooltipLabel>
+              <select
+                className="mt-1 w-full rounded border px-3 py-2 text-sm"
+                value={runId}
+                onChange={(e) => setRunId(e.target.value)}
+              >
+                <option value="" disabled hidden>
+                  {runs.length ? "Choose a run" : "No training runs"}
+                </option>
+                {runs.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {`${r.id} · ${r.status}`}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <TooltipLabel className="text-xs" tooltip="ID of a specific run">
+                Run ID
+              </TooltipLabel>
+              <Input
+                value={runId}
+                onChange={(e) => setRunId(e.target.value)}
+                placeholder="Run ID"
+                className="mt-1"
+              />
+            </div>
+            <div className="flex items-end gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => void reload()}
+                disabled={!runId || loading}
+              >
+                Refresh
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={onDeleteRun}
+                disabled={!runId || loading}
+              >
+                Delete
+              </Button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <TooltipLabel className="text-xs" tooltip="Quickly arrange panels into a preset layout">
+              Layout
+            </TooltipLabel>
+            <select
+              className="rounded border px-2 py-1 text-sm"
+              value={currentLayout}
+              onChange={(e) => handlePresetChange(e.target.value)}
+              disabled={!dockReady}
+            >
+              {DOCK_PRESETS.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.label}
+                </option>
               ))}
-            </aside>
+              {hasSavedLayout && <option value="saved">Saved Layout</option>}
+              <option value="custom">Custom Layout</option>
+            </select>
+            <Button size="sm" onClick={handleSaveLayout} disabled={!dockReady}>
+              Save Layout
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleLoadSaved}
+              disabled={!dockReady || !hasSavedLayout}
+            >
+              Load Saved
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => applyLayout(defaultDockLayout, "default")}
+              disabled={!dockReady}
+            >
+              Reset
+            </Button>
+            {hasSavedLayout && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleClearSaved}
+                disabled={!dockReady}
+              >
+                Clear Saved
+              </Button>
+            )}
+          </div>
 
-            <div className="space-y-6">
-              {/* Overview */}
-              {section === "overview" && metrics && filteredEquity.length > 0 && (
-                <Card className="p-4 space-y-4">
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
-                    <div>Net Return: {formatPct(metrics.total_return)}</div>
-                    <div>Sharpe: {formatSigned(metrics.sharpe)}</div>
-                    <div>Max DD: {formatPct(metrics.max_drawdown)}</div>
-                    <div>Turnover: {formatSigned(metrics.turnover)}</div>
-                    <div>Fees/Slippage: {formatSigned(metrics.avg_trade_pnl ?? 0)}</div>
-                    <div>Status: {runStatus?.status || "—"}</div>
-                  </div>
-                  <div className="text-xs text-muted-foreground">Recent anomalies: none detected</div>
-                </Card>
-              )}
-
-              {section === "overview" && (
-                <Card className="p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <TooltipLabel className="font-semibold" tooltip="Training rollout reward and evaluation reward over steps.">Rollout & Eval</TooltipLabel>
-                    <div className="text-sm"><label><input type="checkbox" checked={showRollout} onChange={(e)=>setShowRollout(e.target.checked)} /> Show</label></div>
-                  </div>
-                  {showRollout && (
-                    <div className="grid gap-6" style={{ gridTemplateColumns: perfCols === 2 ? 'repeat(2, minmax(0, 1fr))' : 'repeat(1, minmax(0, 1fr))' }}>
-                      <ChartCard title="Reward (train/eval)" tag={rewardTag} color="#3b82f6" />
-                      <ChartCard title="Episode Length (mean)" tag={epLenTag} />
-                    </div>
-                  )}
-                </Card>
-              )}
-
-              {/* Performance */}
-              {section === "performance" && metrics && filteredEquity.length > 0 && (
-                <Card className="p-4 space-y-3">
-                  <TooltipLabel className="font-semibold" tooltip="Net-of-cost equity curve and drawdown.">Net Performance</TooltipLabel>
-                  <div className="grid gap-6" style={{ gridTemplateColumns: perfCols === 2 ? 'repeat(2, minmax(0, 1fr))' : 'repeat(1, minmax(0, 1fr))' }}>
-                    <div className="h-56">
-                      <LineChart data={perfEquityD} config={perfEquityConfig} height="100%">
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="step" tickFormatter={fmtStep} />
-                        <YAxis tickFormatter={(v: any) => String(v)} />
-                        <ChartTooltip
-                          content={
-                            <ChartTooltipContent
-                              labelFormatter={(label) => `step ${label}`}
-                              formatter={(value) => fmtVal(Number(value))}
-                            />
-                          }
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="equity"
-                          name="Equity"
-                          stroke="var(--color-equity)"
-                          dot={false}
-                          isAnimationActive={false}
-                        />
-                        <Brush dataKey="step" onChange={handleBrush} height={10} />
-                      </LineChart>
-                    </div>
-                    <div className="h-56">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={perfDrawdownD}>
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="step" tickFormatter={fmtStep} />
-                          <YAxis tickFormatter={(v: any) => formatPct(v)} />
-                          <Tooltip labelFormatter={(l) => `step ${l}`} formatter={(v: any) => formatPct(Number(v))} />
-                          <Area type="monotone" dataKey="dd" stroke="#ef4444" fill="#fecaca" isAnimationActive={false} />
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-                </Card>
-              )}
-
-              {/* Trades & Behavior */}
-              {section === "trades" && (
-                <Card className="p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <TooltipLabel className="font-semibold" tooltip="Histogram of values from the selected TensorBoard histogram tag (e.g., action distribution).">Action Distributions</TooltipLabel>
-                    <div className="text-sm"><label><input type="checkbox" checked={showDists} onChange={(e)=>setShowDists(e.target.checked)} /> Show</label></div>
-                  </div>
-                  {showDists && (<ActionsHistogramSection runId={runId} tags={tags} />)}
-                  <div className="text-xs text-muted-foreground">Trades table and behavior metrics coming soon.</div>
-                </Card>
-              )}
-
-              {/* Risk & Exposure */}
-              {section === "risk" && artifacts?.equity && (
-                <Card className="p-4 space-y-3">
-                  <TooltipLabel className="font-semibold" tooltip="Turnover and leverage over time.">Risk & Exposure</TooltipLabel>
-                  <div className="h-56">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={lev}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="step" />
-                        <YAxis />
-                        <Tooltip />
-                        <Area dataKey="to" stroke="#06b6d4" fill="#06b6d4" fillOpacity={0.15} />
-                        <Area dataKey="gl" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.15} />
-                        <Area dataKey="nl" stroke="#8b5cf6" fill="#8b5cf6" fillOpacity={0.15} />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  </div>
-                </Card>
-              )}
-
-              {/* Diagnostics */}
-              {section === "diagnostics" && (
-                <>
-                  <Card className="p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <TooltipLabel className="font-semibold" tooltip="Optimization metrics from PPO (loss terms, learning rate, clipping, KL).">Optimization</TooltipLabel>
-                      <div className="text-sm"><label><input type="checkbox" checked={showOptim} onChange={(e)=>setShowOptim(e.target.checked)} /> Show</label></div>
-                    </div>
-                    {showOptim && (
-                      <>
-                        <div className="grid gap-6" style={{ gridTemplateColumns: `repeat(${diagCols}, minmax(0, 1fr))` }}>
-                          <ChartCard title="Value Loss" tag={valueLossTag} />
-                          <ChartCard title="Policy Loss" tag={policyLossTag} />
-                          <ChartCard title="Entropy" tag={entropyTag} />
-                        </div>
-                        <div className="grid gap-6" style={{ gridTemplateColumns: `repeat(${diagCols}, minmax(0, 1fr))` }}>
-                          <ChartCard title="Learning Rate" tag={lrTag} />
-                          <ChartCard title="Clip Fraction" tag={clipFracTag} />
-                          <ChartCard title="Approx KL" tag={klTag} />
-                        </div>
-                      </>
-                    )}
-                  </Card>
-
-                  <Card className="p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <TooltipLabel className="font-semibold" tooltip="Performance and throughput metrics such as frames per second (FPS).">Timing</TooltipLabel>
-                      <div className="text-sm"><label><input type="checkbox" checked={showTiming} onChange={(e)=>setShowTiming(e.target.checked)} /> Show</label></div>
-                    </div>
-                    {showTiming && (
-                      <div className="grid gap-6" style={{ gridTemplateColumns: perfCols === 2 ? 'repeat(2, minmax(0, 1fr))' : 'repeat(1, minmax(0, 1fr))' }}>
-                        <ChartCard title="FPS" tag={fpsTag} />
-                      </div>
-                    )}
-                  </Card>
-
-                  <Card className="p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <TooltipLabel className="font-semibold" tooltip="Gradient diagnostics including global norm and per-layer distributions.">Gradients</TooltipLabel>
-                      <div className="text-sm"><label><input type="checkbox" checked={showGrads} onChange={(e)=>setShowGrads(e.target.checked)} /> Show</label></div>
-                    </div>
-                    {showGrads && (
-                      <>
-                        <div className="grid lg:grid-cols-2 gap-6">
-                          <ChartCard title="Gradient Norm" tag={gradTag} color="#ef4444" />
-                          {gradMatrix?.layers && gradMatrix?.steps && gradMatrix.layers.length > 0 && gradMatrix.steps.length > 0 && (
-                            <Card className="p-4 space-y-2">
-                              <div className="font-semibold">Gradient Norms Heatmap (layers × updates)</div>
-                              <Heatmap gm={gradMatrix} />
-                              <div className="text-xs text-muted-foreground">Color scale is log10(norm); red = higher.</div>
-                            </Card>
-                          )}
-                        </div>
-                        {gradientSurface && (
-                          <Card className="p-4 space-y-2">
-                            <div className="font-semibold">Gradient Norms 3D Surface (log10(norm))</div>
-                            <PlotlySurface x={gradientSurface.x} y={gradientSurface.y} z={gradientSurface.z} height={420} />
-                          </Card>
-                        )}
-                      </>
-                    )}
-                  </Card>
-
-                  <Card className="p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <TooltipLabel className="font-semibold" tooltip="Aggregate metrics across run seeds (median – IQR).">Seed Aggregate</TooltipLabel>
-                      <div className="text-sm"><label><input type="checkbox" checked={showSeed} onChange={(e)=>setShowSeed(e.target.checked)} /> Show</label></div>
-                    </div>
-                    {showSeed && (
-                      <div className="space-y-4">
-                        {seedAgg.metrics && (
-                          <table className="text-sm w-full">
-                            <thead>
-                              <tr><th className="text-left">Metric</th><th className="text-left">Median</th><th className="text-left">Q1–Q3</th></tr>
-                            </thead>
-                            <tbody>
-                              {Object.entries(seedAgg.metrics).map(([k,v]) => (
-                                <tr key={k}>
-                                  <td className="pr-4 capitalize">{k.replace(/_/g, ' ')}</td>
-                                  <td className="pr-4">{fmtMetric(k, v.median)}</td>
-                                  <td>{fmtMetric(k, v.q1)} – {fmtMetric(k, v.q3)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        )}
-                        {seedAgg.entropy && (
-                          <div className="h-56">
-                            <LineChart data={seedAgg.entropy} config={seedEntropyConfig} height="100%">
-                              <CartesianGrid strokeDasharray="3 3" />
-                              <XAxis dataKey="step" tickFormatter={fmtStep} />
-                              <YAxis />
-                              <ChartTooltip
-                                content={
-                                  <ChartTooltipContent
-                                    labelFormatter={(label) => `step ${label}`}
-                                    formatter={(value) => fmtVal(Number(value))}
-                                  />
-                                }
-                              />
-                              <Line dataKey="median" stroke="var(--color-median)" dot={false} />
-                              <Line
-                                dataKey="q1"
-                                stroke="var(--color-q1)"
-                                dot={false}
-                                strokeDasharray="4 4"
-                              />
-                              <Line
-                                dataKey="q3"
-                                stroke="var(--color-q3)"
-                                dot={false}
-                                strokeDasharray="4 4"
-                              />
-                            </LineChart>
-                          </div>
-                        )}
-                        {seedAgg.actionHist && (
-                          <div className="h-56">
-                            <ResponsiveContainer width="100%" height="100%">
-                              <BarChart data={seedAgg.actionHist}>
-                                <CartesianGrid strokeDasharray="3 3" />
-                                <XAxis dataKey="mid" tickFormatter={(v)=>Number(v).toFixed(2)} />
-                                <YAxis />
-                                <Tooltip formatter={(v:any)=>Number(v).toFixed(2)} />
-                                <Bar dataKey="median" isAnimationActive={false}>
-                                  <ErrorBar dataKey="err" width={4} stroke="#1f2937" />
-                                </Bar>
-                              </BarChart>
-                            </ResponsiveContainer>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </Card>
-                </>
-              )}
-
-              {/* Data & Scalars */}
-              {section === "scalars" && tags && tags.scalars?.length > 0 && (
-                <Card className="p-4 space-y-3">
-                  <TooltipLabel className="font-semibold" tooltip="Browse and plot any scalar TensorBoard tag. Click tags below to add, and toggle visibility.">All Scalars</TooltipLabel>
-                  <ScalarGroups
-                    runId={runId}
-                    tags={tags}
-                    selectedTags={selectedTags}
-                    onToggle={async (t: string) => {
-                      const next = selectedTags.includes(t)
-                        ? selectedTags.filter((x) => x !== t)
-                        : [...selectedTags, t];
-                      setSelectedTags(next);
-                      if (!series[t]) {
-                        try {
-                          const { data } = await api.get<{ series: Record<string, TBPoint[]> }>(
-                            `/stockbot/runs/${runId}/tb/scalars-batch`,
-                            { params: { tags: t } }
-                          );
-                          setSeries((prev) => ({ ...prev, ...(data?.series || {}) }));
-                        } catch {}
-                      }
-                    }}
-                  />
-                  {selectedTags.length > 0 && (
-                    <>
-                      <div className="flex flex-wrap gap-2 text-xs">
-                        {selectedTags.map((t, i) => (
-                          <label key={`${t}-${i}`} className="flex items-center gap-1 border rounded px-2 py-1">
-                            <input
-                              type="checkbox"
-                              checked={visibleSelected[t] !== false}
-                              onChange={(e)=>setVisibleSelected((m)=>({ ...m, [t]: e.target.checked }))}
-                            />
-                            {t}
-                            <button className="ml-1 text-muted-foreground" onClick={()=>{
-                              setSelectedTags((xs)=>xs.filter((x)=>x!==t));
-                              setVisibleSelected((m)=>{ const n={...m}; delete n[t]; return n; });
-                            }}>×</button>
-                          </label>
-                        ))}
-                        <button className="text-xs underline" onClick={()=>{ setSelectedTags([]); setVisibleSelected({}); }}>Clear</button>
-                      </div>
-                      <div className="grid gap-4" style={{ gridTemplateColumns: scalarCols === 2 ? 'repeat(2, minmax(0, 1fr))' : 'repeat(1, minmax(0, 1fr))' }}>
-                        {selectedTags.filter((t)=>visibleSelected[t] !== false).map((t, i) => (
-                          <ChartCard key={`${t}-${i}`} title={t} tag={t} />
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </Card>
-              )}
-
-              {/* Artifacts */}
-              {section === "artifacts" && (
-                <Card className="p-4 space-y-4">
-                  <TooltipLabel className="font-semibold" tooltip="Downloaded artifacts saved under the run's report folder.">Report Files</TooltipLabel>
-                  {artifacts ? (
-                    <div className="flex flex-wrap gap-3 text-sm">
-                      {artifacts.metrics && (
-                        <a className="underline" href={artifacts.metrics} target="_blank" rel="noreferrer">metrics.json</a>
-                      )}
-                      {artifacts.equity && (
-                        <a className="underline" href={artifacts.equity} target="_blank" rel="noreferrer">equity.csv</a>
-                      )}
-                      {artifacts.rolling_metrics && (
-                        <a className="underline" href={artifacts.rolling_metrics} target="_blank" rel="noreferrer">rolling_metrics.csv</a>
-                      )}
-                      {artifacts.trades && (
-                        <a className="underline" href={artifacts.trades} target="_blank" rel="noreferrer">trades.csv</a>
-                      )}
-                      {artifacts.gamma_train_yf && (
-                        <a className="underline" href={artifacts.gamma_train_yf} target="_blank" rel="noreferrer">regime_posteriors.yf.csv</a>
-                      )}
-                      {artifacts.gamma_eval_yf && (
-                        <a className="underline" href={artifacts.gamma_eval_yf} target="_blank" rel="noreferrer">regime_posteriors.eval.yf.csv</a>
-                      )}
-                      {artifacts.gamma_prebuilt && (
-                        <a className="underline" href={artifacts.gamma_prebuilt} target="_blank" rel="noreferrer">regime_posteriors.csv</a>
-                      )}
-                      {artifacts.summary && (
-                        <a className="underline" href={artifacts.summary} target="_blank" rel="noreferrer">summary.json</a>
-                      )}
-                      {artifacts.config && (
-                        <a className="underline" href={artifacts.config} target="_blank" rel="noreferrer">config.snapshot.yaml</a>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="text-sm text-muted-foreground">No artifacts found for this run.</div>
-                  )}
-
-                  {artifacts?.equity && (
-                    <div className="grid md:grid-cols-2 gap-4">
-                      <div className="rounded-lg border p-3">
-                        <div className="text-sm font-medium mb-2">Equity & Drawdown</div>
-                        <LineChart
-                          data={equity.map((e, i) => ({ step: e.step, equity: e.equity, dd: drawdown[i]?.dd ?? 0 }))}
-                          config={artifactEquityConfig}
-                          height={220}
-                          className="h-[220px]"
-                        >
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="step" />
-                          <YAxis yAxisId="left" tickFormatter={(v: any) => String(v)} />
-                          <YAxis yAxisId="right" orientation="right" tickFormatter={(v: any) => `${v}%`} domain={["auto", 0]} />
-                          <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
-                          <Line yAxisId="left" dataKey="equity" type="monotone" stroke="var(--color-equity)" dot={false} />
-                          <Line yAxisId="right" dataKey="dd" type="monotone" stroke="var(--color-dd)" dot={false} />
-                        </LineChart>
-                      </div>
-                      <div className="rounded-lg border p-3">
-                        <div className="text-sm font-medium mb-2">Turnover & Leverage</div>
-                        <ChartContainer
-                          config={{ to: { label: "Turnover", color: "hsl(var(--chart-3))" }, gl: { label: "Gross", color: "hsl(var(--chart-4))" }, nl: { label: "Net", color: "hsl(var(--chart-5))" } }}
-                          className="h-[220px]"
-                        >
-                          <AreaChart data={lev}>
-                            <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="step" />
-                            <YAxis />
-                            <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
-                            <Area dataKey="to" stroke="var(--color-to)" fill="var(--color-to)" fillOpacity={0.15} />
-                            <Area dataKey="gl" stroke="var(--color-gl)" fill="var(--color-gl)" fillOpacity={0.15} />
-                            <Area dataKey="nl" stroke="var(--color-nl)" fill="var(--color-nl)" fillOpacity={0.15} />
-                          </AreaChart>
-                        </ChartContainer>
-                      </div>
-                    </div>
-                  )}
-
-                  {artifacts?.equity && (
-                    <div className="rounded-lg border p-3">
-                      <WeightsHeatmap inline equityUrl={artifacts.equity} />
-                    </div>
-                  )}
-                </Card>
-              )}
-
-              <div className="text-xs text-muted-foreground">Tip: Use the brush on any chart to filter time across panels.</div>
+          {!!tags && (
+            <div className="text-xs text-muted-foreground">
+              Scalars: {tags.scalars.slice(0, 8).join(", ")}
+              {tags.scalars.length > 8 ? " …" : ""}
             </div>
-          </div>
+          )}
+        </Card>
 
-          {/* Right monitor drawer */}
-        {monitorOpen && (
-          <div
-            ref={monitorRef}
-            onMouseEnter={() => setMonitorHover(true)}
-            onMouseLeave={() => setMonitorHover(false)}
-            onMouseMoveCapture={onMonitorPointer}
-            onPointerDownCapture={onMonitorPointer}
-            data-lenis-prevent
-            data-lenis-prevent-wheel
-            data-lenis-prevent-touch
-            className="fixed right-0 top-0 bottom-0 w-[820px] max-w-[95vw] bg-background border-l shadow-xl p-4 overflow-y-auto overscroll-y-contain z-40 [scrollbar-gutter:stable]"
-          >
-            {runId && <RunMonitor runId={runId} />}
-          </div>
-        )}
+        <div className="w-full min-h-[720px]">
+          <DockviewReact
+            className="h-[75vh] min-h-[640px] w-full rounded-lg border bg-card/60 shadow-sm"
+            components={dockComponents}
+            onReady={handleDockReady}
+            onLayoutChange={handleLayoutChange}
+          />
         </div>
+      </div>
 
-        {showHeatmap && artifacts?.equity && (
-          <WeightsHeatmap equityUrl={artifacts.equity} onClose={()=>setShowHeatmap(false)} />
-        )}
-        {showCharts && artifacts?.equity && (
-          <RunChartsModal equityUrl={artifacts.equity} rollingUrl={artifacts.rolling_metrics || undefined} onClose={()=>setShowCharts(false)} />
-        )}
-      </>
-    );
-  }
-
-  return null;
+      {showHeatmap && artifacts?.equity && (
+        <WeightsHeatmap equityUrl={artifacts.equity} onClose={() => setShowHeatmap(false)} />
+      )}
+      {showCharts && artifacts?.equity && (
+        <RunChartsModal
+          equityUrl={artifacts.equity}
+          rollingUrl={artifacts.rolling_metrics || undefined}
+          onClose={() => setShowCharts(false)}
+        />
+      )}
+    </>
+  );
 }
 
 function ActionsHistogramSection({ runId, tags }: { runId: string; tags: TBTags | null }) {
