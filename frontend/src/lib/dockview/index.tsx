@@ -400,13 +400,22 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
                   const api = ensurePanelApi(tab);
                   const isActive = tab.id === activeId;
                   return (
-                    <button
+                    <div
                       key={tab.id}
+                      role="tab"
+                      aria-selected={isActive}
+                      tabIndex={0}
                       className={["dv-tab", isActive ? "dv-tab-active" : ""].join(" ").trim()}
                       draggable
                       onDragStart={() => handleDragStart(tab.id)}
                       onDragEnd={handleDragEnd}
                       onClick={() => focusPanelInternal(tab.id)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          focusPanelInternal(tab.id);
+                        }
+                      }}
                       onDragOver={(e) => {
                         if (!draggingIdRef.current || draggingIdRef.current === tab.id) return;
                         e.preventDefault();
@@ -419,7 +428,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
                         handleGroupDrop(groupIndex, tabIndex);
                       }}
                     >
-                      <span>{tab.title}</span>
+                      <span className="dv-tab-title">{tab.title}</span>
                       <button
                         type="button"
                         className="dv-tab-close"
@@ -430,7 +439,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
                       >
                         ×
                       </button>
-                    </button>
+                    </div>
                   );
                 })}
               </div>

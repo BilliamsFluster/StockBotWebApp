@@ -220,6 +220,9 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   const [timeRange, setTimeRange] = useState<[number, number] | null>(null);
   const dockApiRef = useRef<DockviewApi | null>(null);
   const suppressLayoutChangeRef = useRef(false);
+  const pendingLayoutChangeRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
   const [dockReady, setDockReady] = useState(false);
   const [currentLayout, setCurrentLayout] = useState<string>("default");
   const [hasSavedLayout, setHasSavedLayout] = useState(false);
@@ -894,6 +897,15 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
     setHasSavedLayout(Boolean(localStorage.getItem(TRAINING_LAYOUT_STORAGE_KEY)));
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (pendingLayoutChangeRef.current) {
+        clearTimeout(pendingLayoutChangeRef.current);
+        pendingLayoutChangeRef.current = null;
+      }
+    };
+  }, []);
+
   const applyLayout = useCallback(
     (layout: DockviewLayout, presetId?: string) => {
       const api = dockApiRef.current;
@@ -944,7 +956,13 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
 
   const handleLayoutChange = useCallback(() => {
     if (suppressLayoutChangeRef.current) return;
-    setCurrentLayout("custom");
+    if (pendingLayoutChangeRef.current) {
+      clearTimeout(pendingLayoutChangeRef.current);
+    }
+    pendingLayoutChangeRef.current = setTimeout(() => {
+      pendingLayoutChangeRef.current = null;
+      setCurrentLayout("custom");
+    }, 0);
   }, []);
 
   const handlePresetChange = useCallback(
