@@ -317,6 +317,45 @@ class PPOTrainer:
                 eqdf.to_parquet(report_dir / "equity.parquet", index=False)
             except Exception:
                 pass
+
+            # Rolling performance metrics for monitor/overview charts
+            try:
+                import numpy as np
+
+                roll_df = eqdf[["ts", "equity"]].copy()
+                roll_df["equity"] = pd.to_numeric(roll_df["equity"], errors="coerce")
+                roll_df = roll_df.dropna(subset=["equity"])
+                if roll_df.empty:
+                    raise ValueError("empty equity for rolling metrics")
+                if "ts" in roll_df.columns:
+                    roll_df["ts"] = pd.to_datetime(roll_df["ts"], utc=True, errors="coerce")
+                    roll_df = roll_df.dropna(subset=["ts"])
+                    roll_df = roll_df.sort_values("ts")
+
+                rets = roll_df["equity"].pct_change().replace([np.inf, -np.inf], np.nan).fillna(0.0)
+                win = 63
+                roll_std = rets.rolling(win).std()
+                roll_vol = roll_std * np.sqrt(252)
+                roll_mean = rets.rolling(win).mean()
+                roll_sharpe = (roll_mean / (roll_std + 1e-12)) * np.sqrt(252)
+                w2 = 252
+                roll_max = roll_df["equity"].rolling(w2, min_periods=1).max()
+                roll_dd = 1.0 - (roll_df["equity"] / (roll_max + 1e-9))
+                rmdf = pd.DataFrame(
+                    {
+                        "ts": roll_df["ts"],
+                        "roll_sharpe_63": roll_sharpe,
+                        "roll_vol_63": roll_vol,
+                        "roll_maxdd_252": roll_dd,
+                    }
+                )
+                rmdf.to_csv(report_dir / "rolling_metrics.csv", index=False)
+                try:
+                    rmdf.to_parquet(report_dir / "rolling_metrics.parquet", index=False)
+                except Exception:
+                    pass
+            except Exception:
+                pass
         except Exception as _e:
             # Fallback to minimal equity-only CSV if rich logging fails
             try:
