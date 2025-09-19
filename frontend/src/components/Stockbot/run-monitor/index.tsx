@@ -3,486 +3,59 @@
 import React, {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
-import { LineChart as MonitorLineChart } from "@/components/ui/line-chart";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Line, XAxis, YAxis, CartesianGrid, ReferenceLine, ReferenceDot } from "recharts";
+import { Badge } from "@/components/ui/badge";
 import api, { buildUrl } from "@/api/client";
 import { askJarvisLite, fetchAvailableModels } from "@/api/jarvisApi";
-import { formatPct, formatSigned } from "./lib/formats";
-import { cn } from "@/lib/utils";
+import { formatPct, formatSigned } from "../lib/formats";
+import {
+  MAX_LIVE_POINTS,
+  SERIES_DEFAULT_POINTS,
+  LIVE_WINDOW_MS,
+} from "./constants";
+import {
+  firstNumber,
+  humanizeKey,
+  inferEventTimestamp,
+  inferTradeTimestamp,
+  nearestIndex,
+  parseEpoch,
+  toFloat,
+  computeDomain,
+  coerceNumber,
+  SUMMARY_FIELD_CONFIG,
+} from "./utils";
+import type {
+  EventItem,
+  ExposurePoint,
+  MetricCard,
+  MetricSummary,
+  PaginatedResult,
+  PnlPoint,
+  RollingPoint,
+  RollingSeriesPoint,
+  SelectedSeries,
+  SeriesMeta,
+  SeriesPoint,
+  SlipPoint,
+  SummaryLine,
+  SummaryMeta,
+  TradeItem,
+} from "./types";
+import { MetricCardsSection } from "./MetricCardsSection";
+import { SummaryCard } from "./SummaryCard";
+import { HistoricalPerformanceCard } from "./HistoricalPerformanceCard";
+import { LiveTelemetryCard } from "./LiveTelemetryCard";
+import { RollingMetricsCard } from "./RollingMetricsCard";
+import { EventsCard } from "./EventsCard";
+import { TradesCard } from "./TradesCard";
+import { StateSnapshotCard } from "./StateSnapshotCard";
+import { JarvisInsightsCard } from "./JarvisInsightsCard";
 
-const SERIES_DEFAULT_POINTS = 1500;
-const MAX_LIVE_POINTS = 2000;
-const LIVE_WINDOW_MS = 1000 * 60 * 60 * 24 * 2; // 2 days
-const ROW_HEIGHT = 40;
-
-const pnlChartConfig: ChartConfig = {
-  cum: { label: "Cum Return", color: "#2563eb" },
-  dd: { label: "Drawdown", color: "#ef4444" },
-};
-
-const expoChartConfig: ChartConfig = {
-  gross: { label: "Gross Lev", color: "#16a34a" },
-};
-
-const slipChartConfig: ChartConfig = {
-  slip: { label: "Slippage (bps)", color: "#a855f7" },
-  to: { label: "Turnover (%)", color: "#f59e0b" },
-};
-
-type MetricSummary = Record<string, number | string | null>;
-type SummaryMeta = {
-  start?: string;
-  end?: string;
-  symbols?: string[];
-  policy?: string;
-  normalize?: boolean;
-  config_path?: string;
-  notes?: string;
-  [key: string]: any;
-};
-
-type SeriesPoint = {
-  ts: number;
-  equity?: number;
-  cash?: number;
-  drawdown?: number;
-  gross_leverage?: number;
-  net_leverage?: number;
-  turnover?: number;
-  [key: string]: any;
-};
-
-type RollingPoint = {
-  ts: number;
-  roll_sharpe_63?: number;
-  roll_vol_63?: number;
-  roll_maxdd_252?: number;
-  [key: string]: any;
-};
-
-type EventItem = {
-  ts?: number;
-  at?: number;
-  emitted_at?: number;
-  event?: string;
-  kind?: string;
-  details?: any;
-  message?: string;
-  [key: string]: any;
-};
-
-type TradeItem = {
-  ts?: number;
-  symbol?: string;
-  side?: string;
-  qty?: number;
-  price?: number;
-  net_pnl?: number;
-  gross_pnl?: number;
-  commission?: number;
-  [key: string]: any;
-};
-
-type PaginatedResult<T> = {
-  items: T[];
-  cursor: number;
-  next_cursor: number;
-  returned: number;
-  has_more: boolean;
-  total?: number;
-  file_size?: number;
-};
-
-type SeriesMeta = {
-  tMin: number | null;
-  tMax: number | null;
-  total: number;
-  downsampled: boolean;
-};
-
-type VirtualizedListProps<T> = {
-  rows: T[];
-  rowHeight?: number;
-  className?: string;
-  style?: React.CSSProperties;
-  hasMore?: boolean;
-  isLoading?: boolean;
-  emptyPlaceholder?: React.ReactNode;
-  loadMore?: () => void;
-  renderRow: (row: T, index: number) => React.ReactNode;
-};
-
-function parseEpoch(value: any): number {
-  if (value == null) return 0;
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim()) {
-    const num = Number(value);
-    if (Number.isFinite(num)) return num;
-    const parsed = Date.parse(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  if (value instanceof Date) return value.getTime();
-  return 0;
-}
-
-function formatDateTime(ms: number | null | undefined): string {
-  if (!ms || !Number.isFinite(ms)) return "—";
-  try {
-    return new Date(ms).toLocaleString([], { hour12: false });
-  } catch {
-    return "—";
-  }
-}
-
-function colorClass(value: number | null | undefined): string {
-  if (!Number.isFinite(value ?? null)) return "text-muted-foreground";
-  if ((value ?? 0) > 0) return "text-emerald-500";
-  if ((value ?? 0) < 0) return "text-rose-500";
-  return "text-muted-foreground";
-}
-
-function computeDomain(values: number[], padFrac = 0.05, forceZeroTop = false): [number, number] {
-  const filtered = values.filter((v) => Number.isFinite(v));
-  if (!filtered.length) return [0, 1];
-  const min = Math.min(...filtered);
-  const max = Math.max(...filtered);
-  const range = Math.max(1e-9, max - min);
-  const pad = range * padFrac;
-  if (forceZeroTop) return [min - pad, Math.max(0, max) + pad];
-  return [min - pad, max + pad];
-}
-
-function toFloat(value: any): number {
-  if (Number.isFinite(value)) return Number(value);
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-  return 0;
-}
-
-function coerceNumber(value: any): number | undefined {
-  if (value == null) return undefined;
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : undefined;
-  }
-  if (typeof value === "string") {
-    const parsed = Number(value.trim());
-    return Number.isFinite(parsed) ? parsed : undefined;
-  }
-  return undefined;
-}
-
-function firstNumber(...values: any[]): number | undefined {
-  for (const value of values) {
-    const num = coerceNumber(value);
-    if (num != null) return num;
-  }
-  return undefined;
-}
-
-function formatDateOnly(value: any): string {
-  if (!value) return "—";
-  try {
-    const date = typeof value === "number" ? new Date(value) : new Date(String(value));
-    if (Number.isNaN(date.getTime())) return "—";
-    return date.toISOString().slice(0, 10);
-  } catch {
-    return "—";
-  }
-}
-
-function humanizeKey(key: string): string {
-  return key
-    .replace(/[_-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/\b\w/g, (ch) => ch.toUpperCase());
-}
-
-function formatNumberFixed(value: any, digits = 2): string | null {
-  const num = coerceNumber(value);
-  if (num == null) return null;
-  return num.toFixed(digits);
-}
-
-function formatSignedFixed(value: any, digits = 2): string | null {
-  const num = coerceNumber(value);
-  if (num == null) return null;
-  const str = num.toFixed(digits);
-  return num >= 0 ? `+${str}` : str;
-}
-
-function formatPercentValue(value: any): string | null {
-  const num = coerceNumber(value);
-  if (num == null) return null;
-  return formatPct(num);
-}
-
-function formatIntegerValue(value: any): string | null {
-  const num = coerceNumber(value);
-  if (num == null) return null;
-  return Math.round(num).toLocaleString();
-}
-
-function formatBpsValue(value: any, digits = 1): string | null {
-  const num = coerceNumber(value);
-  if (num == null) return null;
-  return `${num.toFixed(digits)} bps`;
-}
-
-function formatYesNo(value: any): string {
-  if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (typeof value === "string") {
-    const lowered = value.trim().toLowerCase();
-    if (["true", "yes", "1"].includes(lowered)) return "Yes";
-    if (["false", "no", "0"].includes(lowered)) return "No";
-  }
-  if (typeof value === "number") return value !== 0 ? "Yes" : "No";
-  return value ? "Yes" : "No";
-}
-
-const SUMMARY_FIELD_CONFIG: Record<
-  string,
-  { label: string; order: number; format?: (value: any) => string | null }
-> = {
-  policy: { label: "Policy", order: 10, format: (value) => (value ? String(value) : "—") },
-  symbols: {
-    label: "Symbols",
-    order: 20,
-    format: (value) => {
-      if (Array.isArray(value)) {
-        const joined = value.map((item) => String(item)).filter(Boolean).join(", ");
-        return joined || "—";
-      }
-      if (typeof value === "string" && value.trim()) return value;
-      return null;
-    },
-  },
-  start: {
-    label: "Start",
-    order: 30,
-    format: (value) => {
-      const formatted = formatDateOnly(value);
-      return formatted === "—" ? null : formatted;
-    },
-  },
-  end: {
-    label: "End",
-    order: 40,
-    format: (value) => {
-      const formatted = formatDateOnly(value);
-      return formatted === "—" ? null : formatted;
-    },
-  },
-  normalize: { label: "Normalize Obs", order: 50, format: (value) => formatYesNo(value) },
-  config_path: { label: "Config", order: 60, format: (value) => (value ? String(value) : "—") },
-  notes: { label: "Notes", order: 70, format: (value) => (value ? String(value) : null) },
-  total_return: { label: "Total Return", order: 110, format: (value) => formatPercentValue(value) },
-  cagr: { label: "CAGR", order: 120, format: (value) => formatPercentValue(value) },
-  vol_daily: { label: "Vol (Daily)", order: 130, format: (value) => formatPercentValue(value) },
-  vol_annual: { label: "Vol (Annual)", order: 140, format: (value) => formatPercentValue(value) },
-  sharpe: { label: "Sharpe", order: 150, format: (value) => formatNumberFixed(value, 2) },
-  sortino: { label: "Sortino", order: 160, format: (value) => formatNumberFixed(value, 2) },
-  calmar: { label: "Calmar", order: 170, format: (value) => formatNumberFixed(value, 2) },
-  max_drawdown: { label: "Max Drawdown", order: 180, format: (value) => formatPercentValue(value) },
-  turnover: { label: "Turnover", order: 190, format: (value) => formatPercentValue(value) },
-  hit_rate: { label: "Hit Rate", order: 200, format: (value) => formatPercentValue(value) },
-  num_trades: { label: "Trades", order: 210, format: (value) => formatIntegerValue(value) },
-  avg_trade_pnl: { label: "Avg Trade P&L", order: 220, format: (value) => formatSignedFixed(value, 2) },
-  profit_factor: { label: "Profit Factor", order: 230, format: (value) => formatNumberFixed(value, 2) },
-  expectancy: { label: "Expectancy", order: 240, format: (value) => formatSignedFixed(value, 2) },
-  avg_win: { label: "Avg Win", order: 250, format: (value) => formatNumberFixed(value, 2) },
-  avg_loss: { label: "Avg Loss", order: 260, format: (value) => formatNumberFixed(value, 2) },
-  median_hold_days: { label: "Median Hold (days)", order: 270, format: (value) => formatNumberFixed(value, 1) },
-  hold_p25: { label: "Hold P25 (days)", order: 280, format: (value) => formatNumberFixed(value, 1) },
-  hold_p75: { label: "Hold P75 (days)", order: 290, format: (value) => formatNumberFixed(value, 1) },
-  avg_cost_bps: { label: "Avg Cost (bps)", order: 300, format: (value) => formatBpsValue(value, 1) },
-  rets_skew: { label: "Return Skew", order: 310, format: (value) => formatSignedFixed(value, 2) },
-  rets_kurtosis: { label: "Return Kurtosis", order: 320, format: (value) => formatSignedFixed(value, 2) },
-};
-
-function inferEventTimestamp(ev: EventItem): number {
-  return ev?.ts ?? ev?.at ?? ev?.emitted_at ?? 0;
-}
-
-function inferTradeTimestamp(tr: TradeItem): number {
-  return tr?.ts ?? 0;
-}
-
-function describeEvent(ev: EventItem): string {
-  if (!ev) return "";
-  if (ev.message) return String(ev.message);
-  if (ev.details && typeof ev.details === "object") {
-    try {
-      return JSON.stringify(ev.details);
-    } catch {
-      return String(ev.details);
-    }
-  }
-  return ev.event || ev.kind || "event";
-}
-
-function describeTrade(tr: TradeItem): string {
-  if (!tr) return "";
-  const qty = Number.isFinite(tr.qty) ? Number(tr.qty).toLocaleString() : "—";
-  const price = Number.isFinite(tr.price) ? Number(tr.price).toFixed(2) : "—";
-  return `${tr.side || ""} ${qty} @ ${price}`.trim();
-}
-
-function nearestIndex<T extends { t: number }>(rows: T[], target: number | null | undefined): number {
-  if (!rows.length || target == null || !Number.isFinite(target)) return -1;
-  let lo = 0;
-  let hi = rows.length - 1;
-  while (lo <= hi) {
-    const mid = Math.floor((lo + hi) / 2);
-    const t = rows[mid]?.t ?? 0;
-    if (t === target) return mid;
-    if (t < target) lo = mid + 1;
-    else hi = mid - 1;
-  }
-  const candidates = [Math.max(0, lo), Math.max(0, lo - 1), Math.max(0, hi)];
-  let best = -1;
-  let bestDist = Infinity;
-  for (const idx of candidates) {
-    if (idx < 0 || idx >= rows.length) continue;
-    const dist = Math.abs((rows[idx]?.t ?? 0) - (target ?? 0));
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = idx;
-    }
-  }
-  return best;
-}
-
-function VirtualizedList<T>({
-  rows,
-  rowHeight = ROW_HEIGHT,
-  className,
-  style,
-  hasMore,
-  isLoading,
-  emptyPlaceholder,
-  loadMore,
-  renderRow,
-}: VirtualizedListProps<T>) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const [scrollTop, setScrollTop] = useState(0);
-  const [viewportHeight, setViewportHeight] = useState(0);
-
-  useLayoutEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    setViewportHeight(el.clientHeight);
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setViewportHeight(entry.contentRect.height);
-      }
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const onScroll = () => {
-      setScrollTop(el.scrollTop);
-      if (hasMore && loadMore) {
-        const threshold = rows.length * rowHeight - rowHeight * 4;
-        if (el.scrollTop + el.clientHeight >= threshold) {
-          loadMore();
-        }
-      }
-    };
-    el.addEventListener("scroll", onScroll);
-    return () => el.removeEventListener("scroll", onScroll);
-  }, [hasMore, loadMore, rowHeight, rows.length]);
-
-  if (!rows.length && !isLoading) {
-    return (
-      <div
-        ref={containerRef}
-        className={cn("relative overflow-y-auto rounded border", className)}
-        style={{ maxHeight: "320px", ...style }}
-      >
-        <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
-          {emptyPlaceholder ?? "No data"}
-        </div>
-      </div>
-    );
-  }
-
-  const totalHeight = rows.length * rowHeight;
-  const startIndex = Math.max(0, Math.floor(scrollTop / rowHeight) - 5);
-  const visibleCount = Math.ceil((viewportHeight || 0) / rowHeight) + 10;
-  const endIndex = Math.min(rows.length, startIndex + visibleCount);
-
-  return (
-    <div
-      ref={containerRef}
-      className={cn("relative overflow-y-auto rounded border", className)}
-      style={{ maxHeight: "320px", ...style }}
-    >
-      <div style={{ height: totalHeight, position: "relative" }}>
-        {rows.slice(startIndex, endIndex).map((row, idx) => {
-          const actualIndex = startIndex + idx;
-          return (
-            <div
-              key={actualIndex}
-              style={{
-                position: "absolute",
-                top: (startIndex + idx) * rowHeight,
-                left: 0,
-                right: 0,
-                height: rowHeight,
-                display: "flex",
-                alignItems: "center",
-                padding: "0 12px",
-                borderBottom: "1px solid var(--border)",
-                background: "var(--background)",
-              }}
-            >
-              {renderRow(row, actualIndex)}
-            </div>
-          );
-        })}
-        {isLoading && (
-          <div
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: 0,
-              height: rowHeight,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "var(--muted-foreground)",
-              fontSize: "0.75rem",
-              background: "linear-gradient(to top, rgba(0,0,0,0.03), transparent)",
-            }}
-          >
-            Loading…
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 export default function RunMonitor({ runId }: { runId: string }) {
   const [runStatus, setRunStatus] = useState<{ status?: string; type?: string } | null>(null);
   const [metrics, setMetrics] = useState<MetricSummary | null>(null);
@@ -1093,7 +666,6 @@ export default function RunMonitor({ runId }: { runId: string }) {
     [aiModel, aiModels]
   );
 
-  const aiModelSelectValue = aiModelOptions.includes(aiModel) ? aiModel : undefined;
 
   const summaryData = useMemo(() => {
     if (!summary && !metrics) return null;
@@ -1415,6 +987,22 @@ export default function RunMonitor({ runId }: { runId: string }) {
     );
   }, [artifacts]);
 
+  const handleLoadMoreEvents = useCallback(() => {
+    if (eventsHasMore && eventsCursor !== null) {
+      loadEventPage(eventsCursor, false);
+    }
+  }, [eventsHasMore, eventsCursor, loadEventPage]);
+
+  const handleLoadMoreTrades = useCallback(() => {
+    if (tradesHasMore && tradesCursor !== null) {
+      loadTradePage(tradesCursor, false);
+    }
+  }, [tradesHasMore, tradesCursor, loadTradePage]);
+
+  const toggleAiMemory = useCallback(() => {
+    setAiUseMemory((v) => !v);
+  }, []);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -1422,7 +1010,7 @@ export default function RunMonitor({ runId }: { runId: string }) {
           <h2 className="text-lg font-semibold">Run Monitor</h2>
           <div className="text-sm text-muted-foreground">Run ID: {runId}</div>
         </div>
-        <Badge className={cn("text-xs", statusTone)}>{statusLabel}</Badge>
+        <Badge className={`text-xs ${statusTone}`}>{statusLabel}</Badge>
       </div>
 
       {dataWarning && (
@@ -1432,420 +1020,96 @@ export default function RunMonitor({ runId }: { runId: string }) {
         </Alert>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {metricCards.map((metric) => (
-          <Card key={metric.key} className="p-4 space-y-2">
-            <div className="text-sm text-muted-foreground">{metric.label}</div>
-            <div className="text-2xl font-semibold">{metric.value}</div>
-          </Card>
-        ))}
-      </div>
+      <MetricCardsSection metricCards={metricCards} />
 
-      <Card className="p-4 space-y-3">
-        <div className="text-sm font-semibold">Summary</div>
-        {summaryLines.length ? (
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 text-sm">
-            {summaryLines.map((line) => (
-              <div key={line.key} className="flex flex-col">
-                <span className="text-xs uppercase text-muted-foreground">{line.label}</span>
-                <span className="font-medium text-sm">{line.value}</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="text-sm text-muted-foreground">Summary not available.</div>
-        )}
-        {metricsDownloads}
-      </Card>
+      <SummaryCard summaryLines={summaryLines} metricsDownloads={metricsDownloads} />
 
-      <Card className="p-4 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="text-sm font-semibold">Historical Performance</div>
-            <div className="text-xs text-muted-foreground">
-              {seriesMeta.total > 0
-                ? `Showing ${pnlSeries.length.toLocaleString()} points${seriesMeta.downsampled ? ` (downsampled from ${seriesMeta.total.toLocaleString()})` : ''}`
-                : "No historical data available"}
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2 text-xs">
-            {[
-              { key: "all", label: "All" },
-              { key: "1y", label: "1Y" },
-              { key: "6m", label: "6M" },
-              { key: "3m", label: "3M" },
-              { key: "1m", label: "1M" },
-              { key: "1w", label: "1W" },
-            ].map((preset) => (
-              <Button
-                key={preset.key}
-                size="sm"
-                variant={zoomPreset === preset.key ? "default" : "outline"}
-                onClick={() => handleZoomPreset(preset.key)}
-              >
-                {preset.label}
-              </Button>
-            ))}
-          </div>
-        </div>
-        {seriesLoading ? (
-          <div className="text-sm text-muted-foreground">Loading aggregated series…</div>
-        ) : pnlSeries.length ? (
-          <div className="grid gap-4 lg:grid-cols-2">
-            <div className="space-y-2">
-              <div className="text-xs text-muted-foreground">
-                Selected: {formatDateTime(selectedTs)}
-              </div>
-              <div className="h-56">
-                <MonitorLineChart
-                  data={pnlSeries}
-                  syncId="historical"
-                  onClick={handleSeriesClick}
-                  height="100%"
-                  config={pnlChartConfig}
-                >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis
-                    dataKey="t"
-                    type="number"
-                    domain={[tMin, tMax] as any}
-                    tickFormatter={(value) => new Date(Number(value)).toLocaleDateString([], { month: "short", day: "numeric" })}
-                  />
-                  <YAxis yAxisId="left" domain={pnlCumDomain as any} tickFormatter={(value) => formatPct(Number(value))} />
-                  <YAxis yAxisId="right" orientation="right" domain={pnlDdDomain as any} tickFormatter={(value) => formatPct(Number(value))} />
-                  <ChartTooltip
-                    content={<ChartTooltipContent valueFormatter={(value: number) => formatPnlTooltipValue(value)} />}
-                    labelFormatter={(label) => formatDateTime(Number(label))}
-                  />
-                  <Line yAxisId="left" type="monotone" dataKey="cum" stroke="var(--color-cum)" dot={false} isAnimationActive={false} />
-                  <Line yAxisId="right" type="monotone" dataKey="dd" stroke="var(--color-dd)" dot={false} isAnimationActive={false} />
-                  {selectedHistorical?.pnl && (
-                    <>
-                      <ReferenceLine x={selectedTs ?? selectedHistorical.pnl.t} stroke="#9aa0a6" strokeDasharray="3 3" />
-                      <ReferenceDot x={selectedHistorical.pnl.t} yAxisId="left" y={selectedHistorical.pnl.cum} r={5} fill="var(--color-cum)" stroke="#fff" />
-                      <ReferenceDot x={selectedHistorical.pnl.t} yAxisId="right" y={selectedHistorical.pnl.dd} r={5} fill="var(--color-dd)" stroke="#fff" />
-                    </>
-                  )}
-                </MonitorLineChart>
-              </div>
-            </div>
-            <div className="space-y-4">
-              <div className="h-24">
-                <MonitorLineChart data={expoSeries} syncId="historical" height="100%" config={expoChartConfig}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="t" type="number" domain={[tMin, tMax] as any} tickFormatter={(value) => new Date(Number(value)).toLocaleDateString()} />
-                  <YAxis domain={expoDomain as any} tickFormatter={(value) => formatSigned(Number(value))} />
-                  <ChartTooltip
-                    content={<ChartTooltipContent valueFormatter={(value: number) => formatExpoTooltipValue(value)} />}
-                    labelFormatter={(label) => formatDateTime(Number(label))}
-                  />
-                  <Line type="monotone" dataKey="gross" stroke="var(--color-gross)" dot={false} isAnimationActive={false} />
-                  {selectedHistorical?.expo && (
-                    <ReferenceDot x={selectedHistorical.expo.t} y={selectedHistorical.expo.gross} r={5} fill="var(--color-gross)" stroke="#fff" />
-                  )}
-                </MonitorLineChart>
-              </div>
-              <div className="h-24">
-                <MonitorLineChart data={slipSeries} syncId="historical" height="100%" config={slipChartConfig}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="t" type="number" domain={[tMin, tMax] as any} tickFormatter={(value) => new Date(Number(value)).toLocaleDateString()} />
-                  <YAxis yAxisId="left" domain={slipDomain as any} tickFormatter={(value) => `${Number(value).toFixed(1)} bps`} />
-                  <YAxis yAxisId="right" orientation="right" domain={turnoverDomain as any} tickFormatter={(value) => formatPct(Number(value))} />
-                  <ChartTooltip
-                    content={<ChartTooltipContent valueFormatter={(value: number, name: string) => formatSlipTooltipValue(value, name)} />}
-                    labelFormatter={(label) => formatDateTime(Number(label))}
-                  />
-                  <Line yAxisId="left" type="monotone" dataKey="slip" stroke="var(--color-slip)" dot={false} isAnimationActive={false} />
-                  <Line yAxisId="right" type="monotone" dataKey="to" stroke="var(--color-to)" dot={false} isAnimationActive={false} />
-                  {selectedHistorical?.slip && (
-                    <>
-                      <ReferenceDot x={selectedHistorical.slip.t} yAxisId="left" y={selectedHistorical.slip.slip} r={5} fill="var(--color-slip)" stroke="#fff" />
-                      <ReferenceDot x={selectedHistorical.slip.t} yAxisId="right" y={selectedHistorical.slip.to} r={5} fill="var(--color-to)" stroke="#fff" />
-                    </>
-                  )}
-                </MonitorLineChart>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="text-sm text-muted-foreground">No historical equity data available.</div>
-        )}
-      </Card>
-      {(isActive || liveSeries.length) && (
-        <Card className="p-4 space-y-3">
-          <div className="text-sm font-semibold">Live Telemetry</div>
-          <div className="text-xs text-muted-foreground">
-            Updating in real time. Displaying last {liveSeries.length.toLocaleString()} bars.
-          </div>
-          {livePnlSeries.length ? (
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="h-48">
-                <MonitorLineChart data={livePnlSeries} syncId="live" height="100%" config={pnlChartConfig}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="t" type="number" domain={['auto', 'auto']} tickFormatter={(value) => new Date(Number(value)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} />
-                  <YAxis yAxisId="left" domain={livePnlDomain as any} tickFormatter={(value) => formatPct(Number(value))} />
-                  <YAxis yAxisId="right" orientation="right" domain={liveDdDomain as any} tickFormatter={(value) => formatPct(Number(value))} />
-                  <ChartTooltip
-                    content={<ChartTooltipContent valueFormatter={(value: number) => formatPnlTooltipValue(value)} />}
-                    labelFormatter={(label) => formatDateTime(Number(label))}
-                  />
-                  <Line yAxisId="left" type="monotone" dataKey="cum" stroke="var(--color-cum)" dot={false} isAnimationActive={false} />
-                  <Line yAxisId="right" type="monotone" dataKey="dd" stroke="var(--color-dd)" dot={false} isAnimationActive={false} />
-                  {liveSelected?.pnl && (
-                    <>
-                      <ReferenceLine x={selectedTs ?? liveSelected.pnl.t} stroke="#9aa0a6" strokeDasharray="3 3" />
-                      <ReferenceDot x={liveSelected.pnl.t} yAxisId="left" y={liveSelected.pnl.cum} r={5} fill="var(--color-cum)" stroke="#fff" />
-                      <ReferenceDot x={liveSelected.pnl.t} yAxisId="right" y={liveSelected.pnl.dd} r={5} fill="var(--color-dd)" stroke="#fff" />
-                    </>
-                  )}
-                </MonitorLineChart>
-              </div>
-              <div className="space-y-4">
-                <div className="h-20">
-                  <MonitorLineChart data={liveExpoSeries} syncId="live" height="100%" config={expoChartConfig}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="t" type="number" domain={['auto', 'auto']} tickFormatter={(value) => new Date(Number(value)).toLocaleTimeString()} />
-                    <YAxis domain={liveExpoDomain as any} tickFormatter={(value) => formatSigned(Number(value))} />
-                    <ChartTooltip
-                      content={<ChartTooltipContent valueFormatter={(value: number) => formatExpoTooltipValue(value)} />}
-                      labelFormatter={(label) => formatDateTime(Number(label))}
-                    />
-                    <Line type="monotone" dataKey="gross" stroke="var(--color-gross)" dot={false} isAnimationActive={false} />
-                  </MonitorLineChart>
-                </div>
-                <div className="h-20">
-                  <MonitorLineChart data={liveSlipSeries} syncId="live" height="100%" config={slipChartConfig}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="t" type="number" domain={['auto', 'auto']} tickFormatter={(value) => new Date(Number(value)).toLocaleTimeString()} />
-                    <YAxis yAxisId="left" domain={liveSlipDomain as any} tickFormatter={(value) => `${Number(value).toFixed(1)} bps`} />
-                    <YAxis yAxisId="right" orientation="right" domain={liveTurnoverDomain as any} tickFormatter={(value) => formatPct(Number(value))} />
-                    <ChartTooltip
-                      content={<ChartTooltipContent valueFormatter={(value: number, name: string) => formatSlipTooltipValue(value, name)} />}
-                      labelFormatter={(label) => formatDateTime(Number(label))}
-                    />
-                    <Line yAxisId="left" type="monotone" dataKey="slip" stroke="var(--color-slip)" dot={false} isAnimationActive={false} />
-                    <Line yAxisId="right" type="monotone" dataKey="to" stroke="var(--color-to)" dot={false} isAnimationActive={false} />
-                  </MonitorLineChart>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="text-sm text-muted-foreground">Waiting for live telemetry…</div>
-          )}
-        </Card>
-      )}
+      <HistoricalPerformanceCard
+        seriesMeta={seriesMeta}
+        pnlSeries={pnlSeries}
+        expoSeries={expoSeries}
+        slipSeries={slipSeries}
+        selectedHistorical={selectedHistorical}
+        selectedTs={selectedTs}
+        tMin={tMin}
+        tMax={tMax}
+        pnlCumDomain={pnlCumDomain}
+        pnlDdDomain={pnlDdDomain}
+        expoDomain={expoDomain}
+        slipDomain={slipDomain}
+        turnoverDomain={turnoverDomain}
+        onSeriesClick={handleSeriesClick}
+        onZoomPreset={handleZoomPreset}
+        zoomPreset={zoomPreset}
+        seriesLoading={seriesLoading}
+        formatPnlTooltipValue={formatPnlTooltipValue}
+        formatExpoTooltipValue={formatExpoTooltipValue}
+        formatSlipTooltipValue={formatSlipTooltipValue}
+      />
 
-      <Card className="p-4 space-y-3">
-        <div className="text-sm font-semibold">Rolling Metrics</div>
-        {rollingLoading ? (
-          <div className="text-sm text-muted-foreground">Loading rolling metrics…</div>
-        ) : rollingSharpeSeries.length ? (
-          <div className="h-48">
-            <MonitorLineChart
-              data={rollingSharpeSeries}
-              config={{ sharpe: { label: "Sharpe", color: "#2563eb" }, vol: { label: "Vol", color: "#f59e0b" }, maxdd: { label: "Max DD", color: "#ef4444" } }}
-            >
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="t" type="number" tickFormatter={(value) => new Date(Number(value)).toLocaleDateString()} />
-              <YAxis yAxisId="left" domain={["auto", "auto"]} />
-              <YAxis yAxisId="right" orientation="right" domain={["auto", "auto"]} />
-              <ChartTooltip
-                content={<ChartTooltipContent valueFormatter={(value: number, name: string) => formatRollingTooltipValue(value, name)} />}
-                labelFormatter={(label) => formatDateTime(Number(label))}
-              />
-              <Line yAxisId="left" type="monotone" dataKey="sharpe" stroke="var(--color-sharpe, #2563eb)" dot={false} isAnimationActive={false} />
-              <Line yAxisId="left" type="monotone" dataKey="vol" stroke="var(--color-vol, #f59e0b)" dot={false} isAnimationActive={false} />
-              <Line yAxisId="right" type="monotone" dataKey="maxdd" stroke="var(--color-dd, #ef4444)" dot={false} isAnimationActive={false} />
-            </MonitorLineChart>
-          </div>
-        ) : (
-          <div className="space-y-1 text-sm text-muted-foreground">
-            <div>Rolling metrics not available.</div>
-            {rollingError && <div className="text-xs">{rollingError}</div>}
-          </div>
-        )}
-      </Card>
+      <LiveTelemetryCard
+        isVisible={isActive || liveSeries.length > 0}
+        liveSeriesCount={liveSeries.length}
+        livePnlSeries={livePnlSeries}
+        liveExpoSeries={liveExpoSeries}
+        liveSlipSeries={liveSlipSeries}
+        livePnlDomain={livePnlDomain}
+        liveDdDomain={liveDdDomain}
+        liveExpoDomain={liveExpoDomain}
+        liveSlipDomain={liveSlipDomain}
+        liveTurnoverDomain={liveTurnoverDomain}
+        liveSelected={liveSelected}
+        selectedTs={selectedTs}
+        formatPnlTooltipValue={formatPnlTooltipValue}
+        formatExpoTooltipValue={formatExpoTooltipValue}
+        formatSlipTooltipValue={formatSlipTooltipValue}
+      />
+
+      <RollingMetricsCard
+        rollingLoading={rollingLoading}
+        rollingSeries={rollingSharpeSeries}
+        rollingError={rollingError}
+        formatRollingTooltipValue={formatRollingTooltipValue}
+      />
+
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="p-4 space-y-3">
-          <div className="text-sm font-semibold">Events</div>
-          {eventsError && (
-            <Alert variant="destructive">
-              <AlertTitle>Events unavailable</AlertTitle>
-              <AlertDescription>{eventsError}</AlertDescription>
-            </Alert>
-          )}
-          <div className="grid grid-cols-[160px_160px_minmax(0,1fr)] gap-3 px-3 text-xs font-semibold text-muted-foreground">
-            <span>Time</span>
-            <span>Event</span>
-            <span>Details</span>
-          </div>
-          <VirtualizedList
-            rows={events}
-            loadMore={() => {
-              if (eventsHasMore && eventsCursor !== null) {
-                loadEventPage(eventsCursor, false);
-              }
-            }}
-            hasMore={eventsHasMore}
-            isLoading={eventsLoading}
-            emptyPlaceholder="No events recorded."
-            renderRow={(row, idx) => (
-              <div
-                className={cn(
-                  "grid grid-cols-[160px_160px_minmax(0,1fr)] gap-3 text-xs",
-                  highlightedEventIndices.has(idx) && "bg-muted/60 rounded"
-                )}
-              >
-                <span className="font-mono text-xs">{formatDateTime(inferEventTimestamp(row))}</span>
-                <span className="font-semibold">{row.event || row.kind || "event"}</span>
-                <span className="truncate text-muted-foreground">{describeEvent(row)}</span>
-              </div>
-            )}
-          />
-        </Card>
-        <Card className="p-4 space-y-3">
-          <div className="text-sm font-semibold">Trades</div>
-          {tradesError && (
-            <Alert variant="destructive">
-              <AlertTitle>Trades unavailable</AlertTitle>
-              <AlertDescription>{tradesError}</AlertDescription>
-            </Alert>
-          )}
-          <div className="grid grid-cols-[150px_100px_80px_80px_100px_minmax(0,1fr)] gap-3 px-3 text-xs font-semibold text-muted-foreground">
-            <span>Time</span>
-            <span>Symbol</span>
-            <span>Side</span>
-            <span>Qty</span>
-            <span>Price</span>
-            <span>PnL</span>
-          </div>
-          <VirtualizedList
-            rows={trades}
-            loadMore={() => {
-              if (tradesHasMore && tradesCursor !== null) {
-                loadTradePage(tradesCursor, false);
-              }
-            }}
-            hasMore={tradesHasMore}
-            isLoading={tradesLoading}
-            emptyPlaceholder="No trades recorded."
-            renderRow={(row, idx) => (
-              <div
-                className={cn(
-                  "grid grid-cols-[150px_100px_80px_80px_100px_minmax(0,1fr)] gap-3 text-xs",
-                  highlightedTradeIndices.has(idx) && "bg-muted/60 rounded"
-                )}
-              >
-                <span className="font-mono">{formatDateTime(inferTradeTimestamp(row))}</span>
-                <span>{row.symbol || "—"}</span>
-                <span>{row.side || "—"}</span>
-                <span>{Number.isFinite(row.qty) ? Number(row.qty).toLocaleString() : "—"}</span>
-                <span>{Number.isFinite(row.price) ? Number(row.price).toFixed(2) : "—"}</span>
-                <span className={colorClass(Number(row.net_pnl))}>{Number.isFinite(row.net_pnl) ? Number(row.net_pnl).toFixed(2) : "—"}</span>
-              </div>
-            )}
-          />
-        </Card>
+        <EventsCard
+          events={events}
+          eventsError={eventsError}
+          eventsHasMore={eventsHasMore}
+          eventsLoading={eventsLoading}
+          highlightedEventIndices={highlightedEventIndices}
+          onLoadMore={handleLoadMoreEvents}
+        />
+        <TradesCard
+          trades={trades}
+          tradesError={tradesError}
+          tradesHasMore={tradesHasMore}
+          tradesLoading={tradesLoading}
+          highlightedTradeIndices={highlightedTradeIndices}
+          onLoadMore={handleLoadMoreTrades}
+        />
       </div>
-      <Card className="p-4 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="text-sm font-semibold">State Snapshot</div>
-          <div className="text-xs text-muted-foreground">Click a chart to lock a timestamp.</div>
-        </div>
-        {selectedTs ? (
-          <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
-            <div>
-              <span className="uppercase">Timestamp</span>
-              <div className="font-mono text-sm text-foreground">{formatDateTime(selectedTs)}</div>
-            </div>
-            <div>
-              <span className="uppercase">Latest Live Tick</span>
-              <div className="font-mono text-sm">{formatDateTime(liveCursorTs)}</div>
-            </div>
-            <div>
-              <span className="uppercase">Cum Return</span>
-              <div className={cn("font-mono text-sm", colorClass(selectedHistorical?.pnl?.cum))}>
-                {formatPct(selectedHistorical?.pnl?.cum ?? 0)}
-              </div>
-            </div>
-            <div>
-              <span className="uppercase">Drawdown</span>
-              <div className={cn("font-mono text-sm", colorClass(-Math.abs(selectedHistorical?.pnl?.dd ?? 0)))}>
-                {formatPct(selectedHistorical?.pnl?.dd ?? 0)}
-              </div>
-            </div>
-            <div>
-              <span className="uppercase">Gross Lev</span>
-              <div className="font-mono text-sm">{formatSigned(selectedHistorical?.expo?.gross ?? 0)}</div>
-            </div>
-            <div>
-              <span className="uppercase">Turnover</span>
-              <div className="font-mono text-sm">{formatPct(selectedHistorical?.slip?.to ?? 0)}</div>
-            </div>
-          </div>
-        ) : (
-          <div className="text-sm text-muted-foreground">Select a point in the chart to view exposures and context.</div>
-        )}
-        {snapshotError && (
-          <Alert variant="destructive">
-            <AlertTitle>Snapshot unavailable</AlertTitle>
-            <AlertDescription>{snapshotError}</AlertDescription>
-          </Alert>
-        )}
-        {snapshot && !snapshotError && (
-          <div className="grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-3">
-            {Object.entries(snapshot)
-              .slice(0, 15)
-              .map(([key, value]) => (
-                <div key={key} className="flex flex-col rounded border bg-muted/40 px-3 py-2">
-                  <span className="text-[10px] uppercase text-muted-foreground">{key}</span>
-                  <span className="font-mono text-sm text-foreground truncate">{typeof value === 'number' ? value.toFixed(4) : String(value)}</span>
-                </div>
-              ))}
-          </div>
-        )}
-      </Card>
-      <Card className="p-4 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="text-sm font-semibold">Jarvis Insights</div>
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <Select value={aiModelSelectValue} onValueChange={setAiModel}>
-              <SelectTrigger className="h-8 w-[200px] text-xs" disabled={!aiModelOptions.length}>
-                <SelectValue placeholder="Select a model" />
-              </SelectTrigger>
-              <SelectContent>
-                {aiModelOptions.map((model) => (
-                  <SelectItem key={model} value={model}>
-                    {model}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button size="sm" variant={aiUseMemory ? "default" : "outline"} onClick={() => setAiUseMemory((v) => !v)}>
-              Memory {aiUseMemory ? "On" : "Off"}
-            </Button>
-            <Button size="sm" onClick={requestAiInsights} disabled={aiLoading}>
-              {aiLoading ? "Generating…" : "Generate"}
-            </Button>
-          </div>
-        </div>
-        {aiError && (
-          <Alert variant="destructive">
-            <AlertTitle>askJarvisLite error</AlertTitle>
-            <AlertDescription>{aiError}</AlertDescription>
-          </Alert>
-        )}
-        {aiText ? (
-          <div className="prose prose-sm max-w-none dark:prose-invert">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{aiText}</ReactMarkdown>
-          </div>
-        ) : (
-          <div className="text-sm text-muted-foreground">
-            Jarvis can draft a summary once enough metrics are available. Select a model, optionally enable memory, and click
-            Generate.
-          </div>
-        )}
-      </Card>
+
+      <StateSnapshotCard
+        selectedTs={selectedTs}
+        liveCursorTs={liveCursorTs}
+        selectedHistorical={selectedHistorical}
+        snapshot={snapshot}
+        snapshotError={snapshotError}
+      />
+
+      <JarvisInsightsCard
+        aiModel={aiModel}
+        aiModelOptions={aiModelOptions}
+        setAiModel={setAiModel}
+        aiUseMemory={aiUseMemory}
+        toggleAiUseMemory={toggleAiMemory}
+        aiLoading={aiLoading}
+        requestAiInsights={requestAiInsights}
+        aiError={aiError}
+        aiText={aiText}
+      />
     </div>
   );
 }

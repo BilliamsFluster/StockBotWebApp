@@ -15,7 +15,7 @@ import type { RunSummary, Metrics, RunArtifacts } from "./lib/types";
 import { WeightsHeatmap } from "./NewTraining/WeightsHeatmap";
 import { RunChartsModal } from "./NewTraining/RunChartsModal";
 import { parseCSV, drawdownFromEquity } from "./lib/csv";
-import RunMonitor from "./RunMonitor";
+import RunMonitor from "./run-monitor";
 import { buildUrl } from "@/api/client";
 import { formatPct, formatSigned } from "./lib/formats";
 import {
@@ -948,41 +948,6 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
                     <div>Fees/Slippage: {formatSigned(metrics.avg_trade_pnl ?? 0)}</div>
                     <div>Status: {runStatus?.status || "—"}</div>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="h-24">
-                      <LineChart data={filteredEquity} config={overviewEquityConfig} height="100%">
-                        <XAxis dataKey="step" hide />
-                        <YAxis hide />
-                        <ChartTooltip
-                          content={
-                            <ChartTooltipContent
-                              labelFormatter={(label) => `step ${label}`}
-                              formatter={(value) => fmtVal(Number(value))}
-                            />
-                          }
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="equity"
-                          name="Equity"
-                          stroke="var(--color-equity)"
-                          dot={false}
-                          isAnimationActive={false}
-                        />
-                        <Brush dataKey="step" onChange={handleBrush} height={10} />
-                      </LineChart>
-                    </div>
-                    <div className="h-24">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={filteredDrawdown}>
-                          <XAxis dataKey="step" hide />
-                          <YAxis hide />
-                          <Tooltip formatter={(v:any)=>formatPct(Number(v))} />
-                          <Area type="monotone" dataKey="dd" stroke="#ef4444" fill="#fecaca" isAnimationActive={false} />
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
                   <div className="text-xs text-muted-foreground">Recent anomalies: none detected</div>
                 </Card>
               )}
@@ -1028,6 +993,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
                           dot={false}
                           isAnimationActive={false}
                         />
+                        <Brush dataKey="step" onChange={handleBrush} height={10} />
                       </LineChart>
                     </div>
                     <div className="h-56">
