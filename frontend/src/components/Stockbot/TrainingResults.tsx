@@ -229,6 +229,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
   const pendingLayoutChangeRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
+  const pendingOpenPanelsRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [dockReady, setDockReady] = useState(false);
   const [currentLayout, setCurrentLayout] = useState<string>("default");
   const [hasSavedLayout, setHasSavedLayout] = useState(false);
@@ -909,8 +910,30 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
         clearTimeout(pendingLayoutChangeRef.current);
         pendingLayoutChangeRef.current = null;
       }
+      if (pendingOpenPanelsRef.current) {
+        clearTimeout(pendingOpenPanelsRef.current);
+        pendingOpenPanelsRef.current = null;
+      }
     };
   }, []);
+
+  const updateOpenPanels = useCallback(
+    (panelIds: string[], immediate = false) => {
+      if (pendingOpenPanelsRef.current) {
+        clearTimeout(pendingOpenPanelsRef.current);
+        pendingOpenPanelsRef.current = null;
+      }
+      if (immediate) {
+        setOpenPanels(panelIds);
+        return;
+      }
+      pendingOpenPanelsRef.current = setTimeout(() => {
+        pendingOpenPanelsRef.current = null;
+        setOpenPanels(panelIds);
+      }, 0);
+    },
+    [setOpenPanels]
+  );
 
   const applyLayout = useCallback(
     (layout: DockviewLayout, presetId?: string) => {
@@ -918,13 +941,13 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
       if (!api) return;
       suppressLayoutChangeRef.current = true;
       api.fromJSON(cloneDockLayout(layout));
-      setOpenPanels(extractPanelIds(layout));
+      updateOpenPanels(extractPanelIds(layout), true);
       setCurrentLayout(presetId ?? "custom");
       setTimeout(() => {
         suppressLayoutChangeRef.current = false;
       }, 0);
     },
-    [setOpenPanels]
+    [updateOpenPanels]
   );
 
   const loadSavedLayout = useCallback((): DockviewLayout | null => {
@@ -937,7 +960,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
       const parsed = JSON.parse(raw) as DockviewLayout;
       suppressLayoutChangeRef.current = true;
       api.fromJSON(cloneDockLayout(parsed));
-      setOpenPanels(extractPanelIds(parsed));
+      updateOpenPanels(extractPanelIds(parsed), true);
       setCurrentLayout("saved");
       setHasSavedLayout(true);
       setTimeout(() => {
@@ -948,7 +971,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
       console.error("Failed to restore dock layout", err);
       return null;
     }
-  }, [setOpenPanels]);
+    }, [updateOpenPanels]);
 
   const handleDockReady = useCallback(
     (event: { api: DockviewApi }) => {
@@ -964,7 +987,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
 
   const handleLayoutChange = useCallback(
     (layout: DockviewLayout) => {
-      setOpenPanels(extractPanelIds(layout));
+      updateOpenPanels(extractPanelIds(layout));
       if (suppressLayoutChangeRef.current) return;
       if (pendingLayoutChangeRef.current) {
         clearTimeout(pendingLayoutChangeRef.current);
@@ -974,7 +997,7 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
         setCurrentLayout("custom");
       }, 0);
     },
-    [setOpenPanels]
+    [updateOpenPanels]
   );
 
   const handlePresetChange = useCallback(
