@@ -39,7 +39,9 @@ export interface AddPanelOptions {
 export interface DockviewPanelApi {
   id: string;
   title: string;
-  updateOptions(options: { title?: string; params?: any }): void;
+  params?: any;
+  setTitle(title: string): void;
+  updateParameters(parameters: Record<string, any>): void;
   focus(): void;
   close(): void;
 }
@@ -48,6 +50,7 @@ export interface DockviewApi {
   addPanel(options: AddPanelOptions): DockviewPanelApi;
   closePanel(panelId: string): void;
   focusPanel(panelId: string): void;
+  getPanel(panelId: string): DockviewPanelApi | undefined;
   toJSON(): DockviewLayout;
   fromJSON(layout: DockviewLayout): void;
 }
@@ -58,7 +61,7 @@ export interface DockviewReadyEvent {
 
 export interface DockviewPanelProps<T = any> {
   params?: T;
-  panelApi: DockviewPanelApi;
+  api: DockviewPanelApi;
 }
 
 export interface DockviewReactProps {
@@ -157,21 +160,47 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
 
   const ensurePanelApi = useCallback(
     (panel: DockviewPanel): DockviewPanelApi => {
-      if (panelApis.current.has(panel.id)) {
-        return panelApis.current.get(panel.id)!;
+      const existing = panelApis.current.get(panel.id);
+      if (existing) {
+        existing.title = panel.title;
+        existing.params = panel.params;
+        return existing;
       }
       const api: DockviewPanelApi = {
         id: panel.id,
         title: panel.title,
-        updateOptions(options) {
+        params: panel.params,
+        setTitle(title) {
           setLayout((prev) => {
             const next = cloneLayout(prev);
             const loc = findPanel(panel.id);
             if (!loc) return prev;
             const target = next.groups[loc.groupIndex].tabs[loc.panelIndex];
-            if (options.title) target.title = options.title;
-            if (options.params !== undefined) target.params = options.params;
-            api.title = target.title;
+            target.title = title;
+            api.title = title;
+            return next;
+          });
+        },
+        updateParameters(parameters) {
+          setLayout((prev) => {
+            const next = cloneLayout(prev);
+            const loc = findPanel(panel.id);
+            if (!loc) return prev;
+            const target = next.groups[loc.groupIndex].tabs[loc.panelIndex];
+            if (!parameters || typeof parameters !== "object" || Array.isArray(parameters)) {
+              target.params = parameters;
+            } else {
+              const current = { ...(target.params ?? {}) } as Record<string, any>;
+              Object.entries(parameters).forEach(([key, value]) => {
+                if (value === undefined) {
+                  delete current[key];
+                } else {
+                  current[key] = value;
+                }
+              });
+              target.params = current;
+            }
+            api.params = target.params;
             return next;
           });
         },
@@ -179,6 +208,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
           focusPanelInternal(panel.id);
         },
         close() {
+          panelApis.current.delete(panel.id);
           removePanel(panel.id);
         },
       };
@@ -215,6 +245,14 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
 
   const addPanel = useCallback(
     (options: AddPanelOptions): DockviewPanelApi => {
+      if (options.id) {
+        const existing = findPanel(options.id);
+        if (existing) {
+          const panel = layoutRef.current.groups[existing.groupIndex].tabs[existing.panelIndex];
+          focusPanelInternal(panel.id);
+          return ensurePanelApi(panel);
+        }
+      }
       const panel: DockviewPanel = {
         id: options.id || createId("panel"),
         component: options.component,
@@ -247,7 +285,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
       insertPanel(panel, targetGroup, index, size);
       return ensurePanelApi(panel);
     },
-    [ensurePanelApi, findPanel, insertPanel]
+    [ensurePanelApi, findPanel, focusPanelInternal, insertPanel]
   );
 
   const closePanel = useCallback(
@@ -256,6 +294,16 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
       panelApis.current.delete(panelId);
     },
     [removePanel]
+  );
+
+  const getPanel = useCallback(
+    (panelId: string): DockviewPanelApi | undefined => {
+      const loc = findPanel(panelId);
+      if (!loc) return undefined;
+      const panel = layoutRef.current.groups[loc.groupIndex].tabs[loc.panelIndex];
+      return ensurePanelApi(panel);
+    },
+    [ensurePanelApi, findPanel]
   );
 
   const fromJSON = useCallback(
@@ -286,14 +334,21 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
       addPanel,
       closePanel,
       focusPanel: focusPanelInternal,
+      getPanel,
       toJSON,
       fromJSON,
     };
     onReady?.({ api });
-  }, [addPanel, closePanel, focusPanelInternal, fromJSON, onReady, toJSON]);
+  }, [addPanel, closePanel, focusPanelInternal, fromJSON, getPanel, onReady, toJSON]);
 
-  const handleDragStart = (panelId: string) => {
+  const handleDragStart = (event: React.DragEvent<HTMLElement>, panelId: string) => {
     draggingIdRef.current = panelId;
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "move";
+      try {
+        event.dataTransfer.setData("text/plain", panelId);
+      } catch {}
+    }
   };
 
   const handleDragEnd = () => {
@@ -525,7 +580,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
                       tabIndex={0}
                       className={["dv-tab", isActive ? "dv-tab-active" : ""].join(" ").trim()}
                       draggable
-                      onDragStart={() => handleDragStart(tab.id)}
+                      onDragStart={(event) => handleDragStart(event, tab.id)}
                       onDragEnd={handleDragEnd}
                       onClick={() => focusPanelInternal(tab.id)}
                       onKeyDown={(event) => {
@@ -573,7 +628,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
                         );
                       }
                       const api = ensurePanelApi(activePanel);
-                      return <Component params={activePanel.params} panelApi={api} />;
+                      return <Component params={activePanel.params} api={api} />;
                     })()}
                   </div>
                 ) : (
