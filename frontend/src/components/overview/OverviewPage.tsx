@@ -1,5 +1,5 @@
 "use client";
-import React, { useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import {
   Card,
   CardContent,
@@ -16,8 +16,6 @@ import {
   TableHead,
   TableHeader,
 } from "@/components/ui/table";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -26,14 +24,12 @@ import { useOnboarding } from "@/context/OnboardingContext";
 import { usePortfolioData } from "@/hooks/usePortfolioData";
 import { Stat } from "./shared/Stat";
 import { Metric } from "./shared/Metric";
-import { EquityArea } from "./shared/EquityArea";
 import { useActiveBroker } from "./hooks/useActiveBroker";
 import { useOnboardingStatus } from "./hooks/useOnboardingStatus";
 import { useMarketHighlights } from "./hooks/useMarketHighlights";
 import { fmtCash } from "./lib";
 
 // --- Type Definitions ---
-type Bench = "SPY" | "QQQ" | "Custom Factor";
 type IdxRow = { name: string; chg: number };
 type Mover = { sym: string; name: string; chg: number; vol: string };
 type Transaction = { type: string; date: string; amount?: number };
@@ -65,8 +61,6 @@ export default function OverviewPage() {
   }, [summary]);
 
   const perf = { sharpe:1.45, sortino:2.10, maxDD:-11.3 };
-  const benchmarks: Bench[] = ["SPY", "QQQ", "Custom Factor"];
-
   const { marketHighlights, relevantEvents, calendarEvents } = useMarketHighlights();
 
   const indices: IdxRow[] = [
@@ -89,12 +83,7 @@ export default function OverviewPage() {
   ];
 
   /** ------- UI STATE ------- */
-  const [frame, setFrame] = useState<"1D"|"1W"|"1M"|"YTD"|"1Y">("YTD");
-  const [activeBenches, setActiveBenches] = useState<Bench[]>(["SPY"]);
   const isOnboardingDone = useOnboardingStatus();
-
-  const toggleBench = (b:Bench) =>
-    setActiveBenches(prev => prev.includes(b) ? prev.filter(x=>x!==b) : [...prev, b]);
 
   /** ------- COMPUTED ------- */
 
@@ -178,31 +167,16 @@ export default function OverviewPage() {
         {/* StockBot Performance */}
         <Card className="ink-card">
           <CardHeader><CardTitle>StockBot Performance</CardTitle></CardHeader>
-          <CardContent>
-            <Tabs value={frame} onValueChange={(v) => setFrame(v as any)} className="mb-4">
-              <TabsList className="grid w-full grid-cols-5 h-8">
-                {(["1D","1W","1M","YTD","1Y"] as const).map(t=>(
-                  <TabsTrigger key={t} value={t} className="h-6 text-xs">{t}</TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-            <div className="flex gap-4 flex-wrap mb-4">
-              {benchmarks.map(b => (
-                <div key={b} className="flex items-center space-x-2">
-                  <Checkbox id={b} checked={activeBenches.includes(b)} onCheckedChange={() => toggleBench(b)} />
-                  <label htmlFor={b} className="text-xs font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                    {b}
-                  </label>
-                </div>
-              ))}
+          <CardContent className="space-y-4">
+            <div className="text-sm text-muted-foreground">
+              Live training and evaluation stats from the most recent StockBot run.
             </div>
-            <EquityArea tone="blue" />
-            <div className="grid grid-cols-3 gap-3 mt-4">
+            <div className="grid grid-cols-3 gap-3">
               <Stat label="Sharpe" value={perf.sharpe.toFixed(2)} />
               <Stat label="Sortino" value={perf.sortino.toFixed(2)} />
               <Stat label="Max DD" value={`${perf.maxDD}%`} />
             </div>
-            <Separator className="my-4" />
+            <Separator className="my-2" />
             <div className="grid grid-cols-2 gap-3 text-xs">
               <Metric label="Signals (1D)" value="142" />
               <Metric label="Hit Rate (7D)" value="58%" />
