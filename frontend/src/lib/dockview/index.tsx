@@ -97,6 +97,9 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
   const layoutRef = useRef(layout);
   const draggingIdRef = useRef<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const [resizingIndex, setResizingIndex] = useState<number | null>(null);
   const panelApis = useRef(new Map<string, DockviewPanelApi>());
 
   const setLayout = useCallback(
@@ -358,10 +361,123 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
 
   const renderedGroups = useMemo(() => layout.groups, [layout.groups]);
 
+  useEffect(() => {
+    return () => {
+      if (resizeCleanupRef.current) {
+        resizeCleanupRef.current();
+        resizeCleanupRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleResizeStart = useCallback(
+    (groupIndex: number, event: React.PointerEvent<HTMLButtonElement>) => {
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      const container = containerRef.current;
+      if (!container) return;
+      const groups = layoutRef.current.groups;
+      if (!groups[groupIndex] || !groups[groupIndex + 1]) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const pointerId = event.pointerId;
+      const startX = event.clientX;
+      const containerWidth = container.getBoundingClientRect().width;
+      if (!Number.isFinite(containerWidth) || containerWidth <= 0) return;
+
+      const totalSize = groups.reduce((sum, g) => sum + (g.size ?? 1), 0);
+      const leftSize = groups[groupIndex].size ?? 1;
+      const rightSize = groups[groupIndex + 1].size ?? 1;
+      const pairTotal = leftSize + rightSize;
+      if (!Number.isFinite(pairTotal) || pairTotal <= 0) return;
+
+      const MIN_GROUP_WIDTH = 260;
+      const minNormalized = Math.min(
+        pairTotal / 2,
+        (MIN_GROUP_WIDTH / containerWidth) * totalSize
+      );
+
+      let lastLeft = leftSize;
+      let frame: number | null = null;
+
+      const updateSizes = (clientX: number) => {
+        const deltaPx = clientX - startX;
+        const deltaSize = (deltaPx / containerWidth) * totalSize;
+        let nextLeft = leftSize + deltaSize;
+        const clampMin = Number.isFinite(minNormalized) && minNormalized > 0 ? minNormalized : pairTotal / 2;
+        const lower = clampMin;
+        const upper = pairTotal - clampMin;
+        if (nextLeft < lower) nextLeft = lower;
+        if (nextLeft > upper) nextLeft = upper;
+        if (Math.abs(nextLeft - lastLeft) < 1e-4) return;
+        lastLeft = nextLeft;
+        const nextRight = pairTotal - nextLeft;
+        if (frame) cancelAnimationFrame(frame);
+        frame = window.requestAnimationFrame(() => {
+          setLayout((prev) => {
+            const next = cloneLayout(prev);
+            if (!next.groups[groupIndex] || !next.groups[groupIndex + 1]) return prev;
+            next.groups[groupIndex].size = nextLeft;
+            next.groups[groupIndex + 1].size = nextRight;
+            return next;
+          });
+        });
+      };
+
+      const handlePointerMove = (ev: PointerEvent) => {
+        if (ev.pointerId !== pointerId) return;
+        updateSizes(ev.clientX);
+      };
+
+      const cleanup = () => {
+        if (frame) {
+          cancelAnimationFrame(frame);
+          frame = null;
+        }
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", handlePointerUp);
+        window.removeEventListener("pointercancel", handlePointerUp);
+        try {
+          if (event.currentTarget.hasPointerCapture(pointerId)) {
+            event.currentTarget.releasePointerCapture(pointerId);
+          }
+        } catch {}
+        document.body.style.cursor = "";
+        resizeCleanupRef.current = null;
+        setDragOver((prev) => (prev && prev.startsWith("split-") ? null : prev));
+        setResizingIndex(null);
+      };
+
+      const handlePointerUp = (ev: PointerEvent) => {
+        if (ev.pointerId !== pointerId) return;
+        cleanup();
+      };
+
+      resizeCleanupRef.current?.();
+      resizeCleanupRef.current = cleanup;
+      setResizingIndex(groupIndex);
+      document.body.style.cursor = "col-resize";
+
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerUp);
+      window.addEventListener("pointercancel", handlePointerUp);
+
+      try {
+        event.currentTarget.setPointerCapture(pointerId);
+      } catch {}
+    },
+    [setLayout]
+  );
+
   return (
-    <div className={["dv-root", className || ""].join(" ").trim()} style={style}>
+    <div
+      ref={containerRef}
+      className={["dv-root", className || ""].join(" ").trim()}
+      style={style}
+    >
       <div
-        className={["dv-drop-zone", dragOver === "left" ? "dv-drop-active" : ""].join(" ").trim()}
+        className={["dv-drop-zone", "dv-drop-zone-outer", dragOver === "left" ? "dv-drop-active" : ""].join(" ").trim()}
         onDragOver={(e) => {
           if (draggingIdRef.current) {
             e.preventDefault();
@@ -372,6 +488,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
         onDrop={(e) => {
           e.preventDefault();
           handleCreateGroupDrop(0);
+          setDragOver(null);
         }}
       />
       {renderedGroups.map((group, groupIndex) => {
@@ -392,6 +509,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
                 if (draggingIdRef.current) {
                   handleGroupDrop(groupIndex);
                 }
+                setDragOver(null);
               }}
             >
               <div className="dv-tabs">
@@ -426,6 +544,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
                         const draggingId = draggingIdRef.current;
                         if (!draggingId || draggingId === tab.id) return;
                         handleGroupDrop(groupIndex, tabIndex);
+                        setDragOver(null);
                       }}
                     >
                       <span className="dv-tab-title">{tab.title}</span>
@@ -462,22 +581,40 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
                 )}
               </div>
             </div>
-            <div
-              className={[
-                "dv-drop-zone",
-                dragOver === `split-${groupIndex}` ? "dv-drop-active" : "",
-              ].join(" ").trim()}
-              onDragOver={(e) => {
-                if (!draggingIdRef.current) return;
-                e.preventDefault();
-                setDragOver(`split-${groupIndex}`);
-              }}
-              onDragLeave={() => setDragOver(null)}
-              onDrop={(e) => {
-                e.preventDefault();
-                handleCreateGroupDrop(groupIndex + 1);
-              }}
-            />
+            <div className="dv-splitter">
+              <div
+                className={[
+                  "dv-drop-zone",
+                  dragOver === `split-${groupIndex}` ? "dv-drop-active" : "",
+                ].join(" ").trim()}
+                onDragOver={(e) => {
+                  if (!draggingIdRef.current) return;
+                  e.preventDefault();
+                  setDragOver(`split-${groupIndex}`);
+                }}
+                onDragLeave={() => setDragOver(null)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  handleCreateGroupDrop(groupIndex + 1);
+                  setDragOver(null);
+                }}
+              />
+              {groupIndex < renderedGroups.length - 1 && (
+                <button
+                  type="button"
+                  aria-label="Resize panels"
+                  className={[
+                    "dv-resize-handle",
+                    resizingIndex === groupIndex ? "dv-resize-active" : "",
+                  ]
+                    .join(" ")
+                    .trim()}
+                  onPointerDown={(e) => handleResizeStart(groupIndex, e)}
+                >
+                  <span className="dv-resize-grip" />
+                </button>
+              )}
+            </div>
           </React.Fragment>
         );
       })}
