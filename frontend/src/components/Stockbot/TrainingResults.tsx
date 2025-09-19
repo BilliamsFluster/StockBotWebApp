@@ -917,6 +917,15 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
     };
   }, []);
 
+  const commitOpenPanels = useCallback((panelIds: string[]) => {
+    setOpenPanels((prev) => {
+      if (prev.length === panelIds.length && prev.every((id, idx) => id === panelIds[idx])) {
+        return prev;
+      }
+      return [...panelIds];
+    });
+  }, []);
+
   const updateOpenPanels = useCallback(
     (panelIds: string[], immediate = false) => {
       if (pendingOpenPanelsRef.current) {
@@ -924,15 +933,16 @@ export default function TrainingResults({ initialRunId }: { initialRunId?: strin
         pendingOpenPanelsRef.current = null;
       }
       if (immediate) {
-        setOpenPanels(panelIds);
+        commitOpenPanels(panelIds);
         return;
       }
+      const nextIds = [...panelIds];
       pendingOpenPanelsRef.current = setTimeout(() => {
         pendingOpenPanelsRef.current = null;
-        setOpenPanels(panelIds);
+        commitOpenPanels(nextIds);
       }, 0);
     },
-    [setOpenPanels]
+    [commitOpenPanels]
   );
 
   const applyLayout = useCallback(
