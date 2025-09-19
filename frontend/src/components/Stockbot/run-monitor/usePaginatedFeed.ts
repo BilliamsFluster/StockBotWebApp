@@ -4,6 +4,7 @@ import type { PaginatedResult } from "./types";
 
 export function usePaginatedFeed<T>(runId: string | null, resource: string, limit = 500) {
   const loadingRef = useRef(false);
+  const exhaustedRef = useRef(false);
   const [items, setItems] = useState<T[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -11,9 +12,10 @@ export function usePaginatedFeed<T>(runId: string | null, resource: string, limi
   const [error, setError] = useState<string | null>(null);
 
   const loadPage = useCallback(
-    async (cursorValue: string | null, reset: boolean) => {
+    async (cursorValue: string | null, reset: boolean, force = false) => {
       if (!runId) return;
       if (loadingRef.current) return;
+      if (exhaustedRef.current && !force) return;
       loadingRef.current = true;
       setLoading(true);
       const params = new URLSearchParams();
@@ -22,6 +24,18 @@ export function usePaginatedFeed<T>(runId: string | null, resource: string, limi
       const url = buildUrl(`/api/stockbot/runs/${runId}/${resource}?${params.toString()}`);
       try {
         const resp = await fetch(url, { credentials: "include" });
+        if (resp.status === 404) {
+          const friendlyMessage =
+            resource === "trades"
+              ? "Trades are not available for this run yet."
+              : `${resource.charAt(0).toUpperCase()}${resource.slice(1)} not available.`;
+          setItems([]);
+          setCursor(null);
+          setHasMore(false);
+          setError(friendlyMessage);
+          exhaustedRef.current = true;
+          return;
+        }
         if (!resp.ok) throw new Error(`${resource} ${resp.status}`);
         const data: PaginatedResult<T> = await resp.json();
         const pageItems = Array.isArray(data?.items) ? data.items : [];
@@ -46,6 +60,7 @@ export function usePaginatedFeed<T>(runId: string | null, resource: string, limi
     setError(null);
     setLoading(false);
     loadingRef.current = false;
+    exhaustedRef.current = false;
     if (!runId) return;
     loadPage(null, true);
   }, [runId, loadPage]);
@@ -55,9 +70,10 @@ export function usePaginatedFeed<T>(runId: string | null, resource: string, limi
     loadPage(cursor, false);
   }, [hasMore, cursor, loadPage]);
 
-  const reload = useCallback(() => {
+  const reload = useCallback((options?: { force?: boolean }) => {
     if (!runId) return;
-    loadPage(null, true);
+    if (options?.force) exhaustedRef.current = false;
+    loadPage(null, true, Boolean(options?.force));
   }, [runId, loadPage]);
 
   return { items, cursor, hasMore, loading, error, loadMore, reload } as const;
