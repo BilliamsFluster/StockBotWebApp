@@ -1,12 +1,8 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  DockviewReact,
-  type DockviewApi,
-  type DockviewLayout,
-  type DockviewReadyEvent,
-} from "dockview";
+import { DockviewReact,  type DockviewReadyEvent,  type IDockviewReactProps} from "dockview/dist/esm/dockview/dockview";
+import type { DockviewApi, DockviewLayout, DockviewTheme, DockviewEvent, GroupDragEvent, TabDragEvent, MovePanelEvent, DockviewGroupPanel } from "dockview-core";
 import api, { buildUrl } from "@/api/client";
 import { deleteRun } from "@/api/stockbot";
 import type { RunSummary, Metrics, RunArtifacts } from "../lib/types";
@@ -35,6 +31,15 @@ import {
 } from "./new-training";
 import { WeightsHeatmap } from "../NewTraining/WeightsHeatmap";
 import { RunChartsModal } from "../NewTraining/RunChartsModal";
+type DockviewDragAwareApi = DockviewApi & {
+  onWillDragPanel?: DockviewEvent<TabDragEvent>;
+  onWillDragGroup?: DockviewEvent<GroupDragEvent>;
+  onDidMovePanel?: DockviewEvent<MovePanelEvent>;
+  onDidAddGroup?: DockviewEvent<DockviewGroupPanel>;
+  onDidRemoveGroup?: DockviewEvent<DockviewGroupPanel>;
+  onDidLayoutChange?: DockviewEvent<void>;
+};
+
 export type TrainingResultsProps = {
   initialRunId?: string;
 };
@@ -76,6 +81,7 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
   const pendingOpenPanelsRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const busyRef = useRef(false);
   const tickRef = useRef(0);
+  const dockSubscriptionsRef = useRef<Array<{ dispose: () => void }>>([]);
 
   useEffect(() => {
     if (initialRunId && initialRunId !== runId) {
@@ -507,6 +513,14 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
         clearTimeout(pendingOpenPanelsRef.current);
         pendingOpenPanelsRef.current = null;
       }
+      if (dockSubscriptionsRef.current.length) {
+        dockSubscriptionsRef.current.forEach((subscription) => {
+          try {
+            subscription.dispose();
+          } catch {}
+        });
+        dockSubscriptionsRef.current = [];
+      }
     };
   }, []);
 
@@ -569,6 +583,74 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     ({ api }: DockviewReadyEvent) => {
       dockApiRef.current = api;
       setDockReady(true);
+
+      const dragAwareApi = api as DockviewDragAwareApi;
+      dockviewLog('apiReady', {
+        hasWillDragPanel: !!dragAwareApi.onWillDragPanel,
+        hasWillDragGroup: !!dragAwareApi.onWillDragGroup,
+        hasMovePanel: !!dragAwareApi.onDidMovePanel,
+        willDragPanelType: typeof dragAwareApi.onWillDragPanel,
+        keys: Object.keys(dragAwareApi),
+        protoKeys: Object.getOwnPropertyNames(Object.getPrototypeOf(dragAwareApi)),
+      });
+
+      if (dockSubscriptionsRef.current.length) {
+        dockSubscriptionsRef.current.forEach((subscription) => {
+          try {
+            subscription.dispose();
+          } catch {}
+        });
+        dockSubscriptionsRef.current = [];
+      }
+
+      const subscribe = (disposable?: { dispose: () => void }) => {
+        if (disposable) {
+          dockSubscriptionsRef.current.push(disposable);
+        }
+      };
+
+      subscribe(
+        dragAwareApi.onWillDragPanel?.((event: TabDragEvent) => {
+          const dataTransfer = event.nativeEvent.dataTransfer;
+          if (dataTransfer) {
+            dataTransfer.effectAllowed = "move";
+            dataTransfer.dropEffect = "move";
+          }
+          dockviewLog('willDragPanel', { panelId: event.panel.id });
+        }),
+      );
+
+      subscribe(
+        dragAwareApi.onWillDragGroup?.((event: GroupDragEvent) => {
+          const dataTransfer = event.nativeEvent.dataTransfer;
+          if (dataTransfer) {
+            dataTransfer.effectAllowed = "move";
+            dataTransfer.dropEffect = "move";
+          }
+          dockviewLog('willDragGroup', { groupId: event.group.id });
+        }),
+      );
+
+      subscribe(
+        dragAwareApi.onDidMovePanel?.((event: MovePanelEvent) => {
+          dockviewLog('panelMoved', { panelId: event.panel.id, fromGroup: event.from.id });
+        }),
+      );
+      subscribe(
+        dragAwareApi.onDidAddGroup?.((group: DockviewGroupPanel) => {
+          dockviewLog('groupAdded', { groupId: group.id, location: group.api.location.type });
+        }),
+      );
+      subscribe(
+        dragAwareApi.onDidRemoveGroup?.((group: DockviewGroupPanel) => {
+          dockviewLog('groupRemoved', { groupId: group.id });
+        }),
+      );
+      subscribe(
+        dragAwareApi.onDidLayoutChange?.(() => {
+          dockviewLog('layoutChange', dragAwareApi.toJSON());
+        }),
+      );
 
       let initialLayout: DockviewLayout | { groups?: any[] } = defaultDockLayout;
       let layoutId: string = "default";
@@ -717,6 +799,23 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
   const fpsTag = useMemo(() => pickFirst(["time/fps"], tags?.scalars || available), [tags, available]);
   const epLenTag = useMemo(() => pickFirst(["rollout/ep_len_mean"], tags?.scalars || available), [tags, available]);
 
+  const dockviewRootDndEdges = useMemo(() => ({
+    activationSize: { type: "percentage", value: 6 },
+    size: { type: "pixels", value: 120 },
+  }), []);
+
+  const dockviewTheme = useMemo<DockviewTheme>(() => ({
+    name: "stockbot",
+    className: "dockview-theme-abyss",
+    gap: 12,
+    dndOverlayMounting: "absolute",
+    dndPanelOverlay: "group",
+  }), []);
+
+  const dockviewLog = useCallback((label: string, payload?: unknown) => {
+    console.log(`[dockview] ${label}`, payload);
+  }, []);
+
   const dockComponents = useMemo(
     () => ({
       overview: () => (
@@ -833,6 +932,17 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     ],
   );
 
+  const dockviewProps = useMemo<DockviewReactProps>(() => ({
+    className: "dockview-theme-abyss h-[75vh] min-h-[640px] w-full rounded-lg border bg-card/60 shadow-sm",
+    components: dockComponents,
+    disableFloatingGroups: false,
+    dndEdges: dockviewRootDndEdges,
+    theme: dockviewTheme,
+    floatingGroupBounds: "boundedWithinViewport",
+    onReady: handleDockReady,
+    onLayoutChange: handleLayoutChange,
+  }), [dockComponents, dockviewRootDndEdges, dockviewTheme, handleDockReady, handleLayoutChange]);
+
   return (
     <>
       <div className="space-y-4">
@@ -860,12 +970,7 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
         />
 
         <div className="w-full min-h-[720px]">
-          <DockviewReact
-            className="h-[75vh] min-h-[640px] w-full rounded-lg border bg-card/60 shadow-sm"
-            components={dockComponents}
-            onReady={handleDockReady}
-            onLayoutChange={handleLayoutChange}
-          />
+          <DockviewReact {...dockviewProps} />
         </div>
       </div>
 
@@ -882,3 +987,4 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     </>
   );
 }
+
