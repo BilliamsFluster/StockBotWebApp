@@ -86,6 +86,22 @@ const cloneLayout = (layout: DockviewLayout): DockviewLayout => ({
   })),
 });
 
+const findPanelInLayout = (
+  layout: DockviewLayout,
+  panelId: string
+): PanelLocation | null => {
+  const groups = layout.groups;
+  for (let gi = 0; gi < groups.length; gi++) {
+    const tabs = groups[gi].tabs;
+    for (let pi = 0; pi < tabs.length; pi++) {
+      if (tabs[pi].id === panelId) {
+        return { groupIndex: gi, panelIndex: pi };
+      }
+    }
+  }
+  return null;
+};
+
 const createId = (() => {
   let counter = 0;
   return (prefix: string) => `${prefix}-${++counter}`;
@@ -124,18 +140,10 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
     [onLayoutChange]
   );
 
-  const findPanel = useCallback((panelId: string): PanelLocation | null => {
-    const groups = layoutRef.current.groups;
-    for (let gi = 0; gi < groups.length; gi++) {
-      const tabs = groups[gi].tabs;
-      for (let pi = 0; pi < tabs.length; pi++) {
-        if (tabs[pi].id === panelId) {
-          return { groupIndex: gi, panelIndex: pi };
-        }
-      }
-    }
-    return null;
-  }, []);
+  const findPanel = useCallback(
+    (panelId: string): PanelLocation | null => findPanelInLayout(layoutRef.current, panelId),
+    []
+  );
 
   const removePanel = useCallback((panelId: string) => {
     setLayout((prev) => {
@@ -375,31 +383,51 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
       if (loc.groupIndex === targetGroupIndex && (targetIndex === undefined || loc.panelIndex === targetIndex)) {
         return;
       }
-      const panel = layoutRef.current.groups[loc.groupIndex].tabs[loc.panelIndex];
       setLayout((prev) => {
         const next = cloneLayout(prev);
-        const currentLoc = findPanel(panelId);
+        const currentLoc = findPanelInLayout(next, panelId);
         if (!currentLoc) return prev;
         const sourceGroup = next.groups[currentLoc.groupIndex];
         const [removed] = sourceGroup.tabs.splice(currentLoc.panelIndex, 1);
+        if (!removed) {
+          return prev;
+        }
         if (sourceGroup.active === removed.id) {
           sourceGroup.active = sourceGroup.tabs[0]?.id;
         }
+        let nextTargetGroupIndex = targetGroupIndex;
+        let nextTargetIndex = targetIndex;
         if (sourceGroup.tabs.length === 0) {
           next.groups.splice(currentLoc.groupIndex, 1);
-          if (targetGroupIndex > currentLoc.groupIndex) targetGroupIndex -= 1;
+          if (nextTargetGroupIndex > currentLoc.groupIndex) nextTargetGroupIndex -= 1;
+        } else if (
+          nextTargetGroupIndex === currentLoc.groupIndex &&
+          nextTargetIndex !== undefined &&
+          nextTargetIndex > currentLoc.panelIndex
+        ) {
+          nextTargetIndex -= 1;
         }
-        const target = next.groups[targetGroupIndex];
+        if (nextTargetGroupIndex < 0) {
+          nextTargetGroupIndex = 0;
+        }
+        if (nextTargetGroupIndex > next.groups.length) {
+          nextTargetGroupIndex = next.groups.length;
+        }
+        const target = next.groups[nextTargetGroupIndex];
         if (target) {
           if (size !== undefined) target.size = size;
-          if (targetIndex === undefined || targetIndex < 0 || targetIndex > target.tabs.length) {
+          if (
+            nextTargetIndex === undefined ||
+            nextTargetIndex < 0 ||
+            nextTargetIndex > target.tabs.length
+          ) {
             target.tabs.push(removed);
           } else {
-            target.tabs.splice(targetIndex, 0, removed);
+            target.tabs.splice(nextTargetIndex, 0, removed);
           }
           target.active = removed.id;
         } else {
-          next.groups.splice(targetGroupIndex, 0, {
+          next.groups.splice(nextTargetGroupIndex, 0, {
             id: createId("group"),
             size,
             active: removed.id,
