@@ -1,4 +1,4 @@
-import type { DockviewLayout } from "dockview";
+import type { DockviewLayout, DockviewNode, DockviewGroupNode } from "dockview";
 
 export const TRAINING_LAYOUT_STORAGE_KEY = "stockbot:trainingResults:docklayout:v1";
 
@@ -17,87 +17,104 @@ const createPanel = <K extends keyof typeof panelDefinitions>(key: K) => ({
   ...panelDefinitions[key],
 });
 
-export const defaultDockLayout: DockviewLayout = {
-  groups: [
-    {
-      id: "group-overview",
-      size: 1.2,
-      active: panelDefinitions.overview.id,
-      tabs: [createPanel("overview"), createPanel("performance")],
+const group = (config: Omit<DockviewGroupNode, "type">): DockviewGroupNode => ({
+  type: "group",
+  ...config,
+});
+
+const horizontalLayout = (id: string, children: DockviewGroupNode[]): DockviewLayout => {
+  if (children.length === 0) {
+    return { version: "2", root: null };
+  }
+  if (children.length === 1) {
+    return { version: "2", root: children[0] };
+  }
+  return {
+    version: "2",
+    root: {
+      type: "split",
+      id,
+      orientation: "horizontal",
+      children,
     },
-    {
-      id: "group-behavior",
-      size: 1.1,
-      active: panelDefinitions.trades.id,
-      tabs: [createPanel("trades"), createPanel("risk"), createPanel("diagnostics")],
-    },
-    {
-      id: "group-data",
-      size: 1,
-      active: panelDefinitions.scalars.id,
-      tabs: [createPanel("scalars"), createPanel("artifacts")],
-    },
-    {
-      id: "group-monitor",
-      size: 1.2,
-      active: panelDefinitions.monitor.id,
-      tabs: [createPanel("monitor")],
-    },
-  ],
+  };
 };
 
-export const analysisDockLayout: DockviewLayout = {
-  groups: [
-    {
-      id: "group-core",
-      size: 1.6,
-      active: panelDefinitions.performance.id,
-      tabs: [
-        createPanel("overview"),
-        createPanel("performance"),
-        createPanel("diagnostics"),
-        createPanel("risk"),
-      ],
-    },
-    {
-      id: "group-context",
-      size: 1.2,
-      active: panelDefinitions.scalars.id,
-      tabs: [createPanel("scalars"), createPanel("trades"), createPanel("artifacts")],
-    },
-    {
-      id: "group-monitor-analysis",
-      size: 1,
-      active: panelDefinitions.monitor.id,
-      tabs: [createPanel("monitor")],
-    },
-  ],
-};
+export const defaultDockLayout: DockviewLayout = horizontalLayout("split-default", [
+  group({
+    id: "group-overview",
+    size: 1.2,
+    active: panelDefinitions.overview.id,
+    tabs: [createPanel("overview"), createPanel("performance")],
+  }),
+  group({
+    id: "group-behavior",
+    size: 1.1,
+    active: panelDefinitions.trades.id,
+    tabs: [createPanel("trades"), createPanel("risk"), createPanel("diagnostics")],
+  }),
+  group({
+    id: "group-data",
+    size: 1,
+    active: panelDefinitions.scalars.id,
+    tabs: [createPanel("scalars"), createPanel("artifacts")],
+  }),
+  group({
+    id: "group-monitor",
+    size: 1.2,
+    active: panelDefinitions.monitor.id,
+    tabs: [createPanel("monitor")],
+  }),
+]);
 
-export const compactDockLayout: DockviewLayout = {
-  groups: [
-    {
-      id: "group-all",
-      size: 1.8,
-      active: panelDefinitions.overview.id,
-      tabs: [
-        createPanel("overview"),
-        createPanel("performance"),
-        createPanel("trades"),
-        createPanel("risk"),
-        createPanel("diagnostics"),
-        createPanel("scalars"),
-        createPanel("artifacts"),
-      ],
-    },
-    {
-      id: "group-monitor-compact",
-      size: 1,
-      active: panelDefinitions.monitor.id,
-      tabs: [createPanel("monitor")],
-    },
-  ],
-};
+export const analysisDockLayout: DockviewLayout = horizontalLayout("split-analysis", [
+  group({
+    id: "group-core",
+    size: 1.6,
+    active: panelDefinitions.performance.id,
+    tabs: [
+      createPanel("overview"),
+      createPanel("performance"),
+      createPanel("diagnostics"),
+      createPanel("risk"),
+    ],
+  }),
+  group({
+    id: "group-context",
+    size: 1.2,
+    active: panelDefinitions.scalars.id,
+    tabs: [createPanel("scalars"), createPanel("trades"), createPanel("artifacts")],
+  }),
+  group({
+    id: "group-monitor-analysis",
+    size: 1,
+    active: panelDefinitions.monitor.id,
+    tabs: [createPanel("monitor")],
+  }),
+]);
+
+export const compactDockLayout: DockviewLayout = horizontalLayout("split-compact", [
+  group({
+    id: "group-all",
+    size: 1.8,
+    active: panelDefinitions.overview.id,
+    tabs: [
+      createPanel("overview"),
+      createPanel("performance"),
+      createPanel("trades"),
+      createPanel("risk"),
+      createPanel("diagnostics"),
+      createPanel("scalars"),
+      createPanel("artifacts"),
+    ],
+  }),
+  group({
+    id: "group-monitor-compact",
+    size: 1,
+    active: panelDefinitions.monitor.id,
+    tabs: [createPanel("monitor")],
+  }),
+]);
 
 export const DOCK_PRESETS: Array<{ id: string; label: string; layout: DockviewLayout }> = [
   { id: "default", label: "Default Columns", layout: defaultDockLayout },
@@ -107,12 +124,76 @@ export const DOCK_PRESETS: Array<{ id: string; label: string; layout: DockviewLa
 
 export type PanelKey = keyof typeof panelDefinitions;
 
-export const cloneDockLayout = (layout: DockviewLayout): DockviewLayout => ({
-  groups: layout.groups.map((group) => ({
-    ...group,
-    tabs: group.tabs.map((tab) => ({ ...tab })),
-  })),
-});
+const cloneNode = (node: DockviewNode): DockviewNode => {
+  if (node.type === "group") {
+    return {
+      ...node,
+      tabs: node.tabs.map((tab) => ({ ...tab })),
+    };
+  }
+  return {
+    ...node,
+    children: node.children.map(cloneNode),
+  };
+};
 
-export const extractPanelIds = (layout: DockviewLayout): string[] =>
-  layout.groups.flatMap((group) => group.tabs.map((tab) => tab.id));
+const hasRoot = (layout: unknown): layout is DockviewLayout =>
+  Boolean(layout && typeof layout === "object" && "root" in layout);
+
+const convertLegacy = (value: { groups?: any[] } | undefined): DockviewLayout => {
+  const groups = Array.isArray(value?.groups) ? value!.groups : [];
+  const nodes = groups
+    .map((legacy, index) => {
+      const rawTabs = Array.isArray(legacy?.tabs) ? legacy.tabs : [];
+      const tabs = rawTabs
+        .filter((tab: any) => tab && typeof tab.component === "string")
+        .map((tab: any, tabIndex: number) => ({
+          id:
+            typeof tab.id === "string"
+              ? tab.id
+              : `${tab.component}-${index}-${tabIndex}`,
+          component: tab.component,
+          title: typeof tab.title === "string" ? tab.title : tab.component,
+          params: tab.params,
+        }));
+      if (tabs.length === 0) return null;
+      const activeId =
+        typeof legacy?.active === "string" && tabs.some((tab) => tab.id === legacy.active)
+          ? legacy.active
+          : tabs[0].id;
+      return group({
+        id: typeof legacy?.id === "string" ? legacy.id : `group-${index}`,
+        size: typeof legacy?.size === "number" ? legacy.size : undefined,
+        active: activeId,
+        tabs,
+      });
+    })
+    .filter((node): node is DockviewGroupNode => node !== null);
+  return horizontalLayout("split-legacy", nodes);
+};
+
+export const cloneDockLayout = (layout: DockviewLayout | { groups?: any[] }): DockviewLayout => {
+  if (hasRoot(layout)) {
+    return {
+      version: "2",
+      root: layout.root ? cloneNode(layout.root) : null,
+    };
+  }
+  return convertLegacy(layout);
+};
+
+const collectPanels = (node: DockviewNode | null, acc: string[]) => {
+  if (!node) return;
+  if (node.type === "group") {
+    node.tabs.forEach((tab) => acc.push(tab.id));
+    return;
+  }
+  node.children.forEach((child) => collectPanels(child, acc));
+};
+
+export const extractPanelIds = (layout: DockviewLayout | { groups?: any[] }): string[] => {
+  const panels: string[] = [];
+  const source = hasRoot(layout) ? layout.root : convertLegacy(layout).root;
+  collectPanels(source ?? null, panels);
+  return panels;
+};
