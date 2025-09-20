@@ -1027,10 +1027,12 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
           onDragOver={(e) => {
             if (!draggingIdRef.current) return;
             e.preventDefault();
+            e.stopPropagation();
           }}
           onDrop={(e) => {
             if (!draggingIdRef.current) return;
             e.preventDefault();
+            e.stopPropagation();
             handleGroupDrop(path, "center");
           }}
         >
@@ -1049,6 +1051,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
                 onDragOver={(e) => {
                   if (!draggingIdRef.current) return;
                   e.preventDefault();
+                  e.stopPropagation();
                   setDragOver(`group:${group.id}:${position}`);
                 }}
                 onDragLeave={() => {
@@ -1057,6 +1060,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
                 onDrop={(e) => {
                   if (!draggingIdRef.current) return;
                   e.preventDefault();
+                  e.stopPropagation();
                   handleGroupDrop(path, position);
                   setDragOver(null);
                 }}
@@ -1087,10 +1091,12 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
                   onDragOver={(e) => {
                     if (!draggingIdRef.current || draggingIdRef.current === tab.id) return;
                     e.preventDefault();
+                    e.stopPropagation();
                     setDragOver(tabKey);
                   }}
                   onDrop={(e) => {
                     e.preventDefault();
+                    e.stopPropagation();
                     const draggingId = draggingIdRef.current;
                     if (!draggingId || draggingId === tab.id) return;
                     handleGroupDrop(path, "center", tabIndex);
@@ -1175,6 +1181,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
                   onDragOver={(e) => {
                     if (!draggingIdRef.current) return;
                     e.preventDefault();
+                    e.stopPropagation();
                     setDragOver(beforeKey);
                   }}
                   onDragLeave={() => {
@@ -1183,6 +1190,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
                   onDrop={(e) => {
                     if (!draggingIdRef.current) return;
                     e.preventDefault();
+                    e.stopPropagation();
                     handleSplitDrop(path, index);
                     setDragOver(null);
                   }}
@@ -1202,6 +1210,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
                     onDragOver={(e) => {
                       if (!draggingIdRef.current) return;
                       e.preventDefault();
+                      e.stopPropagation();
                       setDragOver(`split:${splitKey}:${index + 1}`);
                     }}
                     onDragLeave={() => {
@@ -1210,6 +1219,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
                     onDrop={(e) => {
                       if (!draggingIdRef.current) return;
                       e.preventDefault();
+                      e.stopPropagation();
                       handleSplitDrop(path, index + 1);
                       setDragOver(null);
                     }}
@@ -1230,6 +1240,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
                       onDragOver={(e) => {
                         if (!draggingIdRef.current) return;
                         e.preventDefault();
+                        e.stopPropagation();
                         setDragOver(`split:${splitKey}:between:${index}`);
                       }}
                       onDragLeave={() => {
@@ -1238,6 +1249,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
                       onDrop={(e) => {
                         if (!draggingIdRef.current) return;
                         e.preventDefault();
+                        e.stopPropagation();
                         handleSplitDrop(path, index + 1);
                         setDragOver(null);
                       }}
