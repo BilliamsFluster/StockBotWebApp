@@ -539,6 +539,7 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
   );
 
   const applyLayout = useCallback(
+
     (layout: DockviewLayout | { groups?: any[] }, presetId: string): boolean => {
       const api = dockApiRef.current;
       if (!api) return false;
@@ -556,6 +557,7 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
         return false;
       } catch {
         return false;
+
       } finally {
         suppressLayoutChangeRef.current = false;
       }
@@ -592,6 +594,7 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
           setHasSavedLayout(false);
         } catch {}
         applyLayout(defaultDockLayout, "default");
+
       }
     },
     [applyLayout, setHasSavedLayout],
@@ -626,6 +629,7 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
             setHasSavedLayout(false);
             applyLayout(defaultDockLayout, "default");
           }
+
         } catch {}
         return;
       }
@@ -660,6 +664,7 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
         setHasSavedLayout(false);
         applyLayout(defaultDockLayout, "default");
       }
+
     } catch {}
   }, [applyLayout, setHasSavedLayout]);
 
