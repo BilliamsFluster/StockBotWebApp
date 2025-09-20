@@ -123,6 +123,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
   const resizeCleanupRef = useRef<(() => void) | null>(null);
   const [resizingIndex, setResizingIndex] = useState<number | null>(null);
   const panelApis = useRef(new Map<string, DockviewPanelApi>());
+  const activeGroupIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     componentsRef.current = components;
@@ -145,33 +146,51 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
     []
   );
 
-  const removePanel = useCallback((panelId: string) => {
-    setLayout((prev) => {
-      const next = cloneLayout(prev);
-      const loc = findPanel(panelId);
-      if (!loc) return prev;
-      const group = next.groups[loc.groupIndex];
-      group.tabs.splice(loc.panelIndex, 1);
-      if (group.active === panelId) {
-        group.active = group.tabs[0]?.id;
-      }
-      if (group.tabs.length === 0) {
-        next.groups.splice(loc.groupIndex, 1);
-      }
-      return next;
-    });
-  }, [findPanel, setLayout]);
+  const removePanel = useCallback(
+    (panelId: string) => {
+      setLayout((prev) => {
+        const next = cloneLayout(prev);
+        const loc = findPanelInLayout(next, panelId);
+        if (!loc) return prev;
+        const group = next.groups[loc.groupIndex];
+        if (!group) return prev;
+        const [removed] = group.tabs.splice(loc.panelIndex, 1);
+        if (!removed) return prev;
+        panelApis.current.delete(removed.id);
+        if (group.active === panelId) {
+          group.active = group.tabs[0]?.id;
+        }
+        if (group.tabs.length === 0) {
+          next.groups.splice(loc.groupIndex, 1);
+          if (activeGroupIdRef.current === group.id) {
+            activeGroupIdRef.current =
+              next.groups[loc.groupIndex]?.id ?? next.groups[loc.groupIndex - 1]?.id ?? null;
+          }
+        }
+        if (next.groups.length === 0) {
+          activeGroupIdRef.current = null;
+        }
+        return next;
+      });
+    },
+    [setLayout]
+  );
 
-  const focusPanelInternal = useCallback((panelId: string) => {
-    setLayout((prev) => {
-      const next = cloneLayout(prev);
-      const loc = findPanel(panelId);
-      if (!loc) return prev;
-      const group = next.groups[loc.groupIndex];
-      group.active = panelId;
-      return next;
-    });
-  }, [findPanel, setLayout]);
+  const focusPanelInternal = useCallback(
+    (panelId: string) => {
+      setLayout((prev) => {
+        const next = cloneLayout(prev);
+        const loc = findPanelInLayout(next, panelId);
+        if (!loc) return prev;
+        const group = next.groups[loc.groupIndex];
+        if (!group) return prev;
+        group.active = panelId;
+        activeGroupIdRef.current = group.id;
+        return next;
+      });
+    },
+    [setLayout]
+  );
 
   const ensurePanelApi = useCallback(
     (panel: DockviewPanel): DockviewPanelApi => {
@@ -188,9 +207,11 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
         setTitle(title) {
           setLayout((prev) => {
             const next = cloneLayout(prev);
-            const loc = findPanel(panel.id);
+            const loc = findPanelInLayout(next, panel.id);
             if (!loc) return prev;
-            const target = next.groups[loc.groupIndex].tabs[loc.panelIndex];
+            const group = next.groups[loc.groupIndex];
+            if (!group) return prev;
+            const target = group.tabs[loc.panelIndex];
             target.title = title;
             api.title = title;
             return next;
@@ -199,9 +220,11 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
         updateParameters(parameters) {
           setLayout((prev) => {
             const next = cloneLayout(prev);
-            const loc = findPanel(panel.id);
+            const loc = findPanelInLayout(next, panel.id);
             if (!loc) return prev;
-            const target = next.groups[loc.groupIndex].tabs[loc.panelIndex];
+            const group = next.groups[loc.groupIndex];
+            if (!group) return prev;
+            const target = group.tabs[loc.panelIndex];
             if (!parameters || typeof parameters !== "object" || Array.isArray(parameters)) {
               target.params = parameters;
             } else {
@@ -237,14 +260,19 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
     (panel: DockviewPanel, targetGroup: number, index?: number, size?: number) => {
       setLayout((prev) => {
         const next = cloneLayout(prev);
-        if (targetGroup < 0 || targetGroup > next.groups.length) {
-          next.groups.push({ id: createId("group"), tabs: [panel], active: panel.id, size });
-          return next;
+        let targetIndex = targetGroup;
+        if (targetIndex < 0) targetIndex = 0;
+        if (targetIndex > next.groups.length) targetIndex = next.groups.length;
+        if (!next.groups[targetIndex]) {
+          next.groups.splice(targetIndex, 0, {
+            id: createId("group"),
+            tabs: [],
+            active: panel.id,
+            size,
+          });
         }
-        if (!next.groups[targetGroup]) {
-          next.groups.splice(targetGroup, 0, { id: createId("group"), tabs: [], active: panel.id, size });
-        }
-        const group = next.groups[targetGroup];
+        const group = next.groups[targetIndex];
+        if (!group) return prev;
         if (size !== undefined) group.size = size;
         if (index === undefined || index < 0 || index > group.tabs.length) {
           group.tabs.push(panel);
@@ -252,6 +280,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
           group.tabs.splice(index, 0, panel);
         }
         group.active = panel.id;
+        activeGroupIdRef.current = group.id;
         return next;
       });
     },
@@ -296,6 +325,26 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
             index = loc.panelIndex + 1;
           }
         }
+      } else {
+        const layout = layoutRef.current;
+        const activeGroupId = activeGroupIdRef.current;
+        if (activeGroupId) {
+          const activeIndex = layout.groups.findIndex((g) => g.id === activeGroupId);
+          if (activeIndex !== -1) {
+            targetGroup = activeIndex;
+            index = layout.groups[activeIndex].tabs.length;
+          }
+        }
+        if (index === undefined && layout.groups.length > 0) {
+          const fallbackIndex = layout.groups.findIndex((g) => (g.active && g.tabs.length > 0) || g.tabs.length > 0);
+          if (fallbackIndex !== -1) {
+            targetGroup = fallbackIndex;
+            index = layout.groups[fallbackIndex].tabs.length;
+          } else {
+            targetGroup = layout.groups.length - 1;
+            index = layout.groups[targetGroup]?.tabs.length;
+          }
+        }
       }
       insertPanel(panel, targetGroup, index, size);
       return ensurePanelApi(panel);
@@ -338,6 +387,7 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
           })),
       }));
       setLayout(() => ({ groups: validGroups }));
+      activeGroupIdRef.current = validGroups[0]?.id ?? null;
       panelApis.current.clear();
     },
     [setLayout]
@@ -399,6 +449,9 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
         let nextTargetIndex = targetIndex;
         if (sourceGroup.tabs.length === 0) {
           next.groups.splice(currentLoc.groupIndex, 1);
+          if (activeGroupIdRef.current === sourceGroup.id) {
+            activeGroupIdRef.current = null;
+          }
           if (nextTargetGroupIndex > currentLoc.groupIndex) nextTargetGroupIndex -= 1;
         } else if (
           nextTargetGroupIndex === currentLoc.groupIndex &&
@@ -426,13 +479,16 @@ export const DockviewReact: React.FC<DockviewReactProps> = ({
             target.tabs.splice(nextTargetIndex, 0, removed);
           }
           target.active = removed.id;
+          activeGroupIdRef.current = target.id;
         } else {
-          next.groups.splice(nextTargetGroupIndex, 0, {
+          const newGroup = {
             id: createId("group"),
             size,
             active: removed.id,
             tabs: [removed],
-          });
+          };
+          next.groups.splice(nextTargetGroupIndex, 0, newGroup);
+          activeGroupIdRef.current = newGroup.id;
         }
         return next;
       });
