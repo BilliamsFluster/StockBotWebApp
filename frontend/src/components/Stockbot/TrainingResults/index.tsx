@@ -538,13 +538,63 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     [commitOpenPanels],
   );
 
+  const applyLayout = useCallback(
+    (layout: DockviewLayout | { groups?: any[] }, presetId: string): boolean => {
+      const api = dockApiRef.current;
+      if (!api) return false;
+      const expectedPanels = extractPanelIds(layout);
+      suppressLayoutChangeRef.current = true;
+      try {
+        api.fromJSON(cloneDockLayout(layout));
+        const appliedLayout = api.toJSON();
+        const actualPanels = extractPanelIds(appliedLayout);
+        updateOpenPanels(actualPanels, true);
+        if (expectedPanels.length === 0 || actualPanels.length > 0) {
+          setCurrentLayout(presetId);
+          return true;
+        }
+        return false;
+      } catch {
+        return false;
+      } finally {
+        suppressLayoutChangeRef.current = false;
+      }
+    },
+    [updateOpenPanels],
+  );
+
   const handleDockReady = useCallback(
     ({ api }: DockviewReadyEvent) => {
       dockApiRef.current = api;
       setDockReady(true);
-      updateOpenPanels(extractPanelIds(api.toJSON()), true);
+
+      let initialLayout: DockviewLayout | { groups?: any[] } = defaultDockLayout;
+      let layoutId: string = "default";
+
+      if (typeof window !== "undefined") {
+        try {
+          const raw = localStorage.getItem(TRAINING_LAYOUT_STORAGE_KEY);
+          if (raw) {
+            const parsed = JSON.parse(raw) as DockviewLayout | { groups?: any[] };
+            initialLayout = parsed;
+            layoutId = "saved";
+          }
+        } catch {
+          initialLayout = defaultDockLayout;
+          layoutId = "default";
+        }
+      }
+
+      const applied = applyLayout(initialLayout, layoutId);
+      if (!applied && layoutId === "saved") {
+        try {
+          localStorage.removeItem(TRAINING_LAYOUT_STORAGE_KEY);
+          setHasSavedLayout(false);
+        } catch {}
+        applyLayout(defaultDockLayout, "default");
+      }
     },
-    [updateOpenPanels],
+    [applyLayout, setHasSavedLayout],
   );
 
   const handleLayoutChange = useCallback(
@@ -564,30 +614,18 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     [updateOpenPanels],
   );
 
-  const applyLayout = useCallback(
-    (layout: DockviewLayout, presetId: string) => {
-      const api = dockApiRef.current;
-      if (!api) return;
-      suppressLayoutChangeRef.current = true;
-      try {
-        api.fromJSON(cloneDockLayout(layout));
-        setCurrentLayout(presetId);
-        updateOpenPanels(extractPanelIds(layout), true);
-      } finally {
-        suppressLayoutChangeRef.current = false;
-      }
-    },
-    [updateOpenPanels],
-  );
-
   const handlePresetChange = useCallback(
     (presetId: string) => {
       if (presetId === "saved") {
         try {
           const raw = localStorage.getItem(TRAINING_LAYOUT_STORAGE_KEY);
           if (!raw) return;
-          const parsed = JSON.parse(raw) as DockviewLayout;
-          applyLayout(parsed, "saved");
+          const parsed = JSON.parse(raw) as DockviewLayout | { groups?: any[] };
+          if (!applyLayout(parsed, "saved")) {
+            localStorage.removeItem(TRAINING_LAYOUT_STORAGE_KEY);
+            setHasSavedLayout(false);
+            applyLayout(defaultDockLayout, "default");
+          }
         } catch {}
         return;
       }
@@ -598,7 +636,7 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
       const preset = DOCK_PRESETS.find((p) => p.id === presetId);
       if (preset) applyLayout(preset.layout, presetId);
     },
-    [applyLayout],
+    [applyLayout, setHasSavedLayout],
   );
 
   const handleSaveLayout = useCallback(() => {
@@ -616,10 +654,14 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     try {
       const raw = localStorage.getItem(TRAINING_LAYOUT_STORAGE_KEY);
       if (!raw) return;
-      const parsed = JSON.parse(raw) as DockviewLayout;
-      applyLayout(parsed, "saved");
+      const parsed = JSON.parse(raw) as DockviewLayout | { groups?: any[] };
+      if (!applyLayout(parsed, "saved")) {
+        localStorage.removeItem(TRAINING_LAYOUT_STORAGE_KEY);
+        setHasSavedLayout(false);
+        applyLayout(defaultDockLayout, "default");
+      }
     } catch {}
-  }, [applyLayout]);
+  }, [applyLayout, setHasSavedLayout]);
 
   const handleClearSavedLayout = useCallback(() => {
     try {
