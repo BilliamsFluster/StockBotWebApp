@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import api from "@/api/client";
 
 import { pickFirst, statTriple } from "../utils";
-import type { Metrics, RunArtifacts, RunSummary } from "../lib/types";
+import type { Metrics, RunArtifacts, RunSummary } from "../../lib/types";
 import type { SeedAggregates, TBPoint, TBTags } from "../types";
 
 export type UseSeedAggregatesOptions = {

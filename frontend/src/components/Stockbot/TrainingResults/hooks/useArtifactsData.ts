@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 
 import api from "@/api/client";
 
-import { parseCSV, drawdownFromEquity } from "../lib/csv";
-import type { Metrics, RunArtifacts } from "../lib/types";
+import { parseCSV, drawdownFromEquity } from "../../lib/csv";
+import type { Metrics, RunArtifacts } from "../../lib/types";
 
 export type UseArtifactsDataOptions = {
   runId?: string;

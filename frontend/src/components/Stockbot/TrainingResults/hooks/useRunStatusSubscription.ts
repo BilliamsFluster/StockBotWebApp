@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import api, { buildUrl } from "@/api/client";
 
-import type { RunSummary } from "../lib/types";
+import type { RunSummary } from "../../lib/types";
 
 export function useRunStatusSubscription(runId?: string) {
   const [runStatus, setRunStatus] = useState<RunSummary | null>(null);

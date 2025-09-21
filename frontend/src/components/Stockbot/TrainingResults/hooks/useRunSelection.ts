@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import api from "@/api/client";
 import { deleteRun } from "@/api/stockbot";
 
-import type { RunSummary } from "../lib/types";
+import type { RunSummary } from "../../lib/types";
 
 export function useRunSelection(initialRunId?: string) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
