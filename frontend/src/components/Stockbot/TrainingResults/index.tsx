@@ -933,7 +933,7 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
   );
 
   const dockviewProps = useMemo<DockviewReactProps>(() => ({
-    className: "dockview-theme-abyss h-[75vh] min-h-[640px] w-full rounded-lg border bg-card/60 shadow-sm",
+    className: "dockview-theme-abyss h-full w-full border bg-card/60 shadow-sm",
     components: dockComponents,
     disableFloatingGroups: false,
     dndEdges: dockviewRootDndEdges,
@@ -969,7 +969,7 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
           tags={tags}
         />
 
-        <div className="w-full min-h-[720px]">
+        <div className="w-full h-[60vh] min-h-[480px] max-h-[720px]">
           <DockviewReact {...dockviewProps} />
         </div>
       </div>
