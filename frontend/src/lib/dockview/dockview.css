@@ -139,7 +139,7 @@
   position: relative;
   background: hsl(var(--card));
   border: 1px solid hsl(var(--border));
-  border-radius: 0.75rem;
+  border-radius: 0;
   min-width: 260px;
   min-height: 240px;
   overflow: hidden;
@@ -163,7 +163,7 @@
   align-items: center;
   gap: 0.35rem;
   padding: 0.35rem 0.65rem;
-  border-radius: 9999px;
+  border-radius: 0;
   border: 1px solid transparent;
   background: transparent;
   color: hsl(var(--muted-foreground));

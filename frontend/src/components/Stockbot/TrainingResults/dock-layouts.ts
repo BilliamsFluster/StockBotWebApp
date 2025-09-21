@@ -197,3 +197,23 @@ export const extractPanelIds = (layout: DockviewLayout | { groups?: any[] }): st
   collectPanels(source ?? null, panels);
   return panels;
 };
+
+const collectActivePanels = (node: DockviewNode | null, acc: string[]) => {
+  if (!node) return;
+  if (node.type === "group") {
+    const activeId =
+      typeof node.active === "string" && node.tabs.some((tab) => tab.id === node.active)
+        ? node.active
+        : node.tabs[0]?.id;
+    if (activeId) acc.push(activeId);
+    return;
+  }
+  node.children.forEach((child) => collectActivePanels(child, acc));
+};
+
+export const extractActivePanelIds = (layout: DockviewLayout | { groups?: any[] }): string[] => {
+  const panels: string[] = [];
+  const source = hasRoot(layout) ? layout.root : convertLegacy(layout).root;
+  collectActivePanels(source ?? null, panels);
+  return panels;
+};
