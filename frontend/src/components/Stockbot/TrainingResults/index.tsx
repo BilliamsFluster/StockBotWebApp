@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DockviewReact,  type DockviewReadyEvent,  type IDockviewReactProps} from "dockview/dist/esm/dockview/dockview";
-import type { DockviewApi, DockviewLayout, DockviewTheme, DockviewEvent, GroupDragEvent, TabDragEvent, MovePanelEvent, DockviewGroupPanel } from "dockview-core";
+import type { DockviewApi, DockviewLayout, DockviewTheme, DockviewEvent, GroupDragEvent, TabDragEvent, MovePanelEvent, DockviewGroupPanel, IDockviewPanel } from "dockview-core";
 import api, { buildUrl } from "@/api/client";
 import { deleteRun } from "@/api/stockbot";
 import type { RunSummary, Metrics, RunArtifacts } from "../lib/types";
@@ -393,6 +393,11 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     if (!runId) return;
     void reload();
   }, [runId, reload]);
+
+  useEffect(() => {
+    if (!runId || visiblePanels.length === 0) return;
+    void reload();
+  }, [runId, visiblePanels, reload]);
 
   const onDeleteRun = useCallback(async () => {
     if (!runId) return;
@@ -928,6 +933,16 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     } catch {}
   }, [applyLayout, setHasSavedLayout]);
 
+  const setPanelActive = useCallback((panel: IDockviewPanel | undefined) => {
+    if (!panel) return;
+    try {
+      panel.api.setActive();
+    } catch {}
+    try {
+      panel.focus();
+    } catch {}
+  }, []);
+
   const handleClearSavedLayout = useCallback(() => {
     try {
       localStorage.removeItem(TRAINING_LAYOUT_STORAGE_KEY);
@@ -941,25 +956,33 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
       if (!api) return;
       const panel = panelDefinitions[panelKey];
       if (!panel) return;
+
       if (openPanels.includes(panel.id)) {
-        api.focusPanel(panel.id);
+        setPanelActive(api.getPanel(panel.id));
         return;
       }
-      api.addPanel({
+
+      const created = api.addPanel({
         id: panel.id,
         component: panel.component,
         title: panel.title,
       });
+      setPanelActive(created);
+      try {
+        const layout = api.toJSON();
+        updateOpenPanels(extractPanelIds(layout), true);
+        setVisiblePanels(extractActivePanelIds(layout));
+      } catch {}
       setCurrentLayout("custom");
     },
-    [openPanels],
+    [openPanels, setPanelActive, updateOpenPanels],
   );
 
   const focusPanel = useCallback((panelId: string) => {
     const api = dockApiRef.current;
     if (!api) return;
-    api.focusPanel(panelId);
-  }, []);
+    setPanelActive(api.getPanel(panelId));
+  }, [setPanelActive]);
 
   const available = useMemo(() => Object.keys(series || {}), [series]);
   const rewardTag = useMemo(() => pickFirst([
@@ -1165,4 +1188,5 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     </>
   );
 }
+
 
