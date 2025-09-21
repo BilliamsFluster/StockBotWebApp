@@ -3,6 +3,16 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+  SelectGroup,
+  SelectLabel,
+  SelectSeparator,
+} from "@/components/ui/select";
 import { TooltipLabel } from "../../shared/TooltipLabel";
 import type { RunSummary } from "../../lib/types";
 import type { TBTags } from "../types";
@@ -53,6 +63,8 @@ export function ControlPanel({
   onLaunchPanel,
   tags,
 }: ControlPanelProps) {
+  const savedLayoutAvailable = hasSavedLayout || currentLayout === "saved";
+
   return (
     <Card className="p-4 space-y-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -116,20 +128,35 @@ export function ControlPanel({
         <TooltipLabel className="text-xs" tooltip="Quickly arrange panels into a preset layout">
           Layout
         </TooltipLabel>
-        <select
-          className="rounded border px-2 py-1 text-sm"
-          value={currentLayout}
-          onChange={(event) => onPresetChange(event.target.value)}
-          disabled={!dockReady}
-        >
-          {DOCK_PRESETS.map((preset) => (
-            <option key={preset.id} value={preset.id}>
-              {preset.label}
-            </option>
-          ))}
-          {hasSavedLayout && <option value="saved">Saved Layout</option>}
-          <option value="custom">Custom Layout</option>
-        </select>
+        <Select value={currentLayout} onValueChange={onPresetChange} disabled={!dockReady}>
+          <SelectTrigger className="w-[220px]">
+            <SelectValue placeholder="Select a layout" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectLabel>Preset Layouts</SelectLabel>
+              {DOCK_PRESETS.map((preset) => (
+                <SelectItem key={preset.id} value={preset.id}>
+                  {preset.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+            {savedLayoutAvailable && (
+              <>
+                <SelectSeparator />
+                <SelectGroup>
+                  <SelectLabel>Saved</SelectLabel>
+                  <SelectItem value="saved">Saved Layout</SelectItem>
+                </SelectGroup>
+              </>
+            )}
+            <SelectSeparator />
+            <SelectGroup>
+              <SelectLabel>Session</SelectLabel>
+              <SelectItem value="custom">Custom Layout</SelectItem>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
         <Button size="sm" onClick={onSaveLayout} disabled={!dockReady}>
           Save Layout
         </Button>
