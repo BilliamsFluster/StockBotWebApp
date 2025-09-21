@@ -308,14 +308,6 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     })();
   }, [runId]);
 
-  useEffect(() => {
-    if (!runId || !autoRefresh) return;
-    const timer = setInterval(() => {
-      void reload(true);
-    }, 8000);
-    return () => clearInterval(timer);
-  }, [runId, autoRefresh, reload]);
-
   const reload = useCallback(
     async (fromTimer = false) => {
       if (!runId || busyRef.current) return;
@@ -388,6 +380,14 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     },
     [runId, selectedTags, needsTensorboard, needsTags, needsGradients, tags],
   );
+
+  useEffect(() => {
+    if (!runId || !autoRefresh) return;
+    const timer = setInterval(() => {
+      void reload(true);
+    }, 8000);
+    return () => clearInterval(timer);
+  }, [runId, autoRefresh, reload]);
 
   useEffect(() => {
     if (!runId) return;
