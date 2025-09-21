@@ -11,6 +11,7 @@ import {
   panelDefinitions,
   cloneDockLayout,
   extractPanelIds,
+  extractActivePanelIds,
   defaultDockLayout,
   DOCK_PRESETS,
   TRAINING_LAYOUT_STORAGE_KEY,
@@ -44,6 +45,29 @@ export type TrainingResultsProps = {
   initialRunId?: string;
 };
 
+const TENSORBOARD_PANELS = new Set([
+  panelDefinitions.overview.id,
+  panelDefinitions.diagnostics.id,
+  panelDefinitions.scalars.id,
+]);
+
+const TAG_PANELS = new Set([
+  panelDefinitions.trades.id,
+  panelDefinitions.diagnostics.id,
+  panelDefinitions.scalars.id,
+]);
+
+const METRIC_PANELS = new Set([
+  panelDefinitions.overview.id,
+  panelDefinitions.performance.id,
+]);
+
+const EQUITY_PANELS = new Set([
+  panelDefinitions.performance.id,
+  panelDefinitions.risk.id,
+  panelDefinitions.artifacts.id,
+]);
+
 export default function TrainingResults({ initialRunId }: TrainingResultsProps) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [runId, setRunId] = useState<string>(initialRunId || "");
@@ -57,6 +81,7 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
   const [drawdown, setDrawdown] = useState<Array<{ step: number; dd: number }>>([]);
   const [leverage, setLeverage] = useState<Array<{ step: number; to: number; gl: number; nl: number }>>([]);
   const [openPanels, setOpenPanels] = useState<string[]>([]);
+  const [visiblePanels, setVisiblePanels] = useState<string[]>([]);
   const [artifacts, setArtifacts] = useState<RunArtifacts | null>(null);
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [showCharts, setShowCharts] = useState(false);
@@ -82,6 +107,50 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
   const busyRef = useRef(false);
   const tickRef = useRef(0);
   const dockSubscriptionsRef = useRef<Array<{ dispose: () => void }>>([]);
+  const artifactsStatusRef = useRef<{ runId: string | null; ready: boolean }>({ runId: null, ready: false });
+  const metricsSourceRef = useRef<string | null>(null);
+  const equitySourceRef = useRef<string | null>(null);
+  const seedAggStatusRef = useRef<{ runId: string | null; ready: boolean }>({ runId: null, ready: false });
+
+  const visibleSet = useMemo(() => new Set(visiblePanels), [visiblePanels]);
+
+  const needsTensorboard = useMemo(
+    () => visiblePanels.some((panel) => TENSORBOARD_PANELS.has(panel)),
+    [visiblePanels],
+  );
+
+  const needsTags = useMemo(
+    () => visiblePanels.some((panel) => TAG_PANELS.has(panel)),
+    [visiblePanels],
+  );
+
+  const needsGradients = useMemo(
+    () => showGrads && visibleSet.has(panelDefinitions.diagnostics.id),
+    [showGrads, visibleSet],
+  );
+
+  const needsSeedAggregates = useMemo(
+    () => showSeed && visibleSet.has(panelDefinitions.diagnostics.id),
+    [showSeed, visibleSet],
+  );
+
+  const needsMetricsData = useMemo(
+    () => visiblePanels.some((panel) => METRIC_PANELS.has(panel)),
+    [visiblePanels],
+  );
+
+  const needsEquityData = useMemo(
+    () => visiblePanels.some((panel) => EQUITY_PANELS.has(panel)),
+    [visiblePanels],
+  );
+
+  const needsArtifactsMeta = useMemo(
+    () =>
+      visibleSet.has(panelDefinitions.artifacts.id) ||
+      needsMetricsData ||
+      needsEquityData,
+    [visibleSet, needsMetricsData, needsEquityData],
+  );
 
   useEffect(() => {
     if (initialRunId && initialRunId !== runId) {
@@ -214,6 +283,20 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
   }, [runId, selectedTags, visibleSelected, showRollout, showOptim, showTiming, showGrads, showDistributions]);
 
   useEffect(() => {
+    setMetrics(null);
+    setEquity([]);
+    setDrawdown([]);
+    setLeverage([]);
+    setArtifacts(null);
+    setSeedAgg({});
+    metricsSourceRef.current = null;
+    equitySourceRef.current = null;
+    artifactsStatusRef.current = { runId: null, ready: false };
+    seedAggStatusRef.current = { runId: null, ready: false };
+    tickRef.current = 0;
+  }, [runId]);
+
+  useEffect(() => {
     if (runId) return;
     (async () => {
       try {
@@ -231,63 +314,85 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
       void reload(true);
     }, 8000);
     return () => clearInterval(timer);
-  }, [runId, autoRefresh]);
+  }, [runId, autoRefresh, reload]);
 
-  const reload = useCallback(async (fromTimer = false) => {
-    if (!runId || busyRef.current) return;
-    busyRef.current = true;
-    setLoading(true);
-    try {
-      const defaultTags = [
-        "rollout/ep_rew_mean",
-        "eval/mean_reward",
-        "train/episode_reward",
-        "rollout/ep_len_mean",
-        "train/value_loss",
-        "train/policy_loss",
-        "train/policy_gradient_loss",
-        "train/entropy_loss",
-        "train/entropy",
-        "train/learning_rate",
-        "train/clip_fraction",
-        "train/clipfrac",
-        "train/approx_kl",
-        "train/kl",
-        "time/fps",
-        "grads/global_norm",
-      ];
-      const wanted = Array.from(new Set([...defaultTags, ...selectedTags]));
+  const reload = useCallback(
+    async (fromTimer = false) => {
+      if (!runId || busyRef.current) return;
 
-      const batchRequest = api.get<{ series: Record<string, TBPoint[]> }>(
-        `/stockbot/runs/${runId}/tb/scalars-batch`,
-        { params: { tags: wanted.join(",") } },
-      );
+      const shouldLoadSeries = needsTensorboard;
+      const shouldLoadTags = needsTags;
+      const shouldLoadGradients = needsGradients;
 
-      const shouldGetTags = !fromTimer || tickRef.current++ % 3 === 0 || !tags;
-      const tagsRequest = shouldGetTags ? api.get<TBTags>(`/stockbot/runs/${runId}/tb/tags`) : null;
-      const gradRequest = showGrads ? api.get<GradMatrix>(`/stockbot/runs/${runId}/tb/grad-matrix`) : null;
+      if (!shouldLoadSeries && !shouldLoadTags && !shouldLoadGradients) return;
 
-      const [batchRes, tagsRes, gradRes] = await Promise.all([
-        batchRequest.catch(() => null),
-        tagsRequest?.catch(() => null) ?? Promise.resolve(null),
-        gradRequest?.catch(() => null) ?? Promise.resolve(null),
-      ]);
+      busyRef.current = true;
+      setLoading(true);
+      try {
+        const batchPromise = shouldLoadSeries
+          ? (async () => {
+              const defaultTags = [
+                "rollout/ep_rew_mean",
+                "eval/mean_reward",
+                "train/episode_reward",
+                "rollout/ep_len_mean",
+                "train/value_loss",
+                "train/policy_loss",
+                "train/policy_gradient_loss",
+                "train/entropy_loss",
+                "train/entropy",
+                "train/learning_rate",
+                "train/clip_fraction",
+                "train/clipfrac",
+                "train/approx_kl",
+                "train/kl",
+                "time/fps",
+                "grads/global_norm",
+              ];
+              const wanted = Array.from(new Set([...defaultTags, ...selectedTags]));
+              return api
+                .get<{ series: Record<string, TBPoint[]> }>(
+                  `/stockbot/runs/${runId}/tb/scalars-batch`,
+                  { params: { tags: wanted.join(",") } },
+                )
+                .catch(() => null);
+            })()
+          : Promise.resolve(null);
 
-      if (batchRes?.data?.series) {
-        setSeries((prev) => ({ ...prev, ...(batchRes.data.series || {}) }));
+        const shouldGetTags =
+          shouldLoadTags && (!fromTimer || tickRef.current++ % 3 === 0 || !tags);
+
+        const tagsPromise = shouldGetTags
+          ? api.get<TBTags>(`/stockbot/runs/${runId}/tb/tags`).catch(() => null)
+          : Promise.resolve(null);
+
+        const gradPromise = shouldLoadGradients
+          ? api.get<GradMatrix>(`/stockbot/runs/${runId}/tb/grad-matrix`).catch(() => null)
+          : Promise.resolve(null);
+
+        const [batchRes, tagsRes, gradRes] = await Promise.all([
+          batchPromise,
+          tagsPromise,
+          gradPromise,
+        ]);
+
+        if (batchRes?.data?.series) {
+          setSeries((prev) => ({ ...prev, ...(batchRes.data.series || {}) }));
+        }
+        if (tagsRes?.data) setTags(tagsRes.data);
+        if (gradRes?.data) setGradMatrix(gradRes.data);
+      } finally {
+        setLoading(false);
+        busyRef.current = false;
       }
-      if (tagsRes?.data) setTags(tagsRes.data);
-      if (gradRes?.data) setGradMatrix(gradRes.data);
-    } finally {
-      setLoading(false);
-      busyRef.current = false;
-    }
-  }, [runId, selectedTags, showGrads, tags]);
+    },
+    [runId, selectedTags, needsTensorboard, needsTags, needsGradients, tags],
+  );
 
   useEffect(() => {
     if (!runId) return;
     void reload();
-  }, [runId, showGrads, reload]);
+  }, [runId, reload]);
 
   const onDeleteRun = useCallback(async () => {
     if (!runId) return;
@@ -302,67 +407,140 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     }
   }, [runId, runs]);
 
-  const loadArtifacts = useCallback(async () => {
-    if (!runId) return;
-    try {
-      const { data: art } = await api.get<RunArtifacts>(`/stockbot/runs/${runId}/artifacts`);
-      setArtifacts(art || null);
-      if (art?.metrics) {
-        try {
-          const { data: m } = await api.get<Metrics>(buildUrl(art.metrics));
-          setMetrics(m);
-        } catch {
+  useEffect(() => {
+    if (!runId || !needsArtifactsMeta) return;
+
+    if (artifactsStatusRef.current.runId === runId) {
+      if (artifactsStatusRef.current.ready) return;
+    } else {
+      artifactsStatusRef.current = { runId, ready: false };
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const { data: art } = await api.get<RunArtifacts>(`/stockbot/runs/${runId}/artifacts`);
+        if (cancelled) return;
+        setArtifacts(art || null);
+        artifactsStatusRef.current = { runId, ready: true };
+        if (!art?.metrics) {
           setMetrics(null);
+          metricsSourceRef.current = null;
         }
-      } else {
-        setMetrics(null);
-      }
-      if (art?.equity) {
-        try {
-          const rows = await parseCSV(art.equity);
-          const equityRaw = rows
-            .map((row: any, index: number) => ({ step: index, equity: Number(row.equity) }))
-            .filter((row: any) => Number.isFinite(row.step) && Number.isFinite(row.equity));
-          const base = equityRaw.length ? equityRaw[0].equity || 1 : 1;
-          const normalized = equityRaw.map((entry) => ({ step: entry.step, equity: ((entry.equity || 0) / base) * 100 }));
-          setEquity(normalized);
-          const ddRows = drawdownFromEquity(rows).map((row: any, index: number) => ({ step: index, dd: -100 * Number(row.dd) }));
-          setDrawdown(ddRows);
-          const levRows = rows
-            .map((row: any, index: number) => ({
-              step: index,
-              to: Number.isFinite(Number(row.turnover)) ? Number(row.turnover) : 0,
-              gl: Number.isFinite(Number(row.gross_leverage)) ? Number(row.gross_leverage) : 0,
-              nl: Number.isFinite(Number(row.net_leverage)) ? Number(row.net_leverage) : 0,
-            }))
-            .filter((row: any) => Number.isFinite(row.step));
-          setLeverage(levRows);
-        } catch {
+        if (!art?.equity) {
           setEquity([]);
           setDrawdown([]);
           setLeverage([]);
+          equitySourceRef.current = null;
         }
-      } else {
+      } catch {
+        if (cancelled) return;
+        setArtifacts(null);
+        setMetrics(null);
         setEquity([]);
         setDrawdown([]);
         setLeverage([]);
+        metricsSourceRef.current = null;
+        equitySourceRef.current = null;
+        artifactsStatusRef.current = { runId: null, ready: false };
       }
-    } catch {
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, needsArtifactsMeta]);
+
+  useEffect(() => {
+    if (!runId || !needsMetricsData) return;
+    if (!artifacts?.metrics) {
       setMetrics(null);
+      metricsSourceRef.current = null;
+      return;
+    }
+    if (metricsSourceRef.current === artifacts.metrics) return;
+
+    let cancelled = false;
+    metricsSourceRef.current = artifacts.metrics;
+
+    (async () => {
+      try {
+        const { data: m } = await api.get<Metrics>(buildUrl(artifacts.metrics));
+        if (cancelled) return;
+        setMetrics(m);
+      } catch {
+        if (cancelled) return;
+        setMetrics(null);
+        metricsSourceRef.current = null;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, needsMetricsData, artifacts]);
+
+  useEffect(() => {
+    if (!runId || !needsEquityData) return;
+    if (!artifacts?.equity) {
       setEquity([]);
       setDrawdown([]);
       setLeverage([]);
+      equitySourceRef.current = null;
+      return;
     }
-  }, [runId]);
+    if (equitySourceRef.current === artifacts.equity) return;
+
+    let cancelled = false;
+    equitySourceRef.current = artifacts.equity;
+
+    (async () => {
+      try {
+        const rows = await parseCSV(artifacts.equity);
+        if (cancelled) return;
+        const equityRaw = rows
+          .map((row: any, index: number) => ({ step: index, equity: Number(row.equity) }))
+          .filter((row: any) => Number.isFinite(row.step) && Number.isFinite(row.equity));
+        const base = equityRaw.length ? equityRaw[0].equity || 1 : 1;
+        const normalized = equityRaw.map((entry) => ({ step: entry.step, equity: ((entry.equity || 0) / base) * 100 }));
+        setEquity(normalized);
+        const ddRows = drawdownFromEquity(rows).map((row: any, index: number) => ({ step: index, dd: -100 * Number(row.dd) }));
+        setDrawdown(ddRows);
+        const levRows = rows
+          .map((row: any, index: number) => ({
+            step: index,
+            to: Number.isFinite(Number(row.turnover)) ? Number(row.turnover) : 0,
+            gl: Number.isFinite(Number(row.gross_leverage)) ? Number(row.gross_leverage) : 0,
+            nl: Number.isFinite(Number(row.net_leverage)) ? Number(row.net_leverage) : 0,
+          }))
+          .filter((row: any) => Number.isFinite(row.step));
+        setLeverage(levRows);
+      } catch {
+        if (cancelled) return;
+        setEquity([]);
+        setDrawdown([]);
+        setLeverage([]);
+        equitySourceRef.current = null;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, needsEquityData, artifacts]);
 
   const loadSeedAggregates = useCallback(async () => {
-    if (!runId) return;
+    if (!runId || !needsSeedAggregates) return;
+    if (seedAggStatusRef.current.runId === runId && seedAggStatusRef.current.ready) return;
+    seedAggStatusRef.current = { runId, ready: false };
     try {
       const base = runId.replace(/-seed\d+$/i, "");
       const { data: allRuns } = await api.get<RunSummary[]>("/stockbot/runs");
       const seeds = (allRuns || []).filter((run) => run.type === "train" && run.id.startsWith(base));
       if (seeds.length <= 1) {
         setSeedAgg({});
+        seedAggStatusRef.current = { runId, ready: true };
         return;
       }
 
@@ -450,18 +628,16 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
       }
 
       setSeedAgg({ metrics: metricsAgg, entropy: entropyAgg, actionHist: histAgg });
+      seedAggStatusRef.current = { runId, ready: true };
     } catch {
       setSeedAgg({});
+      seedAggStatusRef.current = { runId: null, ready: false };
     }
-  }, [runId, tags]);
+  }, [runId, tags, needsSeedAggregates]);
 
   useEffect(() => {
-    if (runId) void loadArtifacts();
-  }, [runId, loadArtifacts]);
-
-  useEffect(() => {
-    if (runId && tags) void loadSeedAggregates();
-  }, [runId, tags, loadSeedAggregates]);
+    if (runId && tags && needsSeedAggregates) void loadSeedAggregates();
+  }, [runId, tags, needsSeedAggregates, loadSeedAggregates]);
 
   const gradientSurface = useMemo(() => {
     if (!gradMatrix?.layers?.length || !gradMatrix?.steps?.length) return null;
@@ -564,6 +740,7 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
         const appliedLayout = api.toJSON();
         const actualPanels = extractPanelIds(appliedLayout);
         updateOpenPanels(actualPanels, true);
+        setVisiblePanels(extractActivePanelIds(appliedLayout));
         if (expectedPanels.length === 0 || actualPanels.length > 0) {
           setCurrentLayout(presetId);
           return true;
@@ -685,6 +862,7 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
   const handleLayoutChange = useCallback(
     (layout: DockviewLayout) => {
       updateOpenPanels(extractPanelIds(layout));
+      setVisiblePanels(extractActivePanelIds(layout));
       if (suppressLayoutChangeRef.current) return;
       if (pendingLayoutChangeRef.current) clearTimeout(pendingLayoutChangeRef.current);
       pendingLayoutChangeRef.current = setTimeout(() => {
