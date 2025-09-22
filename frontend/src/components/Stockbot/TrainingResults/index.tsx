@@ -97,16 +97,21 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     applyLayout,
   } = useDockviewManager();
 
+  const panelPresence = useMemo(
+    () => Array.from(new Set([...visiblePanels, ...openPanels])),
+    [visiblePanels, openPanels],
+  );
+  const panelPresenceSet = useMemo(() => new Set(panelPresence), [panelPresence]);
   const visibleSet = useMemo(() => new Set(visiblePanels), [visiblePanels]);
 
   const needsTensorboard = useMemo(
-    () => visiblePanels.some((panel) => TENSORBOARD_PANELS.has(panel)),
-    [visiblePanels],
+    () => panelPresence.some((panel) => TENSORBOARD_PANELS.has(panel)),
+    [panelPresence],
   );
 
   const needsTags = useMemo(
-    () => visiblePanels.some((panel) => TAG_PANELS.has(panel)),
-    [visiblePanels],
+    () => panelPresence.some((panel) => TAG_PANELS.has(panel)),
+    [panelPresence],
   );
 
   const needsGradients = useMemo(
@@ -120,21 +125,21 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
   );
 
   const needsMetricsData = useMemo(
-    () => visiblePanels.some((panel) => METRIC_PANELS.has(panel)),
-    [visiblePanels],
+    () => panelPresence.some((panel) => METRIC_PANELS.has(panel)),
+    [panelPresence],
   );
 
   const needsEquityData = useMemo(
-    () => visiblePanels.some((panel) => EQUITY_PANELS.has(panel)),
-    [visiblePanels],
+    () => panelPresence.some((panel) => EQUITY_PANELS.has(panel)),
+    [panelPresence],
   );
 
   const needsArtifactsMeta = useMemo(
     () =>
-      visibleSet.has(panelDefinitions.artifacts.id) ||
+      panelPresenceSet.has(panelDefinitions.artifacts.id) ||
       needsMetricsData ||
       needsEquityData,
-    [visibleSet, needsMetricsData, needsEquityData],
+    [panelPresenceSet, needsMetricsData, needsEquityData],
   );
 
   const { tags, series, gradMatrix, loading, reload } = useTensorboardData({
@@ -168,9 +173,9 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
   }, [runId, reload]);
 
   useEffect(() => {
-    if (!runId || visiblePanels.length === 0) return;
+    if (!runId || panelPresence.length === 0) return;
     void reload();
-  }, [runId, visiblePanels, reload]);
+  }, [runId, panelPresence, reload]);
 
   const gradientSurface = useMemo(() => {
     if (!gradMatrix?.layers?.length || !gradMatrix?.steps?.length) return null;
