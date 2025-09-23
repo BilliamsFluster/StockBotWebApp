@@ -67,7 +67,7 @@ if (insecureFlag === "1" || insecureFlag === "true" || insecureFlag === "yes") {
 }
 const httpsAgent = new https.Agent(httpsAgentOptions);
 
-const timeoutMs = parseIntMaybe(process.env.STOCKBOT_TIMEOUT, 30000);
+const timeoutMs = parseIntMaybe(process.env.STOCKBOT_TIMEOUT, 120000);
 
 const stockbotAxios = axios.create({
   timeout: timeoutMs,
@@ -76,6 +76,7 @@ const stockbotAxios = axios.create({
   maxBodyLength: Infinity,
   maxContentLength: Infinity,
   transitional: { clarifyTimeoutError: true },
+  validateStatus: (status) => (status >= 200 && status < 300) || status === 304,
 });
 
 const RETRIABLE_CODES = new Set([

@@ -50,6 +50,7 @@ type DockviewDragAwareApi = DockviewApi & {
   onDidAddGroup?: DockviewEvent<DockviewGroupPanel>;
   onDidRemoveGroup?: DockviewEvent<DockviewGroupPanel>;
   onDidLayoutChange?: DockviewEvent<void>;
+  onDidActivePanelChange?: DockviewEvent<IDockviewPanel | undefined>;
 };
 
 export function useDockviewManager(): DockviewManager {
@@ -100,6 +101,15 @@ export function useDockviewManager(): DockviewManager {
     });
   }, []);
 
+  const commitVisiblePanels = useCallback((panelIds: string[]) => {
+    setVisiblePanels((prev) => {
+      if (prev.length === panelIds.length && prev.every((id, index) => id === panelIds[index])) {
+        return prev;
+      }
+      return panelIds;
+    });
+  }, []);
+
   const updateOpenPanels = useCallback(
     (panelIds: string[], immediate = false) => {
       if (pendingOpenPanelsRef.current) {
@@ -130,7 +140,7 @@ export function useDockviewManager(): DockviewManager {
         const appliedLayout = api.toJSON();
         const actualPanels = extractPanelIds(appliedLayout);
         updateOpenPanels(actualPanels, true);
-        setVisiblePanels(extractActivePanelIds(appliedLayout));
+        commitVisiblePanels(extractActivePanelIds(appliedLayout));
         if (expectedPanels.length === 0 || actualPanels.length > 0) {
           setCurrentLayout(presetId);
           return true;
@@ -142,7 +152,7 @@ export function useDockviewManager(): DockviewManager {
         suppressLayoutChangeRef.current = false;
       }
     },
-    [updateOpenPanels],
+    [updateOpenPanels, commitVisiblePanels],
   );
 
   const dockviewRootDndEdges = useMemo(
@@ -250,6 +260,14 @@ export function useDockviewManager(): DockviewManager {
           dockviewLog("layoutChange", dragAwareApi.toJSON());
         }),
       );
+      subscribe(
+        dragAwareApi.onDidActivePanelChange?.(() => {
+          if (suppressLayoutChangeRef.current) return;
+          try {
+            commitVisiblePanels(extractActivePanelIds(dragAwareApi.toJSON()));
+          } catch {}
+        }),
+      );
 
       let initialLayout: DockviewLayout | { groups?: any[] } = defaultDockLayout;
       let layoutId: string = "default";
@@ -277,13 +295,13 @@ export function useDockviewManager(): DockviewManager {
         applyLayout(defaultDockLayout, "default");
       }
     },
-    [applyLayout, dockviewLog],
+    [applyLayout, dockviewLog, commitVisiblePanels],
   );
 
   const handleLayoutChange = useCallback(
     (layout: DockviewLayout) => {
       updateOpenPanels(extractPanelIds(layout));
-      setVisiblePanels(extractActivePanelIds(layout));
+      commitVisiblePanels(extractActivePanelIds(layout));
       if (suppressLayoutChangeRef.current) return;
       if (pendingLayoutChangeRef.current) clearTimeout(pendingLayoutChangeRef.current);
       pendingLayoutChangeRef.current = setTimeout(() => {
@@ -295,7 +313,7 @@ export function useDockviewManager(): DockviewManager {
         } catch {}
       }, 400);
     },
-    [updateOpenPanels],
+    [updateOpenPanels, commitVisiblePanels],
   );
 
   const handlePresetChange = useCallback(
@@ -375,11 +393,11 @@ export function useDockviewManager(): DockviewManager {
       try {
         const layout = api.toJSON();
         updateOpenPanels(extractPanelIds(layout), true);
-        setVisiblePanels(extractActivePanelIds(layout));
+        commitVisiblePanels(extractActivePanelIds(layout));
       } catch {}
       setCurrentLayout("custom");
     },
-    [openPanels, setPanelActive, updateOpenPanels],
+    [openPanels, setPanelActive, updateOpenPanels, commitVisiblePanels],
   );
 
   const focusPanel = useCallback(
