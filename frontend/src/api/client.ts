@@ -40,6 +40,7 @@ function normalizeError(err: unknown): Error {
 const api = axios.create({
   baseURL: buildUrl('/api'),
   withCredentials: true,
+  validateStatus: (status) => (status >= 200 && status < 300) || status === 304,
 });
 
 api.interceptors.response.use(

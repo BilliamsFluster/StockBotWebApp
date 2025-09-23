@@ -97,49 +97,54 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     applyLayout,
   } = useDockviewManager();
 
-  const panelPresence = useMemo(
-    () => Array.from(new Set([...visiblePanels, ...openPanels])),
-    [visiblePanels, openPanels],
+  const defaultPanelIds = useMemo(() => Object.values(panelDefinitions).map((panel) => panel.id), []);
+  const consideredPanelIds = useMemo(
+    () => (dockReady ? (openPanels.length ? openPanels : defaultPanelIds) : defaultPanelIds),
+    [dockReady, openPanels, defaultPanelIds],
   );
-  const panelPresenceSet = useMemo(() => new Set(panelPresence), [panelPresence]);
-  const visibleSet = useMemo(() => new Set(visiblePanels), [visiblePanels]);
+  const activePanels = useMemo(() => {
+    if (!dockReady || visiblePanels.length === 0) return consideredPanelIds;
+    return visiblePanels;
+  }, [dockReady, visiblePanels, consideredPanelIds]);
+  const activePanelSet = useMemo(() => new Set(activePanels), [activePanels]);
+  const openPanelSet = useMemo(() => new Set(consideredPanelIds), [consideredPanelIds]);
 
   const needsTensorboard = useMemo(
-    () => panelPresence.some((panel) => TENSORBOARD_PANELS.has(panel)),
-    [panelPresence],
+    () => consideredPanelIds.some((panel) => TENSORBOARD_PANELS.has(panel)),
+    [consideredPanelIds],
   );
 
   const needsTags = useMemo(
-    () => panelPresence.some((panel) => TAG_PANELS.has(panel)),
-    [panelPresence],
+    () => consideredPanelIds.some((panel) => TAG_PANELS.has(panel)),
+    [consideredPanelIds],
   );
 
   const needsGradients = useMemo(
-    () => showGrads && visibleSet.has(panelDefinitions.diagnostics.id),
-    [showGrads, visibleSet],
+    () => showGrads && activePanelSet.has(panelDefinitions.diagnostics.id),
+    [showGrads, activePanelSet],
   );
 
   const needsSeedAggregates = useMemo(
-    () => showSeed && visibleSet.has(panelDefinitions.diagnostics.id),
-    [showSeed, visibleSet],
+    () => showSeed && activePanelSet.has(panelDefinitions.diagnostics.id),
+    [showSeed, activePanelSet],
   );
 
   const needsMetricsData = useMemo(
-    () => panelPresence.some((panel) => METRIC_PANELS.has(panel)),
-    [panelPresence],
+    () => consideredPanelIds.some((panel) => METRIC_PANELS.has(panel)),
+    [consideredPanelIds],
   );
 
   const needsEquityData = useMemo(
-    () => panelPresence.some((panel) => EQUITY_PANELS.has(panel)),
-    [panelPresence],
+    () => consideredPanelIds.some((panel) => EQUITY_PANELS.has(panel)),
+    [consideredPanelIds],
   );
 
   const needsArtifactsMeta = useMemo(
     () =>
-      panelPresenceSet.has(panelDefinitions.artifacts.id) ||
+      openPanelSet.has(panelDefinitions.artifacts.id) ||
       needsMetricsData ||
       needsEquityData,
-    [panelPresenceSet, needsMetricsData, needsEquityData],
+    [openPanelSet, needsMetricsData, needsEquityData],
   );
 
   const { tags, series, gradMatrix, loading, reload } = useTensorboardData({
@@ -173,9 +178,15 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
   }, [runId, reload]);
 
   useEffect(() => {
-    if (!runId || panelPresence.length === 0) return;
+    if (!runId) return;
+    if (!needsTensorboard && !needsTags && !needsGradients) return;
     void reload();
-  }, [runId, panelPresence, reload]);
+  }, [runId, needsTensorboard, needsTags, needsGradients, reload]);
+
+  useEffect(() => {
+    if (!runId || activePanels.length === 0) return;
+    void reload();
+  }, [runId, activePanels, reload]);
 
   const gradientSurface = useMemo(() => {
     if (!gradMatrix?.layers?.length || !gradMatrix?.steps?.length) return null;

@@ -676,10 +676,41 @@ function errMsg(err) {
 }
 
 // Ensure we never send circular structures to res.json
+
+async function streamLocalArtifact(res, runId, name) {
+  const rel = SAFE_NAME_MAP[String(name)] || null;
+  if (!rel) return false;
+  const abs = path.join(RUNS_DIR, String(runId), rel);
+  try {
+    await fs.promises.access(abs, fs.constants.R_OK);
+  } catch {
+    return false;
+  }
+  res.setHeader("content-type", guessContentType(abs));
+  res.setHeader("content-disposition", `inline; filename="${path.basename(abs)}"`);
+  const stream = fs.createReadStream(abs);
+  stream.on("error", () => res.status(500).end());
+  stream.pipe(res);
+  return true;
+}
+
 function safeErrorBody(err, fallbackStatus = 500) {
   const status = (axios.isAxiosError(err) && err.response?.status) ? err.response.status : fallbackStatus;
   const msg = errMsg(err);
   return { status, body: { error: msg } };
+}
+
+function forwardJson(res, resp) {
+  if (resp?.headers?.etag) {
+    res.setHeader('ETag', resp.headers.etag);
+  }
+  if (resp?.headers?.['cache-control']) {
+    res.setHeader('Cache-Control', resp.headers['cache-control']);
+  }
+  if (resp?.status === 304) {
+    return res.status(304).end();
+  }
+  return res.status(resp?.status ?? 200).json(resp?.data ?? {});
 }
 
 /** POST /api/stockbot/train */
@@ -711,7 +742,8 @@ export async function startCvProxy(req, res) {
     const { data } = await axios.post(`${STOCKBOT_URL}/api/stockbot/cv`, req.body);
     return res.json(data);
   } catch (e) {
-    return res.status(400).json({ error: errMsg(e) });
+    const { status, body } = safeErrorBody(e, 400);
+    return res.status(status).json(body);
   }
 }
 
@@ -776,7 +808,8 @@ export async function getRunArtifactsProxy(req, res) {
     }, { retries: 2 });
     return res.json(data);
   } catch (e) {
-    return res.status(400).json({ error: errMsg(e) });
+    const { status, body } = safeErrorBody(e, 400);
+    return res.status(status).json(body);
   }
 }
 
@@ -1011,6 +1044,9 @@ export async function getRunTelemetryChunkProxy(req, res) {
 /** GET /api/stockbot/runs/:id/files/:name -> stream file */
 export async function getRunArtifactFileProxy(req, res) {
   try {
+    if (await streamLocalArtifact(res, req.params.id, req.params.name)) {
+      return;
+    }
     const resp = await stockbotRequest({
       method: "get",
       url: `/api/stockbot/runs/${encodeURIComponent(
@@ -1022,31 +1058,21 @@ export async function getRunArtifactFileProxy(req, res) {
     if (resp.headers["content-disposition"]) res.setHeader("content-disposition", resp.headers["content-disposition"]);
     resp.data.pipe(res);
   } catch (e) {
-    // Fallback: attempt to stream directly from local runs directory
     try {
+      if (await streamLocalArtifact(res, req.params.id, req.params.name)) {
+        return;
+      }
       const rel = SAFE_NAME_MAP[String(req.params.name)] || null;
       if (rel) {
-        const abs = path.join(RUNS_DIR, String(req.params.id), rel);
-        if (fs.existsSync(abs)) {
-          res.setHeader("content-type", guessContentType(abs));
-          res.setHeader("content-disposition", `inline; filename="${path.basename(abs)}"`);
-          const stream = fs.createReadStream(abs);
-          stream.on("error", () => res.status(500).end());
-          stream.pipe(res);
-          return;
-        }
-        // Second fallback: try StockBot static mount /runs/<id>/<rel>
-        try {
-          const up = await stockbotRequest({
-            method: "get",
-            url: `/runs/${encodeURIComponent(req.params.id)}/${rel.replace(/\\/g, '/')}`,
-            responseType: "stream",
-          }, { retries: 1 });
-          if (up.headers["content-type"]) res.setHeader("content-type", up.headers["content-type"]);
-          if (up.headers["content-disposition"]) res.setHeader("content-disposition", up.headers["content-disposition"]);
-          up.data.pipe(res);
-          return;
-        } catch {}
+        const up = await stockbotRequest({
+          method: "get",
+          url: `/runs/${encodeURIComponent(req.params.id)}/${rel.replace(/\\/g, '/')}`,
+          responseType: "stream",
+        }, { retries: 1 });
+        if (up.headers["content-type"]) res.setHeader("content-type", up.headers["content-type"]);
+        if (up.headers["content-disposition"]) res.setHeader("content-disposition", up.headers["content-disposition"]);
+        up.data.pipe(res);
+        return;
       }
     } catch {}
     const { status, body } = safeErrorBody(e, 404);
@@ -1067,7 +1093,8 @@ export async function getRunBundleProxy(req, res) {
     if (resp.headers["content-disposition"]) res.setHeader("content-disposition", resp.headers["content-disposition"]);
     resp.data.pipe(res);
   } catch (e) {
-    return res.status(400).json({ error: errMsg(e) });
+    const { status, body } = safeErrorBody(e, 400);
+    return res.status(status).json(body);
   }
 }
 
@@ -1142,74 +1169,79 @@ export async function cancelRunProxy(req, res) {
 /** GET /api/stockbot/runs/:id/tb/tags */
 export async function getRunTbTagsProxy(req, res) {
   try {
-    const { data } = await stockbotRequest({
+    const resp = await stockbotRequest({
       method: "get",
       url: `/api/stockbot/runs/${encodeURIComponent(req.params.id)}/tb/tags`,
     }, { retries: 1 });
-    return res.json(data);
+    return forwardJson(res, resp);
   } catch (e) {
-    return res.status(400).json({ error: errMsg(e) });
+    const { status, body } = safeErrorBody(e, 400);
+    return res.status(status).json(body);
   }
 }
 
 /** GET /api/stockbot/runs/:id/tb/scalars?tag=... */
 export async function getRunTbScalarsProxy(req, res) {
   try {
-    const { data } = await stockbotRequest({
+    const resp = await stockbotRequest({
       method: "get",
       url: `/api/stockbot/runs/${encodeURIComponent(req.params.id)}/tb/scalars`,
       params: { tag: req.query.tag },
     }, { retries: 1 });
-    return res.json(data);
+    return forwardJson(res, resp);
   } catch (e) {
-    return res.status(400).json({ error: errMsg(e) });
+    const { status, body } = safeErrorBody(e, 400);
+    return res.status(status).json(body);
   }
 }
 
 /** GET /api/stockbot/runs/:id/tb/histograms?tag=... */
 export async function getRunTbHistogramsProxy(req, res) {
   try {
-    const { data } = await stockbotRequest({
+    const resp = await stockbotRequest({
       method: "get",
       url: `/api/stockbot/runs/${encodeURIComponent(
         req.params.id
       )}/tb/histograms`,
       params: { tag: req.query.tag },
     }, { retries: 1 });
-    return res.json(data);
+    return forwardJson(res, resp);
   } catch (e) {
-    return res.status(400).json({ error: errMsg(e) });
+    const { status, body } = safeErrorBody(e, 400);
+    return res.status(status).json(body);
   }
 }
 
 /** GET /api/stockbot/runs/:id/tb/grad-matrix */
 export async function getRunTbGradMatrixProxy(req, res) {
   try {
-    const { data } = await stockbotRequest({
+    const resp = await stockbotRequest({
       method: "get",
       url: `/api/stockbot/runs/${encodeURIComponent(
         req.params.id
       )}/tb/grad-matrix`,
     }, { retries: 1 });
-    return res.json(data);
+    return forwardJson(res, resp);
   } catch (e) {
-    return res.status(400).json({ error: errMsg(e) });
+    const { status, body } = safeErrorBody(e, 400);
+    return res.status(status).json(body);
   }
 }
 
 /** GET /api/stockbot/runs/:id/tb/scalars-batch?tags=a,b,c */
 export async function getRunTbScalarsBatchProxy(req, res) {
   try {
-    const { data } = await stockbotRequest({
+    const resp = await stockbotRequest({
       method: "get",
       url: `/api/stockbot/runs/${encodeURIComponent(
         req.params.id
       )}/tb/scalars-batch`,
       params: { tags: req.query.tags },
     }, { retries: 1 });
-    return res.json(data);
+    return forwardJson(res, resp);
   } catch (e) {
-    return res.status(400).json({ error: errMsg(e) });
+    const { status, body } = safeErrorBody(e, 400);
+    return res.status(status).json(body);
   }
 }
 
@@ -1227,7 +1259,8 @@ export async function uploadPolicyProxy(req, res) {
 
     return res.json(data); // { policy_path: "/abs/server/path.zip" }
   } catch (e) {
-    return res.status(400).json({ error: errMsg(e) });
+    const { status, body } = safeErrorBody(e, 400);
+    return res.status(status).json(body);
   }
 }
 

@@ -797,6 +797,10 @@ def get_run(run_id: str):
 
 def get_artifacts(run_id: str):
     paths = RUN_MANAGER.artifact_map_for_run(run_id)
+    try:
+        tb_utils.ensure_cache_async(RUN_MANAGER, run_id)
+    except Exception:
+        pass
     def mkapi(name: str, p: Path):
         return f"/api/stockbot/runs/{run_id}/files/{name}" if p.exists() else None
     return {k: mkapi(k, v) for k, v in paths.items()}
