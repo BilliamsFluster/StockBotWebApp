@@ -1,15 +1,14 @@
 import type { DockviewLayout, DockviewNode, DockviewGroupNode } from "dockview";
 
-export const TRAINING_LAYOUT_STORAGE_KEY = "stockbot:trainingResults:docklayout:v1";
+export const TRAINING_LAYOUT_STORAGE_KEY = "stockbot:trainingResults:docklayout:v2";
 
 export const panelDefinitions = {
   overview: { id: "panel-overview", title: "Overview", component: "overview" },
   performance: { id: "panel-performance", title: "Performance", component: "performance" },
   trades: { id: "panel-trades", title: "Trades & Behavior", component: "trades" },
   risk: { id: "panel-risk", title: "Risk & Exposure", component: "risk" },
-  diagnostics: { id: "panel-diagnostics", title: "Diagnostics", component: "diagnostics" },
-  scalars: { id: "panel-scalars", title: "Data & Scalars", component: "scalars" },
-  artifacts: { id: "panel-artifacts", title: "Artifacts", component: "artifacts" },
+  diagnostics: { id: "panel-diagnostics", title: "Advanced Diagnostics", component: "diagnostics" },
+  scalars: { id: "panel-scalars", title: "Raw Scalars", component: "scalars" },
   monitor: { id: "panel-monitor", title: "Monitor", component: "monitor" },
 } as const;
 
@@ -57,7 +56,7 @@ export const defaultDockLayout: DockviewLayout = horizontalLayout("split-default
     id: "group-data",
     size: 1,
     active: panelDefinitions.scalars.id,
-    tabs: [createPanel("scalars"), createPanel("artifacts")],
+    tabs: [createPanel("scalars")],
   }),
   group({
     id: "group-monitor",
@@ -83,7 +82,7 @@ export const analysisDockLayout: DockviewLayout = horizontalLayout("split-analys
     id: "group-context",
     size: 1.2,
     active: panelDefinitions.scalars.id,
-    tabs: [createPanel("scalars"), createPanel("trades"), createPanel("artifacts")],
+    tabs: [createPanel("scalars"), createPanel("trades")],
   }),
   group({
     id: "group-monitor-analysis",
@@ -105,7 +104,6 @@ export const compactDockLayout: DockviewLayout = horizontalLayout("split-compact
       createPanel("risk"),
       createPanel("diagnostics"),
       createPanel("scalars"),
-      createPanel("artifacts"),
     ],
   }),
   group({
