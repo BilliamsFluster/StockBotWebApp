@@ -48,6 +48,8 @@ export function useTensorboardData({
   const tickRef = useRef(0);
   const tagsRef = useRef<TBTags | null>(null);
   const lastReloadRef = useRef(0);
+  const busyRunRef = useRef<string | null>(null);
+  const latestRunRef = useRef<string | null>(null);
 
   useEffect(() => {
     setTags(null);
@@ -55,6 +57,9 @@ export function useTensorboardData({
     setGradMatrix(null);
     tickRef.current = 0;
     lastReloadRef.current = 0;
+    busyRef.current = false;
+    busyRunRef.current = null;
+    latestRunRef.current = runId ?? null;
   }, [runId]);
 
   useEffect(() => {
@@ -63,7 +68,8 @@ export function useTensorboardData({
 
   const reload = useCallback(
     async (fromTimer = false) => {
-      if (!runId || busyRef.current) return;
+      if (!runId) return;
+      if (busyRef.current && busyRunRef.current === runId) return;
 
       const shouldLoadSeries = needsTensorboard;
       const shouldLoadTags = needsTags;
@@ -74,7 +80,9 @@ export function useTensorboardData({
       const now = Date.now();
       if (fromTimer && now - lastReloadRef.current < TIMER_THROTTLE_MS) return;
 
+      const requestRunId = runId;
       busyRef.current = true;
+      busyRunRef.current = requestRunId;
       lastReloadRef.current = now;
       setLoading(true);
       try {
@@ -83,7 +91,7 @@ export function useTensorboardData({
               const wanted = Array.from(new Set([...DEFAULT_TAGS, ...selectedTags]));
               return api
                 .get<{ series: Record<string, TBPoint[]> }>(
-                  `/stockbot/runs/${runId}/tb/scalars-batch`,
+                  `/stockbot/runs/${requestRunId}/tb/scalars-batch`,
                   { params: { tags: wanted.join(",") } },
                 )
                 .catch(() => null);
@@ -95,11 +103,11 @@ export function useTensorboardData({
           shouldLoadTags && (!fromTimer || tickRef.current++ % 3 === 0 || !tagsSnapshot);
 
         const tagsPromise = shouldGetTags
-          ? api.get<TBTags>(`/stockbot/runs/${runId}/tb/tags`).catch(() => null)
+          ? api.get<TBTags>(`/stockbot/runs/${requestRunId}/tb/tags`).catch(() => null)
           : Promise.resolve(null);
 
         const gradPromise = shouldLoadGradients
-          ? api.get<GradMatrix>(`/stockbot/runs/${runId}/tb/grad-matrix`).catch(() => null)
+          ? api.get<GradMatrix>(`/stockbot/runs/${requestRunId}/tb/grad-matrix`).catch(() => null)
           : Promise.resolve(null);
 
         const [batchRes, tagsRes, gradRes] = await Promise.all([
@@ -108,14 +116,19 @@ export function useTensorboardData({
           gradPromise,
         ]);
 
-        if (batchRes?.data?.series) {
-          setSeries((prev) => ({ ...prev, ...(batchRes.data.series || {}) }));
+        if (latestRunRef.current === requestRunId) {
+          if (batchRes?.data?.series) {
+            setSeries((prev) => ({ ...prev, ...(batchRes.data.series || {}) }));
+          }
+          if (tagsRes?.data) setTags(tagsRes.data);
+          if (gradRes?.data) setGradMatrix(gradRes.data);
         }
-        if (tagsRes?.data) setTags(tagsRes.data);
-        if (gradRes?.data) setGradMatrix(gradRes.data);
       } finally {
+        if (busyRunRef.current === requestRunId) {
+          busyRef.current = false;
+          busyRunRef.current = null;
+        }
         setLoading(false);
-        busyRef.current = false;
       }
     },
     [runId, selectedTags, needsTensorboard, needsTags, needsGradients],
