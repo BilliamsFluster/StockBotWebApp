@@ -12,6 +12,27 @@ export type UseTensorboardDataOptions = {
   needsGradients: boolean;
 };
 
+const DEFAULT_TAGS = [
+  "rollout/ep_rew_mean",
+  "eval/mean_reward",
+  "train/episode_reward",
+  "rollout/ep_len_mean",
+  "train/value_loss",
+  "train/policy_loss",
+  "train/policy_gradient_loss",
+  "train/entropy_loss",
+  "train/entropy",
+  "train/learning_rate",
+  "train/clip_fraction",
+  "train/clipfrac",
+  "train/approx_kl",
+  "train/kl",
+  "time/fps",
+  "grads/global_norm",
+] as const;
+
+const TIMER_THROTTLE_MS = 2000;
+
 export function useTensorboardData({
   runId,
   selectedTags,
@@ -25,13 +46,20 @@ export function useTensorboardData({
   const [loading, setLoading] = useState(false);
   const busyRef = useRef(false);
   const tickRef = useRef(0);
+  const tagsRef = useRef<TBTags | null>(null);
+  const lastReloadRef = useRef(0);
 
   useEffect(() => {
     setTags(null);
     setSeries({});
     setGradMatrix(null);
     tickRef.current = 0;
+    lastReloadRef.current = 0;
   }, [runId]);
+
+  useEffect(() => {
+    tagsRef.current = tags;
+  }, [tags]);
 
   const reload = useCallback(
     async (fromTimer = false) => {
@@ -43,30 +71,16 @@ export function useTensorboardData({
 
       if (!shouldLoadSeries && !shouldLoadTags && !shouldLoadGradients) return;
 
+      const now = Date.now();
+      if (fromTimer && now - lastReloadRef.current < TIMER_THROTTLE_MS) return;
+
       busyRef.current = true;
+      lastReloadRef.current = now;
       setLoading(true);
       try {
         const batchPromise = shouldLoadSeries
           ? (async () => {
-              const defaultTags = [
-                "rollout/ep_rew_mean",
-                "eval/mean_reward",
-                "train/episode_reward",
-                "rollout/ep_len_mean",
-                "train/value_loss",
-                "train/policy_loss",
-                "train/policy_gradient_loss",
-                "train/entropy_loss",
-                "train/entropy",
-                "train/learning_rate",
-                "train/clip_fraction",
-                "train/clipfrac",
-                "train/approx_kl",
-                "train/kl",
-                "time/fps",
-                "grads/global_norm",
-              ];
-              const wanted = Array.from(new Set([...defaultTags, ...selectedTags]));
+              const wanted = Array.from(new Set([...DEFAULT_TAGS, ...selectedTags]));
               return api
                 .get<{ series: Record<string, TBPoint[]> }>(
                   `/stockbot/runs/${runId}/tb/scalars-batch`,
@@ -76,8 +90,9 @@ export function useTensorboardData({
             })()
           : Promise.resolve(null);
 
+        const tagsSnapshot = tagsRef.current;
         const shouldGetTags =
-          shouldLoadTags && (!fromTimer || tickRef.current++ % 3 === 0 || !tags);
+          shouldLoadTags && (!fromTimer || tickRef.current++ % 3 === 0 || !tagsSnapshot);
 
         const tagsPromise = shouldGetTags
           ? api.get<TBTags>(`/stockbot/runs/${runId}/tb/tags`).catch(() => null)
@@ -103,7 +118,7 @@ export function useTensorboardData({
         busyRef.current = false;
       }
     },
-    [runId, selectedTags, needsTensorboard, needsTags, needsGradients, tags],
+    [runId, selectedTags, needsTensorboard, needsTags, needsGradients],
   );
 
   return {

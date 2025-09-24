@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import api from "@/api/client";
 
 import { pickFirst, statTriple } from "../utils";
+import { fetchRunsCached } from "../../lib/runs";
 import type { Metrics, RunArtifacts, RunSummary } from "../../lib/types";
 import type { SeedAggregates, TBPoint, TBTags } from "../types";
 
@@ -25,8 +26,15 @@ export function useSeedAggregates({ runId, tags, needsSeedAggregates }: UseSeedA
     seedAggStatusRef.current = { runId, ready: false };
     try {
       const base = runId.replace(/-seed\d+$/i, "");
-      const { data: allRuns } = await api.get<RunSummary[]>("/stockbot/runs");
-      const seeds = (allRuns || []).filter((run) => run.type === "train" && run.id.startsWith(base));
+      const allRuns = await fetchRunsCached(async () => {
+        try {
+          const { data } = await api.get<RunSummary[]>("/stockbot/runs");
+          return (data || []).filter((run) => run.type === "train");
+        } catch {
+          return [];
+        }
+      });
+      const seeds = allRuns.filter((run) => run.id.startsWith(base));
       if (seeds.length <= 1) {
         setSeedAgg({});
         seedAggStatusRef.current = { runId, ready: true };

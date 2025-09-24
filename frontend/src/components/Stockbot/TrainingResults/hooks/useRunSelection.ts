@@ -4,9 +4,14 @@ import api from "@/api/client";
 import { deleteRun } from "@/api/stockbot";
 
 import type { RunSummary } from "../../lib/types";
+import {
+  clearRunsCache,
+  fetchRunsCached,
+  getRunsCacheSnapshot,
+} from "../../lib/runs";
 
 export function useRunSelection(initialRunId?: string) {
-  const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [runs, setRuns] = useState<RunSummary[]>(() => getRunsCacheSnapshot() ?? []);
   const [runId, setRunId] = useState<string>(initialRunId || "");
 
   useEffect(() => {
@@ -15,21 +20,28 @@ export function useRunSelection(initialRunId?: string) {
     }
   }, [initialRunId, runId]);
 
-  const fetchRuns = useCallback(async () => {
-    try {
-      const { data } = await api.get<RunSummary[]>("/stockbot/runs");
-      return (data || []).filter((run) => run.type === "train");
-    } catch {
-      return [];
-    }
-  }, []);
+  const fetchRuns = useCallback(
+    async (options?: { force?: boolean }) => {
+      const nextRuns = await fetchRunsCached(
+        async () => {
+          try {
+            const { data } = await api.get<RunSummary[]>("/stockbot/runs");
+            return (data || []).filter((run) => run.type === "train");
+          } catch {
+            return [];
+          }
+        },
+        { force: options?.force },
+      );
+      setRuns(nextRuns);
+      return nextRuns;
+    },
+    [],
+  );
 
   useEffect(() => {
     if (runs.length > 0) return;
-    void (async () => {
-      const nextRuns = await fetchRuns();
-      setRuns(nextRuns);
-    })();
+    void fetchRuns();
   }, [runs.length, fetchRuns]);
 
   useEffect(() => {
@@ -37,7 +49,6 @@ export function useRunSelection(initialRunId?: string) {
     void (async () => {
       const existingRuns = runs.length ? runs : await fetchRuns();
       if (existingRuns.length && !runId) {
-        setRuns(existingRuns);
         setRunId(existingRuns[0].id);
       }
     })();
@@ -48,20 +59,20 @@ export function useRunSelection(initialRunId?: string) {
     if (!window.confirm("Delete this run?")) return;
     try {
       await deleteRun(runId);
-      const nextRuns = runs.filter((run) => run.id !== runId);
-      setRuns(nextRuns);
+      clearRunsCache();
+      const nextRuns = await fetchRuns({ force: true });
       setRunId(nextRuns[0]?.id || "");
     } catch (error) {
       console.error(error);
     }
-  }, [runId, runs]);
+  }, [runId, fetchRuns]);
 
   return {
     runs,
     setRuns,
     runId,
     setRunId,
-    refreshRuns: fetchRuns,
+    refreshRuns: () => fetchRuns({ force: true }),
     handleDeleteRun,
   } as const;
 }

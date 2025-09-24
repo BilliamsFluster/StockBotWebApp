@@ -107,6 +107,7 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     return visiblePanels;
   }, [dockReady, visiblePanels, consideredPanelIds]);
   const activePanelSet = useMemo(() => new Set(activePanels), [activePanels]);
+  const activePanelsKey = useMemo(() => activePanels.join("|"), [activePanels]);
   const openPanelSet = useMemo(() => new Set(consideredPanelIds), [consideredPanelIds]);
 
   const needsTensorboard = useMemo(
@@ -128,6 +129,8 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     () => showSeed && activePanelSet.has(panelDefinitions.diagnostics.id),
     [showSeed, activePanelSet],
   );
+
+  const selectedTagsKey = useMemo(() => selectedTags.join("|"), [selectedTags]);
 
   const needsMetricsData = useMemo(
     () => consideredPanelIds.some((panel) => METRIC_PANELS.has(panel)),
@@ -165,29 +168,41 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
   const { seedAgg } = useSeedAggregates({ runId, tags, needsSeedAggregates });
 
   useEffect(() => {
-    if (!runId || !autoRefresh) return;
-    const timer = setInterval(() => {
-      void reload(true);
-    }, 8000);
-    return () => clearInterval(timer);
-  }, [runId, autoRefresh, reload]);
+    if (!runId || !activePanels.length) return;
 
-  useEffect(() => {
-    if (!runId) return;
-    void reload();
-  }, [runId, reload]);
+    const shouldFetch = needsTensorboard || needsTags || needsGradients;
+    if (!shouldFetch) return;
 
-  useEffect(() => {
-    if (!runId) return;
-    if (!needsTensorboard && !needsTags && !needsGradients) return;
-    void reload();
-  }, [runId, needsTensorboard, needsTags, needsGradients, reload]);
+    let cancelled = false;
+    const invoke = (fromTimer: boolean) => {
+      if (cancelled) return;
+      void reload(fromTimer);
+    };
 
-  useEffect(() => {
-    if (!runId || activePanels.length === 0) return;
-    void reload();
-  }, [runId, activePanels, reload]);
+    invoke(false);
 
+    let timer: ReturnType<typeof setInterval> | null = null;
+    if (autoRefresh) {
+      timer = setInterval(() => {
+        invoke(true);
+      }, 8000);
+    }
+
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [
+    runId,
+    autoRefresh,
+    needsTensorboard,
+    needsTags,
+    needsGradients,
+    activePanelsKey,
+    selectedTagsKey,
+    activePanels.length,
+    reload,
+  ]);
   const gradientSurface = useMemo(() => {
     if (!gradMatrix?.layers?.length || !gradMatrix?.steps?.length) return null;
     const rows = gradMatrix.steps.length;
