@@ -1,18 +1,15 @@
-import React from "react";
+﻿import React, { useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectTrigger,
   SelectValue,
   SelectContent,
   SelectItem,
-  SelectGroup,
-  SelectLabel,
-  SelectSeparator,
 } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import { TooltipLabel } from "../../shared/TooltipLabel";
 import type { RunSummary } from "../../lib/types";
 import type { TBTags } from "../types";
@@ -25,9 +22,6 @@ export type ControlPanelProps = {
   onRefresh: () => void;
   onDelete: () => void;
   loading: boolean;
-  autoRefresh: boolean;
-  onToggleAutoRefresh: (value: boolean) => void;
-  onFocusMonitor: () => void;
   dockReady: boolean;
   currentLayout: string;
   onPresetChange: (presetId: string) => void;
@@ -41,6 +35,13 @@ export type ControlPanelProps = {
   tags: TBTags | null;
 };
 
+const STATUS_TONES: Record<string, string> = {
+  SUCCEEDED: "bg-emerald-500/10 text-emerald-300 border-emerald-500/20",
+  FAILED: "bg-rose-500/10 text-rose-300 border-rose-500/20",
+  RUNNING: "bg-blue-500/10 text-blue-300 border-blue-500/20",
+  CANCELLED: "bg-amber-500/10 text-amber-200 border-amber-500/20",
+};
+
 export function ControlPanel({
   runId,
   runs,
@@ -48,9 +49,6 @@ export function ControlPanel({
   onRefresh,
   onDelete,
   loading,
-  autoRefresh,
-  onToggleAutoRefresh,
-  onFocusMonitor,
   dockReady,
   currentLayout,
   onPresetChange,
@@ -64,58 +62,31 @@ export function ControlPanel({
   tags,
 }: ControlPanelProps) {
   const savedLayoutAvailable = hasSavedLayout || currentLayout === "saved";
+  const selectedRun = useMemo(() => runs.find((run) => run.id === runId) ?? null, [runId, runs]);
+  const statusLabel = (selectedRun?.status || "").toUpperCase();
+  const statusTone = STATUS_TONES[statusLabel] || "bg-slate-500/10 text-slate-300 border-slate-500/20";
+  const runPlaceholder = runs.length ? "Choose a run" : "No training runs found";
+  const runTypeLabel = selectedRun?.type ? selectedRun.type.toUpperCase() : null;
 
   return (
-    <Card className="p-4 space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="text-lg font-semibold">Training Results</div>
-        <div className="flex-1" />
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-2 rounded border px-2 py-1">
-            <TooltipLabel className="text-sm" tooltip="Automatically reload metrics">
-              Auto-refresh
-            </TooltipLabel>
-            <Switch checked={autoRefresh} onCheckedChange={onToggleAutoRefresh} />
-          </div>
-          <Button size="sm" variant="secondary" onClick={onFocusMonitor} disabled={!dockReady}>
-            Focus Monitor
-          </Button>
+    <Card className="space-y-4 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
+          <div className="text-lg font-semibold">Training Results</div>
+          {selectedRun ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="font-mono text-[11px]">{selectedRun.id}</span>
+              <Badge variant="outline" className={statusTone}>
+                {statusLabel || "UNKNOWN"}
+              </Badge>
+              {runTypeLabel && <span className="text-xs tracking-wide text-muted-foreground/80">{runTypeLabel}</span>}
+            </div>
+          ) : (
+            <div className="text-xs text-muted-foreground">Select a training run to inspect metrics and artifacts.</div>
+          )}
         </div>
-      </div>
-
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        <div>
-          <TooltipLabel className="text-xs" tooltip="Select a training run to inspect">
-            Run
-          </TooltipLabel>
-          <select
-            className="mt-1 w-full rounded border px-3 py-2 text-sm"
-            value={runId}
-            onChange={(event) => onRunChange(event.target.value)}
-          >
-            <option value="" disabled hidden>
-              {runs.length ? "Choose a run" : "No training runs"}
-            </option>
-            {runs.map((run) => (
-              <option key={run.id} value={run.id}>
-                {`${run.id} · ${run.status}`}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <TooltipLabel className="text-xs" tooltip="ID of a specific run">
-            Run ID
-          </TooltipLabel>
-          <Input
-            value={runId}
-            onChange={(event) => onRunChange(event.target.value)}
-            placeholder="Run ID"
-            className="mt-1"
-          />
-        </div>
-        <div className="flex items-end gap-2">
-          <Button size="sm" variant="secondary" onClick={onRefresh} disabled={!runId || loading}>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={onRefresh} disabled={!runId || loading}>
             Refresh
           </Button>
           <Button size="sm" variant="destructive" onClick={onDelete} disabled={!runId || loading}>
@@ -124,57 +95,70 @@ export function ControlPanel({
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <TooltipLabel className="text-xs" tooltip="Quickly arrange panels into a preset layout">
-          Layout
-        </TooltipLabel>
-        <Select value={currentLayout} onValueChange={onPresetChange} disabled={!dockReady}>
-          <SelectTrigger className="w-[220px]">
-            <SelectValue placeholder="Select a layout" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              <SelectLabel>Preset Layouts</SelectLabel>
-              {DOCK_PRESETS.map((preset) => (
-                <SelectItem key={preset.id} value={preset.id}>
-                  {preset.label}
+      <div className="grid gap-4 md:grid-cols-[minmax(0,260px)_minmax(0,1fr)]">
+        <div className="space-y-2">
+          <TooltipLabel className="text-xs" tooltip="Select a training run to inspect">
+            Run
+          </TooltipLabel>
+          <Select value={runId} onValueChange={onRunChange} disabled={!runs.length}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder={runPlaceholder} />
+            </SelectTrigger>
+            <SelectContent className="max-h-72">
+              {runs.map((run) => (
+                <SelectItem key={run.id} value={run.id}>
+                  <div className="flex flex-col text-left">
+                    <span className="font-mono text-xs">{run.id}</span>
+                    <span className="text-[11px] text-muted-foreground">{run.status?.toUpperCase() || "UNKNOWN"}</span>
+                  </div>
                 </SelectItem>
               ))}
-            </SelectGroup>
-            {savedLayoutAvailable && (
-              <>
-                <SelectSeparator />
-                <SelectGroup>
-                  <SelectLabel>Saved</SelectLabel>
-                  <SelectItem value="saved">Saved Layout</SelectItem>
-                </SelectGroup>
-              </>
-            )}
-            <SelectSeparator />
-            <SelectGroup>
-              <SelectLabel>Session</SelectLabel>
-              <SelectItem value="custom">Custom Layout</SelectItem>
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-        <Button size="sm" onClick={onSaveLayout} disabled={!dockReady}>
-          Save Layout
-        </Button>
-        <Button size="sm" variant="outline" onClick={onLoadSavedLayout} disabled={!dockReady || !hasSavedLayout}>
-          Load Saved
-        </Button>
-        <Button size="sm" variant="outline" onClick={onResetLayout} disabled={!dockReady}>
-          Reset
-        </Button>
-        {hasSavedLayout && (
-          <Button size="sm" variant="ghost" onClick={onClearSavedLayout} disabled={!dockReady}>
-            Clear Saved
-          </Button>
-        )}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <TooltipLabel className="text-xs" tooltip="Manage saved layouts for the dock view">
+            Layout
+          </TooltipLabel>
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={currentLayout} onValueChange={onPresetChange} disabled={!dockReady}>
+              <SelectTrigger className="w-[220px]">
+                <SelectValue placeholder="Select a layout" />
+              </SelectTrigger>
+              <SelectContent>
+                {DOCK_PRESETS.map((preset) => (
+                  <SelectItem key={preset.id} value={preset.id}>
+                    {preset.label}
+                  </SelectItem>
+                ))}
+                {savedLayoutAvailable && <SelectItem key="saved" value="saved">Saved Layout</SelectItem>}
+                <SelectItem key="custom" value="custom">Custom Layout</SelectItem>
+              </SelectContent>
+            </Select>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" onClick={onSaveLayout} disabled={!dockReady}>
+                Save
+              </Button>
+              <Button size="sm" variant="outline" onClick={onLoadSavedLayout} disabled={!dockReady || !hasSavedLayout}>
+                Load
+              </Button>
+              <Button size="sm" variant="outline" onClick={onResetLayout} disabled={!dockReady}>
+                Reset
+              </Button>
+              {hasSavedLayout && (
+                <Button size="sm" variant="ghost" onClick={onClearSavedLayout} disabled={!dockReady}>
+                  Clear
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <TooltipLabel className="text-xs" tooltip="Add, restore, or focus specific panels">
+      <Separator />
+
+      <div className="space-y-2">
+        <TooltipLabel className="text-xs" tooltip="Launch or focus panels in the dock below">
           Panels
         </TooltipLabel>
         <div className="flex flex-wrap gap-2">
@@ -190,18 +174,17 @@ export function ControlPanel({
                 disabled={!dockReady}
                 title={isOpen ? "Focus panel" : "Add panel"}
               >
-                <span className="font-mono text-xs">{isOpen ? "●" : "+"}</span>
-                <span>{panel.title}</span>
+                <span className="text-xs font-medium">{panel.title}</span>
               </Button>
             );
           })}
         </div>
       </div>
 
-      {!!tags && (
+      {tags && (
         <div className="text-xs text-muted-foreground">
           Scalars: {tags.scalars.slice(0, 8).join(", ")}
-          {tags.scalars.length > 8 ? " …" : ""}
+          {tags.scalars.length > 8 ? " ..." : ""}
         </div>
       )}
     </Card>

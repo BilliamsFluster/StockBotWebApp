@@ -72,7 +72,6 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     showDistributions,
     setShowDistributions,
   } = useRunPreferences(runId);
-  const [autoRefresh, setAutoRefresh] = useState(false);
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [showCharts, setShowCharts] = useState(false);
   const [showSeed, setShowSeed] = useState(false);
@@ -93,7 +92,6 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     handleLoadSavedLayout,
     handleClearSavedLayout,
     handlePanelLaunch,
-    focusPanel,
     applyLayout,
   } = useDockviewManager();
 
@@ -173,34 +171,14 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     const shouldFetch = needsTensorboard || needsTags || needsGradients;
     if (!shouldFetch) return;
 
-    let cancelled = false;
-    const invoke = (fromTimer: boolean) => {
-      if (cancelled) return;
-      void reload(fromTimer);
-    };
-
-    invoke(false);
-
-    let timer: ReturnType<typeof setInterval> | null = null;
-    if (autoRefresh) {
-      timer = setInterval(() => {
-        invoke(true);
-      }, 8000);
-    }
-
-    return () => {
-      cancelled = true;
-      if (timer) clearInterval(timer);
-    };
+    void reload();
   }, [
     runId,
-    autoRefresh,
     needsTensorboard,
     needsTags,
     needsGradients,
     activePanelsKey,
     selectedTagsKey,
-    activePanels.length,
     reload,
   ]);
   const gradientSurface = useMemo(() => {
@@ -420,9 +398,6 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
           onRefresh={() => void reload()}
           onDelete={handleDeleteRun}
           loading={loading}
-          autoRefresh={autoRefresh}
-          onToggleAutoRefresh={(value) => setAutoRefresh(value)}
-          onFocusMonitor={() => focusPanel(panelDefinitions.monitor.id)}
           dockReady={dockReady}
           currentLayout={currentLayout}
           onPresetChange={handlePresetChange}
@@ -436,7 +411,7 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
           tags={tags}
         />
 
-        <div className="w-full h-[60vh] min-h-[480px] max-h-[720px]">
+        <div className="w-full h-[70vh] min-h-[520px] max-h-[820px]">
           <DockviewReact {...dockviewProps} />
         </div>
       </div>
