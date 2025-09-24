@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import api from "@/api/client";
+import api, { buildUrl } from "@/api/client";
 
 import { parseCSV } from "../../lib/csv";
 import type { Metrics, RunArtifacts } from "../../lib/types";
@@ -504,11 +504,39 @@ function extractExposures(rows: Array<Record<string, any>>): ExposureEntry[] {
   return entries;
 }
 
-async function fetchJSON<T>(path: string | null | undefined): Promise<T | null> {
+function toNumber(value: unknown): number | null {
+  if (value == null) return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function normalizeMetrics(data: unknown): Metrics | null {
+  if (!data || typeof data !== "object") return null;
+  const metrics = data as Record<string, unknown>;
+  const normalized: Metrics = {
+    total_return: toNumber(metrics.total_return),
+    cagr: toNumber(metrics.cagr),
+    vol_daily: toNumber(metrics.vol_daily),
+    vol_annual: toNumber(metrics.vol_annual),
+    sharpe: toNumber(metrics.sharpe),
+    sortino: toNumber(metrics.sortino),
+    max_drawdown: toNumber(metrics.max_drawdown),
+    calmar: toNumber(metrics.calmar),
+    turnover: toNumber(metrics.turnover),
+    hit_rate: toNumber(metrics.hit_rate),
+    num_trades: toNumber(metrics.num_trades),
+    avg_trade_pnl: toNumber(metrics.avg_trade_pnl),
+  };
+  const hasValue = Object.values(normalized).some((value) => value != null);
+  return hasValue ? normalized : null;
+}
+
+async function fetchJSON(path: string | null | undefined): Promise<unknown> {
   if (!path) return null;
   try {
-    const { data } = await api.get<T>(path, { baseURL: "" });
-    return data;
+    const res = await fetch(buildUrl(path), { credentials: "include", cache: "no-store" });
+    if (!res.ok) return null;
+    return await res.json();
   } catch {
     return null;
   }
@@ -517,9 +545,11 @@ async function fetchJSON<T>(path: string | null | undefined): Promise<T | null> 
 async function fetchText(path: string | null | undefined): Promise<string | null> {
   if (!path) return null;
   try {
-    const { data } = await api.get<string>(path, { baseURL: "" });
-    if (typeof data === "string") return data;
-    return JSON.stringify(data, null, 2);
+    const res = await fetch(buildUrl(path), { credentials: "include", cache: "no-store" });
+    if (!res.ok) return null;
+    const text = await res.text();
+    if (!text) return null;
+    return text;
   } catch {
     return null;
   }
@@ -580,8 +610,8 @@ export function useRunData(runId?: string | null, enabled = true): UseRunDataRes
     }
     setMetricsLoading(true);
     (async () => {
-      const data = await fetchJSON<Metrics>(url);
-      if (!cancelled) setMetrics(data);
+      const data = await fetchJSON(url);
+      if (!cancelled) setMetrics(normalizeMetrics(data));
     })().finally(() => {
       if (!cancelled) setMetricsLoading(false);
     });
