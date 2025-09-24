@@ -30,24 +30,24 @@ export type TrainingResultsProps = {
   initialRunId?: string;
 };
 
-const TENSORBOARD_PANELS = new Set([
+const TENSORBOARD_PANELS = new Set<string>([
   panelDefinitions.overview.id,
   panelDefinitions.diagnostics.id,
   panelDefinitions.scalars.id,
 ]);
 
-const TAG_PANELS = new Set([
+const TAG_PANELS = new Set<string>([
   panelDefinitions.trades.id,
   panelDefinitions.diagnostics.id,
   panelDefinitions.scalars.id,
 ]);
 
-const METRIC_PANELS = new Set([
+const METRIC_PANELS = new Set<string>([
   panelDefinitions.overview.id,
   panelDefinitions.performance.id,
 ]);
 
-const EQUITY_PANELS = new Set([
+const EQUITY_PANELS = new Set<string>([
   panelDefinitions.performance.id,
   panelDefinitions.risk.id,
   panelDefinitions.artifacts.id,
