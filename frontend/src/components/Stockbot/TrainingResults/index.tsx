@@ -13,7 +13,6 @@ import {
   RiskPanel,
   DiagnosticsPanel,
   ScalarsPanel,
-  ArtifactsPanel,
   MonitorPanel,
 } from "./new-training";
 import { WeightsHeatmap } from "../NewTraining/WeightsHeatmap";
@@ -22,7 +21,7 @@ import { useRunSelection } from "./hooks/useRunSelection";
 import { useRunStatusSubscription } from "./hooks/useRunStatusSubscription";
 import { useRunPreferences } from "./hooks/useRunPreferences";
 import { useTensorboardData } from "./hooks/useTensorboardData";
-import { useArtifactsData } from "./hooks/useArtifactsData";
+import { useRunData } from "./hooks/useRunData";
 import { useSeedAggregates } from "./hooks/useSeedAggregates";
 import { useDockviewManager } from "./hooks/useDockviewManager";
 
@@ -42,15 +41,11 @@ const TAG_PANELS = new Set<string>([
   panelDefinitions.scalars.id,
 ]);
 
-const METRIC_PANELS = new Set<string>([
+const RUN_DATA_PANELS = new Set<string>([
   panelDefinitions.overview.id,
   panelDefinitions.performance.id,
-]);
-
-const EQUITY_PANELS = new Set<string>([
-  panelDefinitions.performance.id,
+  panelDefinitions.trades.id,
   panelDefinitions.risk.id,
-  panelDefinitions.artifacts.id,
 ]);
 
 export default function TrainingResults({ initialRunId }: TrainingResultsProps) {
@@ -130,25 +125,12 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
 
   const selectedTagsKey = useMemo(() => selectedTags.join("|"), [selectedTags]);
 
-  const needsMetricsData = useMemo(
-    () => consideredPanelIds.some((panel) => METRIC_PANELS.has(panel)),
+  const needsRunData = useMemo(
+    () => consideredPanelIds.some((panel) => RUN_DATA_PANELS.has(panel)),
     [consideredPanelIds],
   );
 
-  const needsEquityData = useMemo(
-    () => consideredPanelIds.some((panel) => EQUITY_PANELS.has(panel)),
-    [consideredPanelIds],
-  );
-
-  const needsArtifactsMeta = useMemo(
-    () =>
-      openPanelSet.has(panelDefinitions.artifacts.id) ||
-      needsMetricsData ||
-      needsEquityData,
-    [openPanelSet, needsMetricsData, needsEquityData],
-  );
-
-  const { tags, series, gradMatrix, loading, reload } = useTensorboardData({
+  const { tags, series, gradMatrix, loading: tensorboardLoading, reload } = useTensorboardData({
     runId,
     selectedTags,
     needsTensorboard,
@@ -156,12 +138,25 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
     needsGradients,
   });
 
-  const { artifacts, metrics, equity, drawdown, leverage } = useArtifactsData({
-    runId,
-    needsArtifactsMeta,
-    needsMetricsData,
-    needsEquityData,
-  });
+  const {
+    loading: runDataLoading,
+    artifacts,
+    metrics,
+    equity,
+    drawdown,
+    leverage,
+    rolling,
+    baseline,
+    returns,
+    exposures,
+    riskStats,
+    riskHighlights,
+    anomalies,
+    configSnippets,
+    downloads,
+    tradeAnalytics,
+    reload: reloadRunData,
+  } = useRunData(runId, needsRunData);
 
   const { seedAgg } = useSeedAggregates({ runId, tags, needsSeedAggregates });
 
@@ -200,13 +195,62 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
 
   const filteredEquity = useMemo(() => {
     if (!timeRange) return equity;
-    return equity.slice(timeRange[0], timeRange[1] + 1);
+    const start = Math.max(0, Math.min(timeRange[0], equity.length - 1));
+    const end = Math.max(start, Math.min(timeRange[1], equity.length - 1));
+    return equity.slice(start, end + 1);
   }, [equity, timeRange]);
 
   const filteredDrawdown = useMemo(() => {
     if (!timeRange) return drawdown;
-    return drawdown.slice(timeRange[0], timeRange[1] + 1);
+    const start = Math.max(0, Math.min(timeRange[0], drawdown.length - 1));
+    const end = Math.max(start, Math.min(timeRange[1], drawdown.length - 1));
+    return drawdown.slice(start, end + 1);
   }, [drawdown, timeRange]);
+
+  const filteredLeverage = useMemo(() => {
+    if (!timeRange) return leverage;
+    const start = Math.max(0, Math.min(timeRange[0], leverage.length - 1));
+    const end = Math.max(start, Math.min(timeRange[1], leverage.length - 1));
+    return leverage.slice(start, end + 1);
+  }, [leverage, timeRange]);
+
+  const timeRangeSteps = useMemo(() => {
+    if (!timeRange || !equity.length) return null;
+    const startIdx = Math.max(0, Math.min(timeRange[0], equity.length - 1));
+    const endIdx = Math.max(0, Math.min(timeRange[1], equity.length - 1));
+    const startStep = equity[startIdx]?.step ?? 0;
+    const endStep = equity[endIdx]?.step ?? startStep;
+    return [Math.min(startStep, endStep), Math.max(startStep, endStep)] as [number, number];
+  }, [timeRange, equity]);
+
+  const filteredBaseline = useMemo(() => {
+    if (!timeRangeSteps) return baseline;
+    return baseline.filter((row) => row.step >= timeRangeSteps[0] && row.step <= timeRangeSteps[1]);
+  }, [baseline, timeRangeSteps]);
+
+  const filteredRolling = useMemo(() => {
+    if (!timeRangeSteps)
+      return rolling;
+    const withinRange = <T extends { step: number }>(points: T[]) =>
+      points.filter((point) => point.step >= timeRangeSteps[0] && point.step <= timeRangeSteps[1]);
+    return {
+      sharpe: withinRange(rolling.sharpe),
+      volatility: withinRange(rolling.volatility),
+      sortino: withinRange(rolling.sortino),
+    };
+  }, [rolling, timeRangeSteps]);
+
+  const filteredReturns = useMemo(() => {
+    if (!filteredEquity.length) return [] as number[];
+    if (!timeRange) return returns;
+    const result: number[] = [];
+    for (let i = 1; i < filteredEquity.length; i += 1) {
+      const prev = filteredEquity[i - 1]?.equity ?? 0;
+      const curr = filteredEquity[i]?.equity ?? 0;
+      if (prev > 0) result.push(curr / prev - 1);
+    }
+    return result;
+  }, [filteredEquity, returns, timeRange]);
 
   const handleBrush = useCallback((range: { startIndex?: number; endIndex?: number }) => {
     if (typeof range.startIndex === "number" && typeof range.endIndex === "number") {
@@ -215,6 +259,19 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
       setTimeRange(null);
     }
   }, []);
+
+  const combinedLoading = tensorboardLoading || runDataLoading;
+
+  const handleRefresh = useCallback(() => {
+    reload();
+    reloadRunData();
+  }, [reload, reloadRunData]);
+
+  const tradeHitRate = useMemo(() => {
+    if (tradeAnalytics.hitRate != null) return tradeAnalytics.hitRate;
+    if (metrics?.hit_rate != null) return metrics.hit_rate;
+    return null;
+  }, [tradeAnalytics.hitRate, metrics?.hit_rate]);
 
   const available = useMemo(() => Object.keys(series || {}), [series]);
   const rewardTag = useMemo(
@@ -268,7 +325,15 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
       overview: () => (
         <OverviewPanel
           metrics={metrics}
-          filteredEquity={filteredEquity}
+          equity={filteredEquity}
+          drawdown={filteredDrawdown}
+          rolling={filteredRolling}
+          anomalies={anomalies}
+          riskStats={riskStats}
+          riskHighlights={riskHighlights}
+          configSnippets={configSnippets}
+          downloads={downloads}
+          tradeHitRate={tradeHitRate}
           runStatus={runStatus}
           showRollout={showRollout}
           onToggleRollout={setShowRollout}
@@ -280,21 +345,33 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
       ),
       performance: () => (
         <PerformancePanel
-          metrics={metrics}
           equity={filteredEquity}
+          baseline={filteredBaseline}
           drawdown={filteredDrawdown}
+          rolling={filteredRolling}
+          returns={filteredReturns}
           onBrushChange={handleBrush}
         />
       ),
       trades: () => (
         <TradesPanel
+          tradeAnalytics={tradeAnalytics}
+          tradeHitRate={tradeHitRate}
           showDistributions={showDistributions}
           onToggleDistributions={setShowDistributions}
           tags={tags}
           runId={runId}
         />
       ),
-      risk: () => <RiskPanel artifacts={artifacts} leverage={leverage} />,
+      risk: () => (
+        <RiskPanel
+          leverage={filteredLeverage}
+          riskStats={riskStats}
+          exposures={exposures}
+          rolling={filteredRolling}
+          drawdown={filteredDrawdown}
+        />
+      ),
       diagnostics: () => (
         <DiagnosticsPanel
           showOptim={showOptim}
@@ -331,27 +408,34 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
           timeRange={timeRange}
         />
       ),
-      artifacts: () => (
-        <ArtifactsPanel artifacts={artifacts} equity={equity} drawdown={drawdown} leverage={leverage} />
-      ),
       monitor: () => <MonitorPanel runId={runId} />,
     }),
     [
       metrics,
       filteredEquity,
+      filteredDrawdown,
+      filteredRolling,
+      anomalies,
+      riskStats,
+      riskHighlights,
+      configSnippets,
+      downloads,
+      tradeHitRate,
       runStatus,
       showRollout,
       rewardTag,
       epLenTag,
       series,
       timeRange,
-      filteredDrawdown,
+      filteredBaseline,
+      returns,
       handleBrush,
+      tradeAnalytics,
       showDistributions,
       tags,
       runId,
-      artifacts,
-      leverage,
+      filteredLeverage,
+      exposures,
       showOptim,
       showTiming,
       showGrads,
@@ -369,8 +453,6 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
       seedAgg,
       selectedTags,
       visibleSelected,
-      equity,
-      drawdown,
     ],
   );
 
@@ -395,9 +477,9 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
           runId={runId}
           runs={runs}
           onRunChange={(value) => setRunId(value)}
-          onRefresh={() => void reload()}
+          onRefresh={handleRefresh}
           onDelete={handleDeleteRun}
-          loading={loading}
+          loading={combinedLoading}
           dockReady={dockReady}
           currentLayout={currentLayout}
           onPresetChange={handlePresetChange}

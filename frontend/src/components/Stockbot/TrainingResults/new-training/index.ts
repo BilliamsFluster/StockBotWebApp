@@ -6,7 +6,6 @@ export * from "./TradesPanel";
 export * from "./RiskPanel";
 export * from "./DiagnosticsPanel";
 export * from "./ScalarsPanel";
-export * from "./ArtifactsPanel";
 export * from "./MonitorPanel";
 export * from "./ControlPanel";
 export * from "./ActionsHistogramSection";

@@ -13,3 +13,14 @@ export function formatSigned(x?: number | null): string {
   const s = x >= 0 ? "+" : "";
   return `${s}${x.toFixed(3)}`;
 }
+
+export function formatNumber(
+  value?: number | null,
+  options?: Intl.NumberFormatOptions,
+): string {
+  if (value == null || Number.isNaN(value)) return "—";
+  return value.toLocaleString(undefined, {
+    maximumFractionDigits: 2,
+    ...options,
+  });
+}
