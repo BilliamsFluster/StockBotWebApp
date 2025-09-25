@@ -458,7 +458,7 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
 
   const dockviewProps = useMemo<IDockviewReactProps>(
     () => ({
-      className: "dockview-theme-abyss h-full w-full border bg-card/60 shadow-sm",
+      className: "dockview-theme-abyss h-full w-full",
       components: dockComponents,
       disableFloatingGroups: false,
       dndEdges: dockviewRootDndEdges,
@@ -472,7 +472,7 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
 
   return (
     <>
-      <div className="space-y-4">
+      <div className="flex min-h-0 flex-1 flex-col gap-4">
         <ControlPanel
           runId={runId}
           runs={runs}
@@ -493,7 +493,10 @@ export default function TrainingResults({ initialRunId }: TrainingResultsProps) 
           tags={tags}
         />
 
-        <div className="w-full h-[70vh] min-h-[520px] max-h-[820px]">
+        <div
+          className="flex-1 overflow-hidden rounded-xl border bg-card/60 shadow-sm"
+          style={{ height: "clamp(620px, calc(100vh - 320px), 960px)" }}
+        >
           <DockviewReact {...dockviewProps} />
         </div>
       </div>

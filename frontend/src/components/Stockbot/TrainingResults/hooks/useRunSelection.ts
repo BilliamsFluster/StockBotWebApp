@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import api from "@/api/client";
 import { deleteRun } from "@/api/stockbot";
@@ -13,12 +13,17 @@ import {
 export function useRunSelection(initialRunId?: string) {
   const [runs, setRuns] = useState<RunSummary[]>(() => getRunsCacheSnapshot() ?? []);
   const [runId, setRunId] = useState<string>(initialRunId || "");
+  const previousInitialRunId = useRef<string | undefined>(initialRunId);
 
   useEffect(() => {
-    if (initialRunId && initialRunId !== runId) {
-      setRunId(initialRunId);
+    if (!initialRunId) {
+      previousInitialRunId.current = undefined;
+      return;
     }
-  }, [initialRunId, runId]);
+    if (previousInitialRunId.current === initialRunId) return;
+    previousInitialRunId.current = initialRunId;
+    setRunId(initialRunId);
+  }, [initialRunId]);
 
   const fetchRuns = useCallback(
     async (options?: { force?: boolean }) => {

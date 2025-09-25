@@ -379,8 +379,9 @@ export function useDockviewManager(): DockviewManager {
       const panel = panelDefinitions[panelKey];
       if (!panel) return;
 
-      if (openPanels.includes(panel.id)) {
-        setPanelActive(api.getPanel(panel.id));
+      const existing = api.getPanel(panel.id);
+      if (existing) {
+        setPanelActive(existing);
         return;
       }
 
@@ -397,7 +398,7 @@ export function useDockviewManager(): DockviewManager {
       } catch {}
       setCurrentLayout("custom");
     },
-    [openPanels, setPanelActive, updateOpenPanels, commitVisiblePanels],
+    [setPanelActive, updateOpenPanels, commitVisiblePanels],
   );
 
   const focusPanel = useCallback(
