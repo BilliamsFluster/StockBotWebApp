@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { buildUrl } from "@/api/client";
 import { askJarvisLite, fetchAvailableModels } from "@/api/jarvisApi";
+import { getAiInsights } from "@/api/stockbot";
 import type { MetricSummary, SummaryMeta } from "./types";
 
 type RunStatus = { status?: string; type?: string } | null;
@@ -42,7 +43,10 @@ export function useAiInsights({
         const models = await fetchAvailableModels();
         if (mounted && Array.isArray(models)) {
           setAiModels(models);
-          if (models.length && !aiModel) setAiModel(models[0]);
+          setAiModel((prev) => {
+            if (prev && models.includes(prev)) return prev;
+            return models[0] ?? prev;
+          });
         }
       } catch {
         /* ignore */
@@ -51,7 +55,7 @@ export function useAiInsights({
     return () => {
       mounted = false;
     };
-  }, [aiModel]);
+  }, []);
 
   useEffect(() => {
     setAiText("");
@@ -199,9 +203,43 @@ export function useAiInsights({
   ]);
 
   const requestAiInsights = useCallback(async () => {
-    if (!runId) return;
     setAiLoading(true);
     setAiError(null);
+    let brokerError: unknown = null;
+
+    try {
+      const data = await getAiInsights();
+      const insights = Array.isArray(data?.insights)
+        ? data.insights.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        : [];
+
+      const expectedPrefixes = ["Overview:", "✅ Strength:", "⚠️ Watchlist:", "🔧 Next tweaks:"];
+      const hasTemplate = expectedPrefixes.every((prefix, index) => {
+        const text = insights[index];
+        return typeof text === "string" && text.trim().startsWith(prefix);
+      });
+
+      if (hasTemplate) {
+        setAiText(insights.join("\n\n"));
+        return;
+      }
+
+      brokerError = new Error("Broker insights missing expected template");
+    } catch (err) {
+      brokerError = err;
+    }
+
+    if (!runId) {
+      setAiText("");
+      const message =
+        (brokerError as any)?.response?.data?.error ||
+        (brokerError as any)?.message ||
+        "No run selected and broker insights are unavailable.";
+      setAiError(String(message));
+      setAiLoading(false);
+      return;
+    }
+
     try {
       const prompt = await buildRunPrompt();
       const { response } = await askJarvisLite(
@@ -211,7 +249,10 @@ export function useAiInsights({
       );
       setAiText(String(response || ""));
     } catch (err: any) {
-      setAiError(err?.message || "Failed to get AI insights");
+      const brokerMessage =
+        (brokerError as any)?.response?.data?.error || (brokerError as any)?.message || null;
+      const fallbackMessage = err?.message || "Failed to get AI insights";
+      setAiError(brokerMessage ? `${brokerMessage} | ${fallbackMessage}` : fallbackMessage);
     } finally {
       setAiLoading(false);
     }
