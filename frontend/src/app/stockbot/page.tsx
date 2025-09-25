@@ -19,9 +19,9 @@ export default function Page() {
   const [trainingRunId, setTrainingRunId] = useState<string | null>(null);
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="flex min-h-screen flex-col gap-6 p-6">
       <TooltipProvider delayDuration={80}>
-        <Tabs value={tab} onValueChange={setTab} className="space-y-6">
+        <Tabs value={tab} onValueChange={setTab} className="flex flex-1 flex-col gap-6">
         <TabsList className="w-full grid grid-cols-8 gap-2">
           <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
           <TabsTrigger value="new-training">New Training</TabsTrigger>
@@ -77,7 +77,7 @@ export default function Page() {
           <RunDetail />
         </TabsContent>
 
-        <TabsContent value="training-results">
+        <TabsContent value="training-results" className="flex flex-1 flex-col overflow-hidden">
           <TrainingResults initialRunId={trainingRunId || undefined} />
         </TabsContent>
 
