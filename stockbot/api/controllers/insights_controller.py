@@ -40,6 +40,127 @@ def _format_percent(value: float) -> str:
     return f"{value:.1%}"
 
 
+def _round(value: float, digits: int = 2) -> float:
+    try:
+        return round(float(value), digits)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _clean_position_for_prompt(position: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "symbol": position.get("symbol"),
+        "qty": _round(position.get("qty")),
+        "marketValue": _round(position.get("marketValue")),
+        "dayPL": _round(position.get("dayPL")),
+        "totalPL": _round(position.get("totalPL")),
+        "costBasis": _round(position.get("costBasis")),
+        "avgEntry": _round(position.get("avgEntry")),
+        "side": position.get("side"),
+        "weight": _round(position.get("weight")),
+        "sector": position.get("sector"),
+    }
+
+
+def _summarize_positions_for_prompt(
+    positions: List[Dict[str, Any]], limit: int = 25
+) -> Dict[str, Any]:
+    cleaned = [_clean_position_for_prompt(pos) for pos in positions]
+    cleaned = [pos for pos in cleaned if any(value for value in pos.values())]
+
+    cleaned.sort(key=lambda pos: abs(pos.get("marketValue", 0.0) or 0.0), reverse=True)
+
+    top_positions = cleaned[:limit]
+    remainder = cleaned[limit:]
+
+    omitted_gross_value = sum(abs(pos.get("marketValue", 0.0) or 0.0) for pos in remainder)
+
+    return {
+        "top_positions": top_positions,
+        "summary": {
+            "total_positions": len(cleaned),
+            "omitted_count": len(remainder),
+            "omitted_gross_value": _round(omitted_gross_value),
+        },
+    }
+
+
+def _clean_transaction_for_prompt(transaction: Dict[str, Any]) -> Dict[str, Any]:
+    amount = transaction.get("amount")
+    qty = transaction.get("qty") or transaction.get("quantity")
+    side = transaction.get("side") or transaction.get("type")
+    return {
+        "symbol": transaction.get("symbol") or transaction.get("instrument"),
+        "side": side,
+        "amount": _round(amount),
+        "qty": _round(qty),
+        "price": _round(transaction.get("price")),
+        "timestamp": transaction.get("timestamp")
+        or transaction.get("time")
+        or transaction.get("created_at")
+        or transaction.get("filled_at"),
+    }
+
+
+def _summarize_transactions_for_prompt(
+    transactions: List[Dict[str, Any]], limit: int = 40
+) -> Dict[str, Any]:
+    cleaned = [_clean_transaction_for_prompt(tx) for tx in transactions]
+    cleaned = [tx for tx in cleaned if any(value for value in tx.values())]
+
+    cleaned.sort(key=lambda tx: (tx.get("timestamp") or ""), reverse=True)
+
+    recent_transactions = cleaned[:limit]
+    remainder = cleaned[limit:]
+
+    gross_notional = sum(abs(tx.get("amount", 0.0) or 0.0) for tx in cleaned)
+    buys = 0
+    sells = 0
+    for tx in cleaned:
+        amount = tx.get("amount") or 0.0
+        side = (tx.get("side") or "").lower()
+        if amount > 0 or side in {"buy", "buy_to_cover", "long"}:
+            buys += 1
+        elif amount < 0 or side in {"sell", "sell_short", "short"}:
+            sells += 1
+
+    return {
+        "recent": recent_transactions,
+        "summary": {
+            "total_transactions": len(cleaned),
+            "omitted_count": len(remainder),
+            "gross_notional": _round(gross_notional),
+            "buys": buys,
+            "sells": sells,
+        },
+    }
+
+
+def _trim_portfolio_extras(
+    portfolio: Dict[str, Any], max_keys: int = 8, list_limit: int = 10
+) -> Dict[str, Any]:
+    extras: Dict[str, Any] = {}
+    if not isinstance(portfolio, dict):
+        return extras
+
+    for key, value in portfolio.items():
+        if key in {"summary", "positions", "transactions"}:
+            continue
+
+        if isinstance(value, list):
+            extras[key] = value[:list_limit]
+            extras[f"{key}_count"] = len(value)
+        elif isinstance(value, dict):
+            extras[key] = dict(list(value.items())[:list_limit])
+        else:
+            extras[key] = value
+
+        if len(extras) >= max_keys:
+            break
+
+    return extras
+
+
 def _best(items: Iterable[Dict[str, Any]], key: str, reverse: bool = True) -> Dict[str, Any] | None:
     items = [item for item in items if isinstance(item, dict)]
     if not items:
@@ -193,10 +314,15 @@ def generate_insights(req: InsightsRequest) -> dict:
     account_value = equity if equity else invested_value + cash
 
     if _OLLAMA_AGENT:
+        positions_prompt = _summarize_positions_for_prompt(open_positions)
+        transactions_prompt = _summarize_transactions_for_prompt(transactions)
+
         prompt_payload: Dict[str, Any] = {
             "account_summary": summary,
-            "positions": open_positions,
-            "transactions": transactions,
+            "positions": positions_prompt.get("top_positions", []),
+            "position_summary": positions_prompt.get("summary", {}),
+            "transactions": transactions_prompt.get("recent", []),
+            "transaction_summary": transactions_prompt.get("summary", {}),
             "calculated": {
                 "equity": equity,
                 "cash": cash,
@@ -206,17 +332,21 @@ def generate_insights(req: InsightsRequest) -> dict:
                 "cash_ratio": cash_ratio,
                 "turnover_ratio": turnover_ratio,
                 "concentration": concentration,
-                "top_winner": top_winner,
-                "top_loser": top_loser,
-                "worst_draw": worst_draw,
+                "top_winner": _clean_position_for_prompt(top_winner)
+                if isinstance(top_winner, dict)
+                else top_winner,
+                "top_loser": _clean_position_for_prompt(top_loser)
+                if isinstance(top_loser, dict)
+                else top_loser,
+                "worst_draw": _clean_position_for_prompt(worst_draw)
+                if isinstance(worst_draw, dict)
+                else worst_draw,
             },
         }
         if isinstance(portfolio, dict):
-            prompt_payload["portfolio_raw"] = {
-                key: value
-                for key, value in portfolio.items()
-                if key not in {"summary", "positions", "transactions"}
-            }
+            extras = _trim_portfolio_extras(portfolio)
+            if extras:
+                prompt_payload["portfolio_extras"] = extras
 
         prompt = (
             "You are Jarvis, a trading assistant that speaks in concise trading-desk briefs. "
