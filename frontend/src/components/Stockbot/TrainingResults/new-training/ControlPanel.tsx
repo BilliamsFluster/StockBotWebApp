@@ -100,7 +100,7 @@ export function ControlPanel({
           <TooltipLabel className="text-xs" tooltip="Select a training run to inspect">
             Run
           </TooltipLabel>
-          <Select value={runId} onValueChange={onRunChange} disabled={!runs.length}>
+          <Select value={runId || undefined} onValueChange={onRunChange} disabled={!runs.length}>
             <SelectTrigger className="w-full">
               <SelectValue placeholder={runPlaceholder} />
             </SelectTrigger>
