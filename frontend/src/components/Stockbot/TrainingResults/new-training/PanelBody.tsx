@@ -8,7 +8,9 @@ export function PanelBody({ children }: { children: React.ReactNode }) {
       data-lenis-prevent-wheel
       data-lenis-prevent-touch
     >
-      <div className="h-full overflow-auto space-y-4 p-4">{children}</div>
+      <div className="h-full overflow-auto">
+        <div className="training-panel-content space-y-4 p-4">{children}</div>
+      </div>
     </div>
   );
 }

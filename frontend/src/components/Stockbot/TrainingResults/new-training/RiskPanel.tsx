@@ -133,14 +133,14 @@ export function RiskPanel({ leverage, riskStats, exposures, rolling, drawdown }:
 
   return (
     <PanelBody>
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      <div className="training-grid gap-4 training-grid--overview">
         <div className="space-y-4">
           <Card className="space-y-3 p-4">
             <TooltipLabel className="font-semibold" tooltip="Turnover and leverage trajectories from equity.csv.">
               Leverage & Turnover
             </TooltipLabel>
             {leverageSeries.length ? (
-              <div className="h-64">
+              <div className="training-chart training-chart--lg">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={leverageSeries}>
                     <CartesianGrid strokeDasharray="3 3" />
@@ -164,7 +164,7 @@ export function RiskPanel({ leverage, riskStats, exposures, rolling, drawdown }:
               Volatility & Drawdown
             </TooltipLabel>
             {volDrawdownSeries.length ? (
-              <div className="h-60">
+              <div className="training-chart training-chart--lg">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={volDrawdownSeries}>
                     <CartesianGrid strokeDasharray="3 3" />
@@ -212,7 +212,7 @@ export function RiskPanel({ leverage, riskStats, exposures, rolling, drawdown }:
             <TooltipLabel className="font-semibold" tooltip="Key realised risk statistics computed from the run data.">
               Risk Snapshot
             </TooltipLabel>
-            <div className="grid gap-2 sm:grid-cols-2 text-sm">
+            <div className="training-grid gap-2 text-sm training-grid--cols-2">
               {riskCards.map((card) => (
                 <div key={card.label} className="flex flex-col gap-1">
                   <Badge variant="outline" className={`${card.tone} text-[11px] w-fit`}>{card.label}</Badge>

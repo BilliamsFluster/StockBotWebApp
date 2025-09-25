@@ -79,7 +79,7 @@ export function SeedAggregateSection({ showSeed, onToggle, seedAgg }: SeedAggreg
           )}
 
           {hasEntropy && seedAgg.entropy && (
-            <div className="h-56">
+            <div className="training-chart training-chart--md">
               <LineChart data={seedAgg.entropy} config={seedEntropyConfig} height="100%">
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="step" tickFormatter={fmtStep} />
@@ -100,7 +100,7 @@ export function SeedAggregateSection({ showSeed, onToggle, seedAgg }: SeedAggreg
           )}
 
           {hasActions && seedAgg.actionHist && (
-            <div className="h-56">
+            <div className="training-chart training-chart--md">
               <ChartContainer config={histogramConfig} className="h-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={seedAgg.actionHist}>
