@@ -122,7 +122,7 @@ export function OverviewPanel({
 
   return (
     <PanelBody>
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      <div className="training-grid gap-4 training-grid--overview">
         <div className="space-y-4">
           <Card className="space-y-3 p-4">
             <div className="flex items-center justify-between gap-2">
@@ -135,7 +135,7 @@ export function OverviewPanel({
                 </Badge>
               )}
             </div>
-            <div className="grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-3">
+            <div className="training-grid gap-3 text-sm training-grid--cols-3">
               {summary.map((item) => (
                 <div key={item.label} className="flex flex-col">
                   <span className="text-xs uppercase text-muted-foreground">{item.label}</span>
@@ -153,7 +153,7 @@ export function OverviewPanel({
               Equity vs Drawdown
             </TooltipLabel>
             {chartData.length ? (
-              <div className="h-64 w-full">
+              <div className="training-chart training-chart--lg">
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart data={chartData} margin={{ top: 5, right: 20, bottom: 0, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" />
@@ -199,13 +199,13 @@ export function OverviewPanel({
             )}
           </Card>
 
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="training-grid gap-4 training-grid--cols-2">
             <Card className="space-y-2 p-4">
               <TooltipLabel className="font-semibold" tooltip="Rolling Sharpe computed from rolling_metrics.csv if available.">
                 Rolling Sharpe
               </TooltipLabel>
               {rolling.sharpe.length ? (
-                <div className="h-28 w-full">
+                <div className="training-chart training-chart--xs">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={rolling.sharpe} margin={{ top: 4, right: 6, left: 0, bottom: 0 }}>
                       <Line
@@ -228,7 +228,7 @@ export function OverviewPanel({
                 Rolling Volatility
               </TooltipLabel>
               {rolling.volatility.length ? (
-                <div className="h-28 w-full">
+                <div className="training-chart training-chart--xs">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={rolling.volatility} margin={{ top: 4, right: 6, left: 0, bottom: 0 }}>
                       <Line
@@ -267,7 +267,7 @@ export function OverviewPanel({
               </label>
             </div>
             {showRollout && rewardTag ? (
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="training-grid gap-4 training-grid--cols-2">
                 <ChartCard title="Reward (train/eval)" tag={rewardTag} color="#3b82f6" series={series} timeRange={timeRange} />
                 <ChartCard title="Episode Length (mean)" tag={epLenTag} series={series} timeRange={timeRange} />
               </div>

@@ -131,7 +131,7 @@ export function GradientsSection({
       </div>
       {showGrads && (
         <>
-          <div className="grid gap-6 lg:grid-cols-2">
+          <div className="training-grid gap-6 training-grid--cols-2">
             <ChartCard title="Gradient Norm" tag={gradTag} color="#ef4444" series={series} timeRange={timeRange} />
             {showHeatmap && gradMatrix && (
               <Card className="p-4 space-y-2">

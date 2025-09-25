@@ -128,7 +128,7 @@ export function PerformancePanel({
 
   return (
     <PanelBody>
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="training-grid gap-4 training-grid--cols-2">
         <Card className="p-4 space-y-3">
           <TooltipLabel
             className="font-semibold"
@@ -137,7 +137,7 @@ export function PerformancePanel({
             Equity Curve
           </TooltipLabel>
           {equitySeries.length ? (
-            <div className="h-64">
+            <div className="training-chart training-chart--lg">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={equitySeries}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -187,7 +187,7 @@ export function PerformancePanel({
             Cumulative PnL vs Baseline
           </TooltipLabel>
           {pnlSeries.length ? (
-            <div className="h-64">
+            <div className="training-chart training-chart--lg">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={pnlSeries}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -219,7 +219,7 @@ export function PerformancePanel({
             Rolling Risk-Adjusted Returns
           </TooltipLabel>
           {rollingSeries.length ? (
-            <div className="h-64">
+            <div className="training-chart training-chart--lg">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={rollingSeries}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -242,7 +242,7 @@ export function PerformancePanel({
             Return Distribution
           </TooltipLabel>
           {returnHistogram.length ? (
-            <div className="h-64">
+            <div className="training-chart training-chart--lg">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={returnHistogram}>
                   <CartesianGrid strokeDasharray="3 3" />

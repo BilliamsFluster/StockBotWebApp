@@ -40,7 +40,7 @@ export function TradesPanel({
 }: TradesPanelProps) {
   return (
     <PanelBody>
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="training-grid gap-4 training-grid--cols-2">
         <Card className="space-y-3 p-4">
           <div className="flex items-center justify-between gap-2">
             <TooltipLabel className="font-semibold" tooltip="Completed trades per day or episode step.">
@@ -51,7 +51,7 @@ export function TradesPanel({
             </div>
           </div>
           {tradeAnalytics.frequency.length ? (
-            <div className="h-60">
+            <div className="training-chart training-chart--lg">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={tradeAnalytics.frequency}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -72,7 +72,7 @@ export function TradesPanel({
             Avg Position Size
           </TooltipLabel>
           {tradeAnalytics.averagePosition.length ? (
-            <div className="h-60">
+            <div className="training-chart training-chart--lg">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={tradeAnalytics.averagePosition}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -93,7 +93,7 @@ export function TradesPanel({
             Holding Periods
           </TooltipLabel>
           {tradeAnalytics.holdingBuckets.length ? (
-            <div className="h-56">
+            <div className="training-chart training-chart--md">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={tradeAnalytics.holdingBuckets}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -114,7 +114,7 @@ export function TradesPanel({
             Outcomes & Contribution
           </TooltipLabel>
           {tradeAnalytics.winLoss.length ? (
-            <div className="h-56">
+            <div className="training-chart training-chart--md">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={tradeAnalytics.winLoss}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -131,7 +131,7 @@ export function TradesPanel({
           {tradeAnalytics.symbolContribution.length ? (
             <div>
               <div className="text-xs font-semibold text-muted-foreground mb-2">Top Contributors</div>
-              <div className="h-48">
+              <div className="training-chart training-chart--sm">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={tradeAnalytics.symbolContribution} layout="vertical">
                     <CartesianGrid strokeDasharray="3 3" />
