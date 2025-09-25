@@ -209,10 +209,23 @@ export function useAiInsights({
 
     try {
       const data = await getAiInsights();
-      if (Array.isArray(data?.insights) && data.insights.length > 0) {
-        setAiText(data.insights.join("\n\n"));
+      const insights = Array.isArray(data?.insights)
+        ? data.insights.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        : [];
+
+      const expectedPrefixes = ["Overview:", "✅ Strength:", "⚠️ Watchlist:", "🔧 Next tweaks:"];
+      const hasTemplate = expectedPrefixes.every((prefix, index) => {
+        const text = insights[index];
+        return typeof text === "string" && text.trim().startsWith(prefix);
+      });
+
+      if (hasTemplate) {
+        setAiText(insights.join("\n\n"));
         return;
       }
+
+      brokerError = new Error("Broker insights missing expected template");
+
     } catch (err) {
       brokerError = err;
     }
