@@ -225,6 +225,7 @@ export function useAiInsights({
       }
 
       brokerError = new Error("Broker insights missing expected template");
+
     } catch (err) {
       brokerError = err;
     }
