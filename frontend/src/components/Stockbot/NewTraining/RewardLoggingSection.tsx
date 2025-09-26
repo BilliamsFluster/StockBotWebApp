@@ -1,9 +1,13 @@
+import { useMemo } from "react";
 import { AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { safeNum } from "./utils";
 import { TooltipLabel } from "../shared/TooltipLabel";
+import { getTooltip } from "./strings";
+import { SectionSummary } from "./SectionSummary";
+import { summarizeReward } from "./summaries";
 
 
 /** <-- Use these in the parent useState initializers */
@@ -57,12 +61,20 @@ export function RewardLoggingSection({
   saveRegime,
   setSaveRegime,
 }: Props) {
-  const activePenalties =
-    (wDrawdown > 0 ? ["drawdown"] : [])
-      .concat(wTurnover > 0 ? ["turnover"] : [])
-      .concat(wVol > 0 ? ["vol"] : [])
-      .concat(wLeverage > 0 ? ["leverage"] : [])
-      .join(", ") || "none";
+  const summary = useMemo(
+    () =>
+      summarizeReward({
+        rewardBase,
+        wDrawdown,
+        wTurnover,
+        wVol,
+        wLeverage,
+        saveTb,
+        saveActions,
+        saveRegime,
+      }),
+    [rewardBase, wDrawdown, wTurnover, wVol, wLeverage, saveTb, saveActions, saveRegime],
+  );
 
   return (
     <AccordionItem value="reward">
@@ -70,7 +82,7 @@ export function RewardLoggingSection({
       <AccordionContent>
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3 pt-2">
           <div className="flex items-center gap-2">
-            <TooltipLabel className="min-w-[120px]" tooltip="Base reward">
+            <TooltipLabel className="min-w-[120px]" tooltip={getTooltip("reward", "base")}>
               base
             </TooltipLabel>
             <Select value={rewardBase} onValueChange={(v) => setRewardBase(v as any)}>
@@ -84,7 +96,7 @@ export function RewardLoggingSection({
             </Select>
           </div>
 
-          <Field label="w_drawdown" tooltip="Drawdown penalty (discourage large peak-to-trough losses)">
+          <Field label="w_drawdown" tooltip={getTooltip("reward", "wDrawdown")}>
             <Input
               type="number"
               step="0.0001"
@@ -97,7 +109,7 @@ export function RewardLoggingSection({
             />
           </Field>
 
-          <Field label="w_turnover" tooltip="Turnover penalty (discourage frequent large rebalances)">
+          <Field label="w_turnover" tooltip={getTooltip("reward", "wTurnover")}>
             <Input
               type="number"
               step="0.0001"
@@ -110,7 +122,7 @@ export function RewardLoggingSection({
             />
           </Field>
 
-          <Field label="w_vol" tooltip="Realized volatility penalty (over a chosen window)">
+          <Field label="w_vol" tooltip={getTooltip("reward", "wVol")}>
             <Input
               type="number"
               step="0.0001"
@@ -123,7 +135,7 @@ export function RewardLoggingSection({
             />
           </Field>
 
-          <Field label="w_leverage" tooltip="Gross leverage penalty (discourage excessive exposure)">
+          <Field label="w_leverage" tooltip={getTooltip("reward", "wLeverage")}>
             <Input
               type="number"
               step="0.0001"
@@ -138,23 +150,20 @@ export function RewardLoggingSection({
 
           <div className="flex items-center gap-2">
             <Switch checked={saveTb} onCheckedChange={setSaveTb} />
-            <TooltipLabel tooltip="Save TensorBoard logs">save_tb</TooltipLabel>
+            <TooltipLabel tooltip={getTooltip("reward", "saveTb")}>save_tb</TooltipLabel>
           </div>
 
           <div className="flex items-center gap-2">
             <Switch checked={saveActions} onCheckedChange={setSaveActions} />
-            <TooltipLabel tooltip="Save action history">save_action_hist</TooltipLabel>
+            <TooltipLabel tooltip={getTooltip("reward", "saveActions")}>save_action_hist</TooltipLabel>
           </div>
 
           <div className="flex items-center gap-2">
             <Switch checked={saveRegime} onCheckedChange={setSaveRegime} />
-            <TooltipLabel tooltip="Save regime plots">save_regime_plots</TooltipLabel>
+            <TooltipLabel tooltip={getTooltip("reward", "saveRegime")}>save_regime_plots</TooltipLabel>
           </div>
         </div>
-
-        <div className="mt-3 text-xs text-muted-foreground border rounded px-3 py-2">
-          <b>Base:</b> {rewardBase} &nbsp;•&nbsp; <b>Active penalties:</b> {activePenalties}
-        </div>
+        <SectionSummary title="Reward summary" headline={summary.headline} bullets={summary.bullets} />
       </AccordionContent>
     </AccordionItem>
   );

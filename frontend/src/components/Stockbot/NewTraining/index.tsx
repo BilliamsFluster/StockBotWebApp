@@ -23,6 +23,7 @@ import { Label } from "@/components/ui/label";
 import ValidationSummaryCard from "./ValidationSummaryCard";
 import { computeValidation } from "./validation";
 import { TERMINAL_STATUSES, useTrainingRun } from "./useTrainingRun";
+import { buildStrategyNarrative, summarizeDataset, summarizeReward, summarizeSizing } from "./summaries";
 
 export default function NewTraining({
   onJobCreated,
@@ -298,6 +299,92 @@ export default function NewTraining({
 
   const validation = useMemo(() => computeValidation(gatherState()), [gatherState]);
 
+  const datasetSummary = useMemo(
+    () =>
+      summarizeDataset({
+        symbols,
+        start,
+        end,
+        interval,
+        lookback,
+        evalWindow,
+        trainSplit,
+        adjusted,
+      }),
+    [symbols, start, end, interval, lookback, evalWindow, trainSplit, adjusted],
+  );
+
+  const sizingSummary = useMemo(
+    () =>
+      summarizeSizing({
+        mappingMode,
+        investMax,
+        grossLevCap,
+        maxStepChange,
+        rebalanceEps,
+        minHoldBars,
+        kellyEnabled,
+        kellyLambda,
+        kellyFMax,
+        kellyEmaAlpha,
+        volEnabled,
+        volTarget,
+        volMin,
+        clampMin,
+        clampMax,
+        dailyLoss,
+        perNameCap,
+      }),
+    [
+      mappingMode,
+      investMax,
+      grossLevCap,
+      maxStepChange,
+      rebalanceEps,
+      minHoldBars,
+      kellyEnabled,
+      kellyLambda,
+      kellyFMax,
+      kellyEmaAlpha,
+      volEnabled,
+      volTarget,
+      volMin,
+      clampMin,
+      clampMax,
+      dailyLoss,
+      perNameCap,
+    ],
+  );
+
+  const rewardSummary = useMemo(
+    () =>
+      summarizeReward({
+        rewardBase,
+        wDrawdown,
+        wTurnover,
+        wVol,
+        wLeverage,
+        saveTb,
+        saveActions,
+        saveRegime,
+      }),
+    [rewardBase, wDrawdown, wTurnover, wVol, wLeverage, saveTb, saveActions, saveRegime],
+  );
+
+  const strategyNarrative = useMemo(
+    () => buildStrategyNarrative({ dataset: datasetSummary, sizing: sizingSummary, reward: rewardSummary }),
+    [datasetSummary, sizingSummary, rewardSummary],
+  );
+
+  const strategyBulletGroups = useMemo(
+    () => [
+      { label: "Dataset", bullets: datasetSummary.bullets.slice(0, 2) },
+      { label: "Sizing", bullets: sizingSummary.bullets.slice(0, 2) },
+      { label: "Reward", bullets: rewardSummary.bullets.slice(0, 2) },
+    ],
+    [datasetSummary, sizingSummary, rewardSummary],
+  );
+
   const applyPayloadToState = (payload: TrainPayload) => {
     const toNumber = (value: unknown): number | undefined => {
       if (typeof value === "number") return value;
@@ -555,6 +642,23 @@ export default function NewTraining({
           >
             {submitting && !status ? "Submitting…" : isRunning ? "Running…" : "Start Training"}
           </Button>
+        </div>
+      </div>
+
+      <div className="rounded-md border bg-muted/40 p-4 space-y-3">
+        <div className="text-sm font-semibold text-foreground">Strategy Summary</div>
+        <p className="text-sm text-muted-foreground">{strategyNarrative}</p>
+        <div className="grid gap-3 md:grid-cols-3 text-xs text-muted-foreground">
+          {strategyBulletGroups.map(({ label, bullets }) => (
+            <div key={label} className="space-y-1">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-foreground/70">{label}</div>
+              <ul className="list-disc space-y-1 pl-4">
+                {bullets.map((line, idx) => (
+                  <li key={`${label}-${idx}`}>{line}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
         </div>
       </div>
 

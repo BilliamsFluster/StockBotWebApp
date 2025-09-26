@@ -1,10 +1,14 @@
 "use client";
 
+import { useMemo } from "react";
 import { AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { TooltipLabel } from "../shared/TooltipLabel";
+import { getTooltip } from "./strings";
+import { SectionSummary } from "./SectionSummary";
+import { summarizeDataset } from "./summaries";
 
 interface DatasetProps {
   symbols: string;
@@ -43,6 +47,21 @@ export function DatasetSection({
   trainEvalSplit,
   setTrainEvalSplit,
 }: DatasetProps) {
+  const summary = useMemo(
+    () =>
+      summarizeDataset({
+        symbols,
+        start,
+        end,
+        interval,
+        lookback,
+        evalWindow,
+        trainSplit: trainEvalSplit,
+        adjusted,
+      }),
+    [symbols, start, end, interval, lookback, evalWindow, trainEvalSplit, adjusted],
+  );
+
   return (
     <AccordionItem value="dataset">
       <AccordionTrigger>Dataset & Window</AccordionTrigger>
@@ -50,48 +69,48 @@ export function DatasetSection({
         <div className="grid md:grid-cols-2 gap-4 pt-2">
           <InputGroup
             label="Symbols"
-            tooltip="Comma-separated stock tickers"
+            tooltip={getTooltip("dataset", "symbols")}
             value={symbols}
             onChange={setSymbols}
             placeholder="AAPL,MSFT,…"
           />
           <InputGroup
             label="Interval"
-            tooltip="Data frequency such as 1d or 1h"
+            tooltip={getTooltip("dataset", "interval")}
             value={interval}
             onChange={setInterval}
             placeholder="1d"
           />
           <InputGroup
             label="Start"
-            tooltip="Start date for training data"
+            tooltip={getTooltip("dataset", "start")}
             value={start}
             onChange={setStart}
             type="date"
           />
           <InputGroup
             label="End"
-            tooltip="End date for training data"
+            tooltip={getTooltip("dataset", "end")}
             value={end}
             onChange={setEnd}
             type="date"
           />
           <InputGroup
             label="Lookback"
-            tooltip="Number of past bars provided in each observation"
+            tooltip={getTooltip("dataset", "lookback")}
             value={String(lookback)}
             onChange={(v) => setLookback(parseInt(v) || lookback)}
             type="number"
           />
           <InputGroup
             label="Eval Window"
-            tooltip="Calendar days for evaluation window (0=auto)"
+            tooltip={getTooltip("dataset", "evalWindow")}
             value={String(evalWindow)}
             onChange={(v) => setEvalWindow(parseInt(v) || 0)}
             type="number"
           />
           <div className="flex flex-col gap-1">
-            <TooltipLabel tooltip="How to split train vs evaluation data">Train/Eval Split</TooltipLabel>
+            <TooltipLabel tooltip={getTooltip("dataset", "trainEvalSplit")}>Train/Eval Split</TooltipLabel>
             <Select value={trainEvalSplit} onValueChange={setTrainEvalSplit}>
               <SelectTrigger>
                 <SelectValue />
@@ -106,12 +125,13 @@ export function DatasetSection({
           <div className="md:col-span-1">
             <SwitchGroup
               label="Adjusted Prices"
-              tooltip="Use prices adjusted for splits and dividends"
+              tooltip={getTooltip("dataset", "adjusted")}
               checked={adjusted}
               onChange={setAdjusted}
             />
           </div>
         </div>
+        <SectionSummary title="Dataset impact" headline={summary.headline} bullets={summary.bullets} />
       </AccordionContent>
     </AccordionItem>
   );
