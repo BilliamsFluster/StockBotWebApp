@@ -168,6 +168,7 @@ class PortfolioTradingEnv(gym.Env):
         self.risk_events: List[Dict] = []
         self.guardrails = LiveGuardrails() if LiveGuardrails else None
         self._canary_prev_stage = 0
+        self._risk_session: pd.Timestamp | None = None
 
     # ---------- helpers ----------
     def _ohlc(self, sym: str, i: int):
@@ -306,6 +307,7 @@ class PortfolioTradingEnv(gym.Env):
         if LiveGuardrails:
             self.guardrails = LiveGuardrails()
             self._canary_prev_stage = 0
+        self._risk_session = None
 
         return self._obs(self._i), {"i": self._i, "config": asdict(self.cfg)}
 
@@ -313,6 +315,16 @@ class PortfolioTradingEnv(gym.Env):
         a = np.asarray(action, dtype=np.float32)
         prices_prev_close = self._prices(self._i - 1)  # CLOSE[t-1]
         eq_prev_close = self.port.value(prices_prev_close)
+        self.risk_state.nav_current = eq_prev_close
+        session_key = None
+        try:
+            session_key = pd.Timestamp(self.src.index[self._i]).normalize()
+        except Exception:
+            session_key = None
+        if session_key is not None:
+            if self._risk_session is None or session_key != self._risk_session:
+                self._risk_session = session_key
+                self.risk_state.nav_day_open = self.risk_state.nav_current
         prev_w = np.array(
             [
                 (self.port.positions[sym].qty if sym in self.port.positions else 0.0)
@@ -359,7 +371,6 @@ class PortfolioTradingEnv(gym.Env):
             pass
         self.sizing_trace.append({"ts": self.src.index[self._i], **trace})
         self.risk_events.extend(events)
-        self.risk_state.nav_day_open = self.risk_state.nav_current
 
         # ---- plan fills using next bar open and ADV
         prices_next = np.array([self._ohlc(sym, self._i)[0] for sym in self.syms], dtype=np.float64)
@@ -476,7 +487,6 @@ class PortfolioTradingEnv(gym.Env):
         self._eq_net.append(eq_close_t)
         self._eq_gross.append(eq_close_t + total_cost)
         self.risk_state.nav_current = eq_close_t
-        self.risk_state.nav_day_open = eq_close_t
         for k in range(self.N):
             if abs(target_w[k] - prev_w[k]) > w_eps:
                 self._hold_since[k] = 0
