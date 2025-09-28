@@ -43,7 +43,48 @@ if (!process.env.JWT_SECRET) {
   throw new Error("JWT_SECRET and REFRESH_SECRET must be set");
 }
 
-app.use(pinoHttp({ logger }));
+app.use(
+  pinoHttp({
+    logger,
+    serializers: {
+      req(req) {
+        return {
+          method: req.method,
+          url: req.url,
+          remoteAddress:
+            req.socket?.remoteAddress ||
+            req.connection?.remoteAddress ||
+            undefined,
+        };
+      },
+      res(res) {
+        return {
+          statusCode: res.statusCode,
+        };
+      },
+      err(err) {
+        return {
+          type: err.type,
+          message: err.message,
+          stack: err.stack,
+        };
+      },
+    },
+    customLogLevel(req, res, err) {
+      if (err || res.statusCode >= 500) return "error";
+      if (res.statusCode >= 400) return "warn";
+      return "info";
+    },
+    customSuccessMessage(req, res) {
+      return `${req.method} ${req.url} -> ${res.statusCode}`;
+    },
+    customErrorMessage(req, res, err) {
+      const status = res.statusCode || 500;
+      const message = err?.message ?? "request errored";
+      return `${req.method} ${req.url} -> ${status} (${message})`;
+    },
+  })
+);
 
 app.use(cors(corsOptions));
 app.use(cookieParser());

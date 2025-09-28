@@ -81,7 +81,7 @@ export function ScalarsPanel({
                 Clear
               </button>
             </div>
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="training-grid gap-4 training-grid--cols-2">
               {selectedTags
                 .filter((tag) => visibleSelected[tag] !== false)
                 .map((tag, index) => (

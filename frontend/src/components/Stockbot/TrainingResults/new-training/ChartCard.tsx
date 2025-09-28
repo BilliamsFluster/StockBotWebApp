@@ -78,7 +78,7 @@ export function ChartCard({ title, tag, series, timeRange, color }: ChartCardPro
       <TooltipLabel className="font-semibold" tooltip={tip || title}>
         {title}
       </TooltipLabel>
-      <div className="h-56">
+      <div className="training-chart training-chart--md">
         <LineChart
           data={data}
           config={chartConfig}

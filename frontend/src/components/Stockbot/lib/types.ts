@@ -37,16 +37,16 @@ export type RunArtifacts = {
     gamma_prebuilt?: string | null;
   };
 export interface Metrics {
-  total_return: number;
-  cagr: number;
-  vol_daily: number;
-  vol_annual: number;
-  sharpe: number;
-  sortino: number;
-  max_drawdown: number;
-  calmar: number;
-  turnover: number;
+  total_return: number | null;
+  cagr: number | null;
+  vol_daily: number | null;
+  vol_annual: number | null;
+  sharpe: number | null;
+  sortino: number | null;
+  max_drawdown: number | null;
+  calmar: number | null;
+  turnover: number | null;
   hit_rate: number | null;
-  num_trades: number;
+  num_trades: number | null;
   avg_trade_pnl: number | null;
 }

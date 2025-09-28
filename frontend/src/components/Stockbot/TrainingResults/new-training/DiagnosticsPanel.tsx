@@ -71,12 +71,12 @@ export function DiagnosticsPanel({
         </div>
         {showOptim && (
           <>
-            <div className="grid gap-6 xl:grid-cols-3 md:grid-cols-2">
+            <div className="training-grid gap-6 training-grid--cols-3">
               <ChartCard title="Value Loss" tag={valueLossTag} series={series} timeRange={timeRange} />
               <ChartCard title="Policy Loss" tag={policyLossTag} series={series} timeRange={timeRange} />
               <ChartCard title="Entropy" tag={entropyTag} series={series} timeRange={timeRange} />
             </div>
-            <div className="grid gap-6 xl:grid-cols-3 md:grid-cols-2">
+            <div className="training-grid gap-6 training-grid--cols-3">
               <ChartCard title="Learning Rate" tag={lrTag} series={series} timeRange={timeRange} />
               <ChartCard title="Clip Fraction" tag={clipFracTag} series={series} timeRange={timeRange} />
               <ChartCard title="Approx KL" tag={klTag} series={series} timeRange={timeRange} />
@@ -96,7 +96,7 @@ export function DiagnosticsPanel({
           </label>
         </div>
         {showTiming && (
-          <div className="grid gap-6 md:grid-cols-2">
+          <div className="training-grid gap-6 training-grid--cols-2">
             <ChartCard title="FPS" tag={fpsTag} series={series} timeRange={timeRange} />
           </div>
         )}
