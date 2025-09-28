@@ -45,22 +45,78 @@ const ChartContainer = React.forwardRef<
 >(({ id, className, children, config, ...props }, ref) => {
   const uniqueId = React.useId()
   const chartId = `chart-${id || uniqueId.replace(/:/g, "")}`
+  const cleanupRef = React.useRef<(() => void) | null>(null)
+  const containerRef = React.useRef<HTMLDivElement | null>(null)
+  const [dimensions, setDimensions] = React.useState({ width: 0, height: 0 })
+
+  const assignRef = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      if (cleanupRef.current) {
+        cleanupRef.current()
+        cleanupRef.current = null
+      }
+
+      containerRef.current = node
+
+      if (typeof ref === "function") {
+        ref(node)
+      } else if (ref) {
+        (ref as React.MutableRefObject<HTMLDivElement | null>).current = node
+      }
+
+      if (!node || typeof window === "undefined") {
+        return
+      }
+
+      const observer = new ResizeObserver((entries) => {
+        if (!entries.length) return
+        const { width, height } = entries[0].contentRect
+        setDimensions((prev) =>
+          prev.width === width && prev.height === height
+            ? prev
+            : { width, height }
+        )
+      })
+
+      observer.observe(node)
+      cleanupRef.current = () => observer.disconnect()
+    },
+    [ref]
+  )
+
+  React.useEffect(
+    () => () => {
+      if (cleanupRef.current) {
+        cleanupRef.current()
+        cleanupRef.current = null
+      }
+    },
+    []
+  )
+
+  const hasSize = dimensions.width > 1 && dimensions.height > 1
 
   return (
     <ChartContext.Provider value={{ config }}>
       <div
         data-chart={chartId}
-        ref={ref}
+        ref={assignRef}
         className={cn(
-          "flex aspect-video justify-center text-xs [&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground [&_.recharts-cartesian-grid_line[stroke='#ccc']]:stroke-border/50 [&_.recharts-curve.recharts-tooltip-cursor]:stroke-border [&_.recharts-dot[stroke='#fff']]:stroke-transparent [&_.recharts-layer]:outline-none [&_.recharts-polar-grid_[stroke='#ccc']]:stroke-border [&_.recharts-radial-bar-background-sector]:fill-muted [&_.recharts-rectangle.recharts-tooltip-cursor]:fill-muted [&_.recharts-reference-line_[stroke='#ccc']]:stroke-border [&_.recharts-sector[stroke='#fff']]:stroke-transparent [&_.recharts-sector]:outline-none [&_.recharts-surface]:outline-none",
+          "relative flex w-full min-h-0 min-w-0 justify-center text-xs [&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground [&_.recharts-cartesian-grid_line[stroke='#ccc']]:stroke-border/50 [&_.recharts-curve.recharts-tooltip-cursor]:stroke-border [&_.recharts-dot[stroke='#fff']]:stroke-transparent [&_.recharts-layer]:outline-none [&_.recharts-polar-grid_[stroke='#ccc']]:stroke-border [&_.recharts-radial-bar-background-sector]:fill-muted [&_.recharts-rectangle.recharts-tooltip-cursor]:fill-muted [&_.recharts-reference-line_[stroke='#ccc']]:stroke-border [&_.recharts-sector[stroke='#fff']]:stroke-transparent [&_.recharts-sector]:outline-none [&_.recharts-surface]:outline-none",
           className
         )}
         {...props}
       >
         <ChartStyle id={chartId} config={config} />
-        <RechartsPrimitive.ResponsiveContainer>
-          {children}
-        </RechartsPrimitive.ResponsiveContainer>
+        {hasSize ? (
+          <RechartsPrimitive.ResponsiveContainer width="100%" height="100%">
+            {children}
+          </RechartsPrimitive.ResponsiveContainer>
+        ) : (
+          <div className="flex h-full w-full items-center justify-center">
+            <span className="text-xs text-muted-foreground">Loading chart...</span>
+          </div>
+        )}
       </div>
     </ChartContext.Provider>
   )
@@ -111,6 +167,12 @@ const ChartTooltipContent = React.forwardRef<
       indicator?: "line" | "dot" | "dashed"
       nameKey?: string
       labelKey?: string
+      valueFormatter?: (
+        value: number,
+        name: string,
+        item: any,
+        index: number
+      ) => React.ReactNode
     }
 >(
   (
@@ -125,6 +187,7 @@ const ChartTooltipContent = React.forwardRef<
       labelFormatter,
       labelClassName,
       formatter,
+      valueFormatter,
       color,
       nameKey,
       labelKey,
@@ -189,6 +252,24 @@ const ChartTooltipContent = React.forwardRef<
             const key = `${nameKey || item.name || item.dataKey || "value"}`
             const itemConfig = getPayloadConfigFromPayload(config, item, key)
             const indicatorColor = color || item.payload.fill || item.color
+            const rawValue = item?.value as number | string | undefined
+            const hasValue = rawValue !== undefined && rawValue !== null
+            const numericValue = Number(rawValue)
+            const displayValue =
+              valueFormatter && hasValue
+                ? valueFormatter(
+                    Number.isFinite(numericValue) ? numericValue : Number(rawValue),
+                    key,
+                    item,
+                    index
+                  )
+                : typeof rawValue === "number"
+                ? rawValue.toLocaleString()
+                : typeof rawValue === "string"
+                ? rawValue
+                : hasValue
+                ? String(rawValue)
+                : null
 
             return (
               <div
@@ -238,9 +319,9 @@ const ChartTooltipContent = React.forwardRef<
                           {itemConfig?.label || item.name}
                         </span>
                       </div>
-                      {item.value && (
+                      {hasValue && displayValue !== null && (
                         <span className="font-mono font-medium tabular-nums text-foreground">
-                          {item.value.toLocaleString()}
+                          {displayValue}
                         </span>
                       )}
                     </div>

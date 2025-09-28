@@ -22,76 +22,94 @@ export default function Page() {
     <div className="p-6 space-y-6">
       <TooltipProvider delayDuration={80}>
         <Tabs value={tab} onValueChange={setTab} className="space-y-6">
-        <TabsList className="w-full grid grid-cols-8 gap-2">
-          <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
-          <TabsTrigger value="new-training">New Training</TabsTrigger>
-          <TabsTrigger value="new-backtest">New Backtest</TabsTrigger>
-          <TabsTrigger value="run-detail">Run Detail</TabsTrigger>
-          <TabsTrigger value="training-results">Training Results</TabsTrigger>
-          <TabsTrigger value="compare">Compare Runs</TabsTrigger>
-          <TabsTrigger value="trade">Live Trading</TabsTrigger>
-          <TabsTrigger value="settings">Settings</TabsTrigger>
-        </TabsList>
+          <TabsList
+            className="grid w-full gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,8.75rem),1fr))] md:grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))]"
+          >
+            <TabsTrigger className="w-full text-xs sm:text-sm" value="dashboard">
+              Dashboard
+            </TabsTrigger>
+            <TabsTrigger className="w-full text-xs sm:text-sm" value="new-training">
+              New Training
+            </TabsTrigger>
+            <TabsTrigger className="w-full text-xs sm:text-sm" value="new-backtest">
+              New Backtest
+            </TabsTrigger>
+            <TabsTrigger className="w-full text-xs sm:text-sm" value="run-detail">
+              Run Detail
+            </TabsTrigger>
+            <TabsTrigger className="w-full text-xs sm:text-sm" value="training-results">
+              Training Results
+            </TabsTrigger>
+            <TabsTrigger className="w-full text-xs sm:text-sm" value="compare">
+              Compare Runs
+            </TabsTrigger>
+            <TabsTrigger className="w-full text-xs sm:text-sm" value="trade">
+              Live Trading
+            </TabsTrigger>
+            <TabsTrigger className="w-full text-xs sm:text-sm" value="settings">
+              Settings
+            </TabsTrigger>
+          </TabsList>
 
-        <TabsContent value="dashboard">
-          <Dashboard
-            onNewTraining={() => setTab("new-training")}
-            onNewBacktest={() => {
-              setBacktestRunId(null);
-              setTab("new-backtest");
-            }}
-            onOpenRun={(_id) => {
-              setTrainingRunId(_id);
-              setTab("training-results");
-            }}
-            onBacktestRun={(id) => {
-              setBacktestRunId(id);
-              setTab("new-backtest");
-            }}
-          />
-        </TabsContent>
+          <TabsContent value="dashboard">
+            <Dashboard
+              onNewTraining={() => setTab("new-training")}
+              onNewBacktest={() => {
+                setBacktestRunId(null);
+                setTab("new-backtest");
+              }}
+              onOpenRun={(_id) => {
+                setTrainingRunId(_id);
+                setTab("training-results");
+              }}
+              onBacktestRun={(id) => {
+                setBacktestRunId(id);
+                setTab("new-backtest");
+              }}
+            />
+          </TabsContent>
 
-        <TabsContent value="new-training">
-          <NewTraining
-            // Keep the callback for UX flow; no longer pass to RunDetail
-            onJobCreated={(_id) => {
-              setTrainingRunId(_id);
-              setTab("training-results");
-            }}
-            onCancel={() => setTab("dashboard")}
-          />
-        </TabsContent>
+          <TabsContent value="new-training">
+            <NewTraining
+              // Keep the callback for UX flow; no longer pass to RunDetail
+              onJobCreated={(_id) => {
+                setTrainingRunId(_id);
+                setTab("training-results");
+              }}
+              onCancel={() => setTab("dashboard")}
+            />
+          </TabsContent>
 
-        <TabsContent value="new-backtest">
-          <NewBacktest
-            runId={backtestRunId ?? undefined}
-            onJobCreated={(_id) => {
-              setTab("run-detail");
-            }}
-            onCancel={() => setTab("dashboard")}
-          />
-        </TabsContent>
+          <TabsContent value="new-backtest">
+            <NewBacktest
+              runId={backtestRunId ?? undefined}
+              onJobCreated={(_id) => {
+                setTab("run-detail");
+              }}
+              onCancel={() => setTab("dashboard")}
+            />
+          </TabsContent>
 
-        <TabsContent value="run-detail">
-          {/* RunDetail is now upload-only and takes no props */}
-          <RunDetail />
-        </TabsContent>
+          <TabsContent value="run-detail">
+            {/* RunDetail is now upload-only and takes no props */}
+            <RunDetail />
+          </TabsContent>
 
-        <TabsContent value="training-results">
-          <TrainingResults initialRunId={trainingRunId || undefined} />
-        </TabsContent>
+          <TabsContent value="training-results">
+            <TrainingResults initialRunId={trainingRunId || undefined} />
+          </TabsContent>
 
-        <TabsContent value="compare">
-          <CompareRuns />
-        </TabsContent>
+          <TabsContent value="compare">
+            <CompareRuns />
+          </TabsContent>
 
-        <TabsContent value="trade">
-          <LiveTrading />
-        </TabsContent>
+          <TabsContent value="trade">
+            <LiveTrading />
+          </TabsContent>
 
-        <TabsContent value="settings">
-          <Settings />
-        </TabsContent>
+          <TabsContent value="settings">
+            <Settings />
+          </TabsContent>
         </Tabs>
       </TooltipProvider>
     </div>

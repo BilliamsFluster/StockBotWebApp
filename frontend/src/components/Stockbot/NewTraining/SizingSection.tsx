@@ -7,6 +7,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { safeNum } from "./utils";
 import { TooltipLabel } from "../shared/TooltipLabel";
+import { getTooltip } from "./strings";
+import { SectionSummary } from "./SectionSummary";
+import { summarizeSizing } from "./summaries";
 
 /** <-- Use these in your parent useState initializers */
 export const DEFAULT_SIZING = {
@@ -106,8 +109,48 @@ export function SizingSection({
   setMinHoldBars,
 }: Props) {
   const oneBarTarget = useMemo(() => oneBar(volTarget, interval), [volTarget, interval]);
-  const cashFloor = useMemo(() => (mappingMode === "simplex_cash" ? Math.max(0, 1 - (investMax || 0)) : 0), [mappingMode, investMax]);
   const clampPinned = useMemo(() => volEnabled && clampMin === 0 && clampMax === 0, [volEnabled, clampMin, clampMax]);
+  const summary = useMemo(
+    () =>
+      summarizeSizing({
+        mappingMode,
+        investMax,
+        grossLevCap,
+        maxStepChange,
+        rebalanceEps,
+        minHoldBars,
+        kellyEnabled,
+        kellyLambda,
+        kellyFMax,
+        kellyEmaAlpha,
+        volEnabled,
+        volTarget,
+        volMin,
+        clampMin,
+        clampMax,
+        dailyLoss,
+        perNameCap,
+      }),
+    [
+      mappingMode,
+      investMax,
+      grossLevCap,
+      maxStepChange,
+      rebalanceEps,
+      minHoldBars,
+      kellyEnabled,
+      kellyLambda,
+      kellyFMax,
+      kellyEmaAlpha,
+      volEnabled,
+      volTarget,
+      volMin,
+      clampMin,
+      clampMax,
+      dailyLoss,
+      perNameCap,
+    ],
+  );
 
   return (
     <AccordionItem value="sizing">
@@ -115,7 +158,7 @@ export function SizingSection({
       <AccordionContent>
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3 pt-2">
           <div className="flex items-center gap-2">
-            <TooltipLabel className="min-w-[130px]" tooltip="Mapping from logits to weights">
+            <TooltipLabel className="min-w-[130px]" tooltip={getTooltip("sizing", "mappingMode")}>
               mapping_mode
             </TooltipLabel>
             <Select value={mappingMode} onValueChange={(v) => setMappingMode(v as any)}>
@@ -130,7 +173,7 @@ export function SizingSection({
           </div>
 
           {mappingMode === "simplex_cash" && (
-            <Field label="invest_max" tooltip="Max investable cash fraction (0–1)">
+            <Field label="invest_max" tooltip={getTooltip("sizing", "investMax")}>
               <Input
                 type="number"
                 step="0.01"
@@ -145,7 +188,7 @@ export function SizingSection({
           )}
 
           {mappingMode === "tanh_leverage" && (
-            <Field label="gross_leverage_cap" tooltip="Absolute gross leverage cap (e.g., 1.5)">
+            <Field label="gross_leverage_cap" tooltip={getTooltip("sizing", "grossLevCap")}>
               <Input
                 type="number"
                 step="0.1"
@@ -159,7 +202,7 @@ export function SizingSection({
             </Field>
           )}
 
-          <Field label="max_step_change" tooltip="Max portfolio turnover per step (0–1)">
+          <Field label="max_step_change" tooltip={getTooltip("sizing", "maxStepChange")}>
             <Input
               type="number"
               step="0.005"
@@ -172,7 +215,7 @@ export function SizingSection({
             />
           </Field>
 
-          <Field label="rebalance_eps" tooltip="Rebalance threshold on absolute weight change">
+          <Field label="rebalance_eps" tooltip={getTooltip("sizing", "rebalanceEps")}>
             <Input
               type="number"
               step="0.001"
@@ -185,7 +228,7 @@ export function SizingSection({
             />
           </Field>
 
-          <Field label="min_hold_bars" tooltip="Minimum bars to hold before flipping position">
+          <Field label="min_hold_bars" tooltip={getTooltip("sizing", "minHoldBars")}>
             <Input
               type="number"
               step="1"
@@ -200,7 +243,7 @@ export function SizingSection({
 
           {/* Kelly */}
           <div className="flex items-center gap-2">
-            <TooltipLabel className="min-w-[130px]" tooltip="Enable Kelly sizing">
+            <TooltipLabel className="min-w-[130px]" tooltip={getTooltip("sizing", "kellyEnabled")}>
               kelly.enabled
             </TooltipLabel>
             <Switch checked={kellyEnabled} onCheckedChange={setKellyEnabled} />
@@ -208,7 +251,7 @@ export function SizingSection({
 
           {kellyEnabled && (
             <>
-              <Field label="kelly.lambda" tooltip="Kelly fraction scaler λ (0–2)">
+              <Field label="kelly.lambda" tooltip={getTooltip("sizing", "kellyLambda")}>
                 <Input
                   type="number"
                   step="0.1"
@@ -221,7 +264,7 @@ export function SizingSection({
                 />
               </Field>
 
-              <Field label="kelly.f_max" tooltip="Kelly exposure cap (|f| ≤ f_max)">
+              <Field label="kelly.f_max" tooltip={getTooltip("sizing", "kellyFMax")}>
                 <Input
                   type="number"
                   step="0.1"
@@ -234,7 +277,7 @@ export function SizingSection({
                 />
               </Field>
 
-              <Field label="kelly.ema_alpha" tooltip="EMA smoothing for f_t (0.01–0.99)">
+              <Field label="kelly.ema_alpha" tooltip={getTooltip("sizing", "kellyEmaAlpha")}>
                 <Input
                   type="number"
                   step="0.05"
@@ -251,7 +294,7 @@ export function SizingSection({
 
           {/* Vol target */}
           <div className="flex items-center gap-2">
-            <TooltipLabel className="min-w-[130px]" tooltip="Enable volatility targeting">
+            <TooltipLabel className="min-w-[130px]" tooltip={getTooltip("sizing", "volEnabled")}>
               vol_target.enabled
             </TooltipLabel>
             <Switch checked={volEnabled} onCheckedChange={setVolEnabled} />
@@ -259,7 +302,7 @@ export function SizingSection({
 
           {volEnabled && (
             <>
-              <Field label="vol_target.annual_target" tooltip="Annualized vol target (e.g., 0.10)">
+              <Field label="vol_target.annual_target" tooltip={getTooltip("sizing", "volTarget")}>
                 <Input
                   type="number"
                   step="0.01"
@@ -276,7 +319,7 @@ export function SizingSection({
                 1-bar target: {oneBarTarget.toFixed(4)}
               </div>
 
-              <Field label="vol_target.min_vol" tooltip="Minimum realized vol floor for scaling">
+              <Field label="vol_target.min_vol" tooltip={getTooltip("sizing", "volMin")}>
                 <Input
                   type="number"
                   step="0.01"
@@ -289,7 +332,7 @@ export function SizingSection({
                 />
               </Field>
 
-              <Field label="vol_target.clamp.min" tooltip="Lower clamp on scaling factor">
+              <Field label="vol_target.clamp.min" tooltip={getTooltip("sizing", "clampMin")}>
                 <Input
                   type="number"
                   step="0.05"
@@ -302,7 +345,7 @@ export function SizingSection({
                 />
               </Field>
 
-              <Field label="vol_target.clamp.max" tooltip="Upper clamp on scaling factor">
+              <Field label="vol_target.clamp.max" tooltip={getTooltip("sizing", "clampMax")}>
                 <Input
                   type="number"
                   step="0.1"
@@ -324,7 +367,7 @@ export function SizingSection({
           )}
 
           {/* Guards */}
-          <Field label="guards.daily_loss_limit_pct" tooltip="Flatten & halt for the day if loss exceeds this %">
+          <Field label="guards.daily_loss_limit_pct" tooltip={getTooltip("sizing", "dailyLoss")}>
             <Input
               type="number"
               step="0.1"
@@ -337,7 +380,7 @@ export function SizingSection({
             />
           </Field>
 
-          <Field label="guards.per_name_weight_cap" tooltip="Max absolute weight per asset">
+          <Field label="guards.per_name_weight_cap" tooltip={getTooltip("sizing", "perNameCap")}>
             <Input
               type="number"
               step="0.01"
@@ -350,13 +393,8 @@ export function SizingSection({
             />
           </Field>
 
-          {/* Derived hint */}
-          {mappingMode === "simplex_cash" && (
-            <div className="md:col-span-2 lg:col-span-3 text-xs text-muted-foreground border rounded px-3 py-2">
-              <b>Effective cash floor:</b> {(cashFloor * 100).toFixed(0)}% (from invest_max = {investMax})
-            </div>
-          )}
         </div>
+        <SectionSummary title="Sizing summary" headline={summary.headline} bullets={summary.bullets} />
       </AccordionContent>
     </AccordionItem>
   );

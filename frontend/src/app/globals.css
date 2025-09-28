@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+
+@import "dockview-core/dist/styles/dockview.css";
+@import "../lib/dockview/dockview.css";
+
 @layer base {
   :root {
     --background: 0 0% 100%;
@@ -24,8 +28,13 @@
     --input: 214.3 31.8% 91.4%;
     --ring: 222.2 84% 4.9%;
     --radius: 0.625rem;
+    --chart-1: 12 76% 61%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 197 37% 23%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
   }
- 
+
   .dark {
     --background: 222.2 84% 4.9%;
     --foreground: 210 40% 98%;
@@ -46,6 +55,11 @@
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
     --ring: 212.7 26.8% 83.9%;
+    --chart-1: 220 70% 50%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
   }
 
   /* True Black Theme Toggle */
@@ -163,6 +177,123 @@
 
   .accent-swatch-emerald { background-color: hsl(142 76% 34%); }
   .dark .accent-swatch-emerald { background-color: hsl(142 76% 36%); }
+
+  .training-panel-content {
+    container-type: inline-size;
+  }
+
+  .training-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .training-grid--cols-2,
+  .training-grid--cols-3,
+  .training-grid--overview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  @container (min-width: 32rem) {
+    .training-grid--cols-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @container (min-width: 48rem) {
+    .training-grid--overview {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .training-grid--cols-3 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @container (min-width: 60rem) {
+    .training-grid--cols-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+
+  @container (min-width: 70rem) {
+    .training-grid--overview {
+      grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    }
+  }
+
+  .training-chart {
+    position: relative;
+    width: 100%;
+    min-height: 12rem;
+    aspect-ratio: 4 / 3;
+  }
+
+  .training-chart--xs {
+    min-height: 7rem;
+  }
+
+  .training-chart--sm {
+    min-height: 10rem;
+  }
+
+  .training-chart--md {
+    min-height: 14rem;
+  }
+
+  .training-chart--lg {
+    min-height: 16rem;
+  }
+
+  .training-chart--xl {
+    min-height: 18rem;
+  }
+
+  @container (max-width: 28rem) {
+    .training-chart {
+      aspect-ratio: 1;
+      min-height: 10rem;
+    }
+  }
+
+  @container (min-width: 40rem) {
+    .training-chart {
+      aspect-ratio: 16 / 9;
+    }
+
+    .training-chart--md {
+      min-height: 15rem;
+    }
+
+    .training-chart--lg {
+      min-height: 18rem;
+    }
+
+    .training-chart--xl {
+      min-height: 20rem;
+    }
+  }
+
+  @container (min-width: 64rem) {
+    .training-chart--xs {
+      min-height: 8rem;
+    }
+
+    .training-chart--sm {
+      min-height: 12rem;
+    }
+
+    .training-chart--md {
+      min-height: 16rem;
+    }
+
+    .training-chart--lg {
+      min-height: 20rem;
+    }
+
+    .training-chart--xl {
+      min-height: 22rem;
+    }
+  }
 }
 
 /* --- Custom Theme Animations & Background --- */
