@@ -15,10 +15,9 @@ export function useRunSelection(initialRunId?: string) {
   const [runId, setRunId] = useState<string>(initialRunId || "");
 
   useEffect(() => {
-    if (initialRunId && initialRunId !== runId) {
-      setRunId(initialRunId);
-    }
-  }, [initialRunId, runId]);
+    if (!initialRunId) return;
+    setRunId(initialRunId);
+  }, [initialRunId]);
 
   const fetchRuns = useCallback(
     async (options?: { force?: boolean }) => {
