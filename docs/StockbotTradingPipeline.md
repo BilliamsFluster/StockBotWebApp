@@ -300,17 +300,15 @@ Seed aggregation (when multiple seeds are run)
 ## 11. Live Trading and Guardrails
 
 Endpoints
-- `POST /api/stockbot/trade/start`: initialize live session and guardrails (`stockbot/api/controllers/trade_controller.py`).
-- `POST /api/stockbot/trade/status`: submit a heartbeat with current metrics:
-  - `metrics` (dict) should include fields like `sharpe`, `hitrate`, `slippage_bps`, `max_daily_dd_pct`.
-  - `last_bar_ts`, `now_ts` (epoch seconds), `broker_ok` (bool), `target_capital` (float).
-  - Returns `{ stage, deploy_capital, halted }` where `stage` is a fraction from a canary schedule.
-- `POST /api/stockbot/trade/stop`: stop the session.
+- `POST /api/stockbot/trade/start`: initialize a live session by providing the resolved broker, decrypted credentials, and either a `run_id` or explicit `policy_path`. The controller now spins up the Python `LiveTradingSession` which loads SB3 policies, polls market data, and streams telemetry to the run directory (`stockbot/api/controllers/trade_controller.py`, `stockbot/execution/live_runner.py`).
+- `GET /api/stockbot/trade/status`: retrieve the current session state (stage, halted flag, equity, weights, timestamps).
+- `POST /api/stockbot/trade/status`: optional compatibility endpoint that returns the same payload as the GET variant.
+- `POST /api/stockbot/trade/stop`: stop the session and tear down the background runner.
 
 Guardrails (`stockbot/execution/live_guardrails.py`)
 - CanaryConfig: `stages`, `window_trades`, `min_sharpe`, `min_hitrate`, `max_slippage_bps`, `max_daily_dd_pct`.
-- The guardrails compute rolling window stats from reported `metrics`, advance stages when healthy, and halt on breaches or heartbeat loss.
-- An audit log (`live_audit.jsonl`) is appended with every status update.
+- The live runner computes window statistics from account equity deltas and feeds them into the guardrails, advancing stages when healthy and halting on breaches or heartbeat loss.
+- An audit log (`live_audit.jsonl`) and rich telemetry (`live_telemetry.jsonl`, `live_events.jsonl`) are appended with every status update.
 
 --------------------------------------------------------------------------------
 

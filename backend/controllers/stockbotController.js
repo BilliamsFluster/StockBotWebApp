@@ -1383,8 +1383,7 @@ export async function getLiveTradingStatusProxy(req, res) {
 
     // Prefer GET to the python service; if it requires POST, it should be adjusted there.
     const { data } = await axios.get(
-      `${STOCKBOT_URL}/api/stockbot/trade/status`,
-      { params: { broker } }
+      `${STOCKBOT_URL}/api/stockbot/trade/status`
     );
     return res.json(data);
   } catch (e) {

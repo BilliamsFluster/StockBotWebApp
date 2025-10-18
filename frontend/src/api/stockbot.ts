@@ -30,17 +30,57 @@ export async function getMarketHighlights() {
 }
 
 // Live trading endpoints
+export type LiveAuditRecord = {
+  ts?: number;
+  stage?: number;
+  halted?: boolean;
+  [key: string]: any;
+};
+
+export type LiveTradingStatus = {
+  status: string;
+  session_id?: string;
+  broker?: string;
+  run_id?: string | null;
+  message?: string;
+  stage?: number;
+  halted?: boolean;
+  equity?: number;
+  cash?: number;
+  target_weights?: Record<string, number>;
+  current_weights?: Record<string, number>;
+  positions?: Record<string, number>;
+  started_at?: string;
+  last_update?: string;
+};
+
 export async function startLiveTrading(params: { run_id?: string; policy_path?: string } = {}) {
   const { data } = await api.post('/stockbot/trade/start', params);
-  return data as { status: string; session_id?: string; message?: string };
+  return data as LiveTradingStatus;
 }
 
 export async function stopLiveTrading() {
   const { data } = await api.post('/stockbot/trade/stop', {});
-  return data as { status: string; message?: string };
+  return data as LiveTradingStatus;
 }
 
 export async function getLiveTradingStatus() {
   const { data } = await api.get('/stockbot/trade/status');
-  return data as { status: string; details?: any };
+  return data as LiveTradingStatus;
+}
+
+export async function getLiveAudit(runId: string): Promise<LiveAuditRecord[]> {
+  const { data } = await api.get(`/stockbot/runs/${encodeURIComponent(runId)}/files/live_audit`, { responseType: 'text' });
+  const raw = String(data ?? '');
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return { raw: line };
+      }
+    });
 }

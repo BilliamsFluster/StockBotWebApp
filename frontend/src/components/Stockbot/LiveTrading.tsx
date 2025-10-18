@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,18 +10,18 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import BrokerSelector from "@/components/brokers/BrokerSelector";
 import { getUserPreferences } from "@/api/client";
 import api from "@/api/client";
-import { startLiveTrading, stopLiveTrading, getLiveTradingStatus } from "@/api/stockbot";
+import { startLiveTrading, stopLiveTrading, getLiveTradingStatus, getLiveAudit } from "@/api/stockbot";
+import type { LiveTradingStatus, LiveAuditRecord } from "@/api/stockbot";
 import type { RunSummary } from "./lib/types";
 import { formatLocalTime } from "./lib/time";
 import { brokersList } from "@/config/brokersConfig";
-
-type LiveStatus = { status: string; details?: any; message?: string } | null;
 
 export default function LiveTrading() {
   const [activeBroker, setActiveBroker] = useState<string | undefined>(undefined);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | undefined>(undefined);
-  const [status, setStatus] = useState<LiveStatus>(null);
+  const [status, setStatus] = useState<LiveTradingStatus | null>(null);
+  const [auditEntries, setAuditEntries] = useState<LiveAuditRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showBrokerManager, setShowBrokerManager] = useState(false);
@@ -31,6 +31,62 @@ export default function LiveTrading() {
     const match = brokersList.find((b) => b.id === activeBroker);
     return match?.name || activeBroker || "";
   }, [activeBroker]);
+
+  const placeholder = '--';
+  const formatNumber = (value?: number) =>
+    value === undefined || value === null
+      ? placeholder
+      : value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+  const stageDisplay = status?.stage !== undefined ? `${(status.stage * 100).toFixed(2)}%` : placeholder;
+  const haltedDisplay =
+    status?.halted === undefined ? placeholder : status.halted ? "Yes" : "No";
+  const equityDisplay = formatNumber(status?.equity);
+  const cashDisplay = formatNumber(status?.cash);
+  const lastUpdateDisplay = status?.last_update ? formatLocalTime(status.last_update) : placeholder;
+  const startedAtDisplay = status?.started_at ? formatLocalTime(status.started_at) : placeholder;
+  const weightsSummary = (weights?: Record<string, number>) => {
+    if (!weights || Object.keys(weights).length === 0) return placeholder;
+    return Object.entries(weights)
+      .slice(0, 4)
+      .map(([sym, val]) => `${sym}: ${(val * 100).toFixed(2)}%`)
+      .join(", ");
+  };
+  const targetWeightsDisplay = weightsSummary(status?.target_weights);
+  const currentWeightsDisplay = weightsSummary(status?.current_weights);
+
+  const toNumber = (value: unknown) => {
+    if (value === null || value === undefined) return undefined;
+    const num = typeof value === 'string' ? Number(value) : Number(value);
+    return Number.isFinite(num) ? num : undefined;
+  };
+
+  const formatAuditTimestamp = (entry: LiveAuditRecord) => {
+    const tsVal = toNumber(entry.ts);
+    if (tsVal === undefined) {
+      if (typeof entry.ts === 'string' && entry.ts) {
+        return formatLocalTime(entry.ts);
+      }
+      return placeholder;
+    }
+    const iso = new Date(tsVal * 1000).toISOString();
+    const formatted = formatLocalTime(iso);
+    return formatted || placeholder;
+  };
+
+  const formatPercent = (value: unknown, factor = 1, decimals = 2) => {
+    const num = toNumber(value);
+    if (num === undefined) return placeholder;
+    return `${(num * factor).toFixed(decimals)}%`;
+  };
+
+  const formatNumberValue = (value: unknown, decimals = 2, suffix = '') => {
+    const num = toNumber(value);
+    if (num === undefined) return placeholder;
+    return `${num.toFixed(decimals)}${suffix}`;
+  };
+
+  const displayedAudit = useMemo(() => auditEntries.slice(-8).reverse(), [auditEntries]);
 
   const loadPrefs = async () => {
     try {
@@ -52,13 +108,32 @@ export default function LiveTrading() {
     }
   };
 
+  const loadAudit = useCallback(
+    async (runId?: string) => {
+      if (!runId) {
+        setAuditEntries([]);
+        return;
+      }
+      try {
+        const entries = await getLiveAudit(runId);
+        setAuditEntries(entries);
+      } catch (err) {
+        console.warn('Guardrail audit unavailable:', err);
+        setAuditEntries([]);
+      }
+    },
+    []
+  );
+
   const loadStatus = async () => {
     try {
       const st = await getLiveTradingStatus();
       setStatus(st);
+      void loadAudit(st?.run_id ?? selectedRunId);
     } catch (e: any) {
       // if python endpoint isn't ready yet, show soft error
       setStatus(null);
+      setAuditEntries([]);
       const msg = e?.message || "Failed to get status";
       console.warn("Live trading status unavailable:", msg);
     }
@@ -71,13 +146,22 @@ export default function LiveTrading() {
     return () => { if (pollTimer.current) clearInterval(pollTimer.current); };
   }, []);
 
+  useEffect(() => {
+    if (selectedRunId) {
+      void loadAudit(selectedRunId);
+    } else {
+      setAuditEntries([]);
+    }
+  }, [selectedRunId, loadAudit]);
+
   const start = async () => {
     if (!selectedRunId) return;
     setLoading(true);
     setError(null);
     try {
       const resp = await startLiveTrading({ run_id: selectedRunId });
-      setStatus(resp as any);
+      setStatus(resp);
+      void loadAudit(selectedRunId);
       // start polling after kick-off
       if (pollTimer.current) clearInterval(pollTimer.current);
       pollTimer.current = setInterval(loadStatus, 5000);
@@ -93,7 +177,8 @@ export default function LiveTrading() {
     setError(null);
     try {
       const resp = await stopLiveTrading();
-      setStatus(resp as any);
+      setStatus(resp);
+      void loadAudit(resp?.run_id ?? selectedRunId);
       if (pollTimer.current) clearInterval(pollTimer.current);
     } catch (e: any) {
       setError(e?.message || "Failed to stop live trading");
@@ -138,14 +223,14 @@ export default function LiveTrading() {
               <SelectContent>
                 {runs.map((r) => (
                   <SelectItem key={r.id} value={r.id}>
-                    {r.id} • {formatLocalTime(r.created_at)}
+                    {r.id} - {formatLocalTime(r.created_at)}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
             <div className="flex gap-2 pt-1">
               <Button onClick={start} disabled={!selectedRunId || !activeBroker || loading}>
-                {loading ? "Starting…" : "Start Live Trading"}
+                {loading ? "Starting..." : "Start Live Trading"}
               </Button>
               <Button variant="outline" onClick={stop} disabled={loading}>Stop</Button>
             </div>
@@ -166,13 +251,96 @@ export default function LiveTrading() {
               <TableBody>
                 <TableRow>
                   <TableCell>Status</TableCell>
-                  <TableCell className="font-mono">{status?.status || "unknown"}</TableCell>
+                  <TableCell className="font-mono">{status?.status?.toUpperCase() ?? "UNKNOWN"}</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell>Session</TableCell>
+                  <TableCell className="font-mono">{status?.session_id ?? placeholder}</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell>Started</TableCell>
+                  <TableCell className="font-mono">{startedAtDisplay}</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell>Last Update</TableCell>
+                  <TableCell className="font-mono">{lastUpdateDisplay}</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell>Stage</TableCell>
+                  <TableCell className="font-mono">{stageDisplay}</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell>Halted</TableCell>
+                  <TableCell className="font-mono">{haltedDisplay}</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell>Equity</TableCell>
+                  <TableCell className="font-mono">{equityDisplay}</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell>Cash</TableCell>
+                  <TableCell className="font-mono">{cashDisplay}</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell>Target Weights</TableCell>
+                  <TableCell className="font-mono text-xs">{targetWeightsDisplay}</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell>Current Weights</TableCell>
+                  <TableCell className="font-mono text-xs">{currentWeightsDisplay}</TableCell>
                 </TableRow>
                 {status?.message && (
                   <TableRow>
                     <TableCell>Message</TableCell>
                     <TableCell className="font-mono">{status.message}</TableCell>
                   </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </Card>
+
+          <Card className="p-4 space-y-3">
+            <div className="font-medium">Guardrail Audit</div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Time</TableHead>
+                  <TableHead>Stage</TableHead>
+                  <TableHead>Halted</TableHead>
+                  <TableHead>Sharpe</TableHead>
+                  <TableHead>Hit Rate</TableHead>
+                  <TableHead>Max DD</TableHead>
+                  <TableHead>Slippage</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {displayedAudit.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-xs text-muted-foreground">
+                      No guardrail events yet.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  displayedAudit.map((entry, idx) => {
+                    const key = `${entry.ts ?? idx}-${idx}`;
+                    const haltedValue =
+                      entry.halted === undefined
+                        ? placeholder
+                        : entry.halted
+                        ? 'Yes'
+                        : 'No';
+                    return (
+                      <TableRow key={key}>
+                        <TableCell className="font-mono text-xs">{formatAuditTimestamp(entry)}</TableCell>
+                        <TableCell className="font-mono text-xs">{formatPercent(entry.stage, 100, 1)}</TableCell>
+                        <TableCell className="font-mono text-xs">{haltedValue}</TableCell>
+                        <TableCell className="font-mono text-xs">{formatNumberValue(entry.sharpe, 2)}</TableCell>
+                        <TableCell className="font-mono text-xs">{formatPercent(entry.hitrate, 100, 1)}</TableCell>
+                        <TableCell className="font-mono text-xs">{formatNumberValue(entry.max_daily_dd_pct, 2, '%')}</TableCell>
+                        <TableCell className="font-mono text-xs">{formatNumberValue(entry.slippage_bps, 1, ' bps')}</TableCell>
+                      </TableRow>
+                    );
+                  })
                 )}
               </TableBody>
             </Table>

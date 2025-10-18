@@ -201,6 +201,11 @@ def trade_start(req: TradeStartRequest):
     return start_live(req)
 
 
+@router.get("/trade/status")
+def trade_status_get():
+    return status_live()
+
+
 @router.post("/trade/status")
 def trade_status(req: TradeStatusRequest):
     return status_live(req)
