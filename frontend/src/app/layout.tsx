@@ -1,15 +1,15 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import LayoutWrapper from "@/components/layout/LayoutWrapper";
 import DebugBridge from "@/components/DebugBridge";
 
-
 const inter = Inter({ subsets: ["latin"] });
+const spaceGrotesk = Space_Grotesk({ subsets: ["latin"], variable: "--font-display" });
 
 export const metadata: Metadata = {
-  title: "Jarvis StockBot",
-  description: "AI-Powered Trading Assistant",
+  title: "BWA Studio",
+  description: "Motion-forward product experiences for trading and AI teams.",
 };
 
 export default function RootLayout({
@@ -19,13 +19,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark" data-accent="violet">
-      <body className={inter.className}>
-        {/* These divs render the blobs. */}
+      <body className={`${inter.className} ${spaceGrotesk.variable}`}>
         <div className="blob blob-accent"></div>
         <div className="blob blob-blue"></div>
 
-        {/* This wrapper ensures your content appears ON TOP of the blobs. */}
-        {/* ADDED min-h-screen to prevent the background cutoff on short pages. */}
         <div className="relative z-10 flex min-h-screen flex-col">
           <DebugBridge />
           <LayoutWrapper>{children}</LayoutWrapper>
