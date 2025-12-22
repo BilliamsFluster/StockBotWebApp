@@ -194,5 +194,31 @@
     top: -25vh;
     left: -20vw;
   }
-}
 
+  @keyframes auroraDrift {
+    0% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.45; }
+    50% { transform: translate3d(5vw, -6vh, 0) scale(1.08); opacity: 0.75; }
+    100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.55; }
+  }
+
+  .aurora {
+    position: absolute;
+    inset: -20%;
+    background: radial-gradient(circle at 30% 30%, rgba(124, 58, 237, 0.35), transparent 45%),
+      radial-gradient(circle at 70% 20%, rgba(217, 70, 239, 0.28), transparent 40%),
+      radial-gradient(circle at 60% 70%, rgba(59, 130, 246, 0.2), transparent 45%);
+    filter: blur(30px);
+    mix-blend-mode: screen;
+    animation: auroraDrift 18s ease-in-out infinite;
+  }
+
+  .aurora--two {
+    animation-duration: 22s;
+    animation-delay: -6s;
+  }
+
+  .aurora--three {
+    animation-duration: 26s;
+    animation-delay: -12s;
+  }
+}
